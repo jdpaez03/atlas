@@ -752,6 +752,7 @@
       "enum": [
         "mission.created",
         "mission.phase_changed",
+        "mission.updated",
         "mission.closed",
         "task.created",
         "task.updated",

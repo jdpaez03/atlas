@@ -7,6 +7,7 @@ import { Empty, Panel } from "./primitives";
 const KIND: Record<EventType, { tag: string; color: string }> = {
   "mission.created": { tag: "MSN", color: "#7dd3fc" },
   "mission.phase_changed": { tag: "PHS", color: "#7dd3fc" },
+  "mission.updated": { tag: "MSN", color: "#475569" },
   "mission.closed": { tag: "MSN", color: "#cbd5e1" },
   "task.created": { tag: "TSK", color: "#94a3b8" },
   "task.updated": { tag: "TSK", color: "#64748b" },

@@ -372,6 +372,7 @@ class ApprovalRequest(AtlasModel):
 class EventType(str, Enum):
     MISSION_CREATED = "mission.created"
     MISSION_PHASE_CHANGED = "mission.phase_changed"
+    MISSION_UPDATED = "mission.updated"
     MISSION_CLOSED = "mission.closed"
     TASK_CREATED = "task.created"
     TASK_UPDATED = "task.updated"

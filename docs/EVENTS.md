@@ -19,6 +19,7 @@ Every event carries the **full, updated object** under a fixed key. Reducers ups
 |---|---|---|
 | `mission.created` | `{ mission: Mission }` | upsert `missions` |
 | `mission.phase_changed` | `{ mission: Mission }` | upsert `missions` |
+| `mission.updated` | `{ mission: Mission }` | upsert `missions` (usage/cost changes, live mode) |
 | `mission.closed` | `{ mission: Mission }` | upsert `missions` |
 | `task.created` | `{ task: Task }` | upsert `tasks` |
 | `task.updated` | `{ task: Task }` | upsert `tasks` |

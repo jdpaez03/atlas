@@ -73,6 +73,7 @@ export type ApprovalState = "PENDING" | "APPROVED" | "REJECTED" | "EXPIRED";
 export type EventType =
   | "mission.created"
   | "mission.phase_changed"
+  | "mission.updated"
   | "mission.closed"
   | "task.created"
   | "task.updated"
