@@ -554,3 +554,21 @@ def test_evidence_for_consult_approval_and_web_api(registry, roots):
     assert report.evidence[3].detail.startswith("REJECTED: Need data")
     feed = [e.summary for e in store.bus.history() if e.type == "evidence.recorded"]
     assert "SOFIA searched the web · Polanco rents" in feed and "SOFIA consulted ORACLE" in feed
+
+
+def test_corporate_default_is_the_work_onedrive(monkeypatch, tmp_path):
+    from atlas.live.files import node_roots
+
+    work, personal = tmp_path / "OneDrive - Paga", tmp_path / "OneDrive"
+    work.mkdir()
+    personal.mkdir()
+    monkeypatch.delenv("ATLAS_FILE_ROOTS_CORPORATE", raising=False)
+    monkeypatch.setenv("OneDriveCommercial", str(work))
+    monkeypatch.setenv("OneDrive", str(personal))
+    assert node_roots("corporate") == [work]
+    monkeypatch.delenv("OneDriveCommercial")
+    assert node_roots("corporate") == [personal]
+    monkeypatch.delenv("OneDrive")
+    assert node_roots("corporate")[0].name == "Documents"
+    monkeypatch.setenv("ATLAS_FILE_ROOTS_CORPORATE", str(personal))
+    assert node_roots("corporate") == [personal] and node_roots("personal") == []

@@ -18,7 +18,7 @@ Contracts (already in `core/models.py`): `Evidence`, `AgentReport.evidence/deliv
 ## A. Files and evidence (engine builder F)
 
 **Read roots, per node:** `ATLAS_FILE_ROOTS_<NODE>` (e.g. `ATLAS_FILE_ROOTS_CORPORATE`), with paths separated by `;`.
-The defaults are `corporate` → `~/Documents` and every other node → none. The attachments folder of the
+The defaults are `corporate` → the work OneDrive folder (`%OneDriveCommercial%`, else `%OneDrive%`, else `~/Documents`) and every other node → none. The attachments folder of the
 current mission is always readable too. A node never reads another node's roots.
 
 **Safety** (a single function, tested):

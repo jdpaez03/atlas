@@ -2,7 +2,8 @@
 
 Agents read the user's files ONLY through these tools, and only inside the read roots of their mission's node:
 
-    ATLAS_FILE_ROOTS_<NODE>   read roots, separated by ';' (default: corporate -> ~/Documents, others -> none)
+    ATLAS_FILE_ROOTS_<NODE>   read roots, separated by ';' (default: corporate -> work OneDrive, else ~/Documents;
+                              others -> none)
     + the mission's attachments folder and its own outputs folder (always readable)
 
 `FileSandbox.resolve()` is the single policy function: real path (symlinks followed) inside an allowed root, the
@@ -90,11 +91,23 @@ def _split_roots(raw: str) -> list[Path]:
     return out
 
 
+def default_corporate_roots() -> list[Path]:
+    """Where the corporate node reads when ATLAS_FILE_ROOTS_CORPORATE is unset: the work OneDrive folder
+    (Windows sets %OneDriveCommercial% for a work/school account), else the personal one (%OneDrive%),
+    else ~/Documents."""
+    for var in ("OneDriveCommercial", "OneDrive"):
+        value = os.environ.get(var, "").strip()
+        if value and Path(value).is_dir():
+            return [Path(value)]
+    return [Path.home() / "Documents"]
+
+
 def node_roots(node: str) -> list[Path]:
-    """Configured read roots of a node (unresolved): ATLAS_FILE_ROOTS_<NODE>, default corporate -> ~/Documents."""
+    """Configured read roots of a node (unresolved): ATLAS_FILE_ROOTS_<NODE>; default corporate -> the work
+    OneDrive (see default_corporate_roots), other nodes -> none."""
     raw = os.environ.get(env_key(node))
     if raw is None:
-        return [Path.home() / "Documents"] if node == "corporate" else []
+        return default_corporate_roots() if node == "corporate" else []
     return _split_roots(raw)
 
 
