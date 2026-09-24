@@ -41,6 +41,7 @@ from .models import (
     Claim,
     Confidence,
     EventType,
+    Evidence,
     MessageType,
     Mission,
     MissionPhase,
@@ -86,6 +87,7 @@ _COLLECTIONS: dict[str, tuple[str, type[BaseModel], str]] = {
     "state": ("agent_states", AgentState, "agent_id"),
     "message": ("messages", AgentMessage, "id"),
     "approval": ("approvals", ApprovalRequest, "id"),
+    "evidence": ("evidence", Evidence, "id"),
 }
 
 
@@ -105,6 +107,7 @@ def _clear(state: WorldState) -> None:
     state.agent_reports = []
     state.mission_reports = []
     state.approvals = []
+    state.evidence = []
 
 
 def apply_event(state: WorldState, event: AtlasEvent) -> WorldState:
@@ -638,6 +641,29 @@ class WorldStore:
         return self.approval(approval_id)
 
     # -- misc ----------------------------------------------------------------
+
+    async def record_evidence(self, evidence: Evidence, summary: str | None = None) -> Evidence:
+        """Record something an agent actually did (system-written, never agent-written)."""
+        self.mission(evidence.mission_id)
+        self._state.evidence.append(evidence)
+        verb = {
+            "file_listed": "listed", "file_read": "read", "file_written": "wrote",
+            "web_search": "searched the web for", "web_fetch": "fetched", "consult": "consulted",
+            "approval": "requested approval",
+        }[evidence.kind]
+        name = self.registry.get(evidence.agent_id).name if evidence.agent_id != "human" else "Human"
+        line = summary or f"{name} {verb} {evidence.ref}" + ("" if evidence.ok else " (failed)")
+        await self._emit(
+            EventType.EVIDENCE_RECORDED, line, {"evidence": _dump(evidence)},
+            mission_id=evidence.mission_id, agent_id=evidence.agent_id,
+        )
+        return evidence
+
+    def evidence_for(self, mission_id: str, task_id: str | None = None) -> list[Evidence]:
+        return [
+            e for e in self._state.evidence
+            if e.mission_id == mission_id and (task_id is None or e.task_id == task_id)
+        ]
 
     async def log(
         self, text: str, *, mission_id: str | None = None, agent_id: str | None = None

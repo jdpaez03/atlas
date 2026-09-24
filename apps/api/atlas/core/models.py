@@ -217,12 +217,35 @@ class AgentState(AtlasModel):
 # ---------------------------------------------------------------------------
 
 
+HUMAN = "human"  # pseudo agent id for messages from the user (mission thread)
+
+
 class Attachment(AtlasModel):
     id: str = Field(default_factory=lambda: _id("att"))
     name: str
     kind: Literal["text", "markdown", "json", "file", "url"] = "text"
     uri: str | None = None
     content: str | None = None
+    size_bytes: int | None = None
+    download_url: str | None = Field(default=None, description="API path to download a file ATLAS stores")
+
+
+class Evidence(AtlasModel):
+    """A record of something an agent actually did, written by the system (never by the agent).
+
+    Reports and the activity feed are built from these, so claimed actions are provable."""
+
+    id: str = Field(default_factory=lambda: _id("evd"))
+    mission_id: str
+    task_id: str | None = None
+    agent_id: str
+    kind: Literal[
+        "file_listed", "file_read", "file_written", "web_search", "web_fetch", "consult", "approval"
+    ]
+    ref: str = Field(description="path, URL, agent id or approval id")
+    detail: str = ""
+    ok: bool = True
+    at: datetime = Field(default_factory=_now)
 
 
 class Task(AtlasModel):
@@ -240,6 +263,7 @@ class Task(AtlasModel):
     progress: float = Field(default=0.0, ge=0.0, le=1.0)
     parent_task_id: str | None = None
     result_report_id: str | None = None
+    round: int = Field(default=1, description="1 = initial plan; 2+ = follow-up rounds from the mission thread")
     created_at: datetime = Field(default_factory=_now)
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -266,6 +290,9 @@ class Mission(AtlasModel):
     priority: Priority = Priority.MEDIUM
     task_ids: list[str] = Field(default_factory=list)
     final_report_id: str | None = None
+    attachments: list[Attachment] = Field(default_factory=list, description="files the user attached")
+    round: int = 1
+    interrupted: bool = Field(default=False, description="was running when the server stopped")
     created_at: datetime = Field(default_factory=_now)
     closed_at: datetime | None = None
 
@@ -321,6 +348,8 @@ class AgentReport(AtlasModel):
     confidence: Confidence = Confidence.MEDIUM
     limitations: list[str] = Field(default_factory=list)
     attachments: list[Attachment] = Field(default_factory=list)
+    evidence: list[Evidence] = Field(default_factory=list, description="system-recorded actions of this task")
+    deliverables: list[Attachment] = Field(default_factory=list, description="files this task wrote")
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -340,6 +369,8 @@ class MissionReport(AtlasModel):
     next_actions: list[str] = Field(default_factory=list)
     references: list[str] = Field(default_factory=list)
     agent_report_ids: list[str] = Field(default_factory=list)
+    version: int = Field(default=1, description="bumps with each follow-up round")
+    deliverables: list[Attachment] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -382,6 +413,7 @@ class EventType(str, Enum):
     MISSION_REPORT_READY = "mission.report_ready"
     APPROVAL_REQUESTED = "approval.requested"
     APPROVAL_DECIDED = "approval.decided"
+    EVIDENCE_RECORDED = "evidence.recorded"
     LOG = "log"
 
 
@@ -415,4 +447,5 @@ class WorldState(AtlasModel):
     agent_reports: list[AgentReport] = Field(default_factory=list)
     mission_reports: list[MissionReport] = Field(default_factory=list)
     approvals: list[ApprovalRequest] = Field(default_factory=list)
+    evidence: list[Evidence] = Field(default_factory=list)
     last_seq: int = 0

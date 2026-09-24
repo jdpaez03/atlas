@@ -326,6 +326,20 @@
           },
           "type": "array"
         },
+        "evidence": {
+          "description": "system-recorded actions of this task",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "type": "array"
+        },
+        "deliverables": {
+          "description": "files this task wrote",
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
         "created_at": {
           "format": "date-time",
           "type": "string"
@@ -345,6 +359,8 @@
         "confidence",
         "limitations",
         "attachments",
+        "evidence",
+        "deliverables",
         "created_at"
       ],
       "title": "AgentReport",
@@ -642,6 +658,29 @@
             }
           ],
           "default": null
+        },
+        "size_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "download_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "API path to download a file ATLAS stores"
         }
       },
       "required": [
@@ -649,7 +688,9 @@
         "name",
         "kind",
         "uri",
-        "content"
+        "content",
+        "size_bytes",
+        "download_url"
       ],
       "title": "Attachment",
       "type": "object"
@@ -762,10 +803,77 @@
         "mission.report_ready",
         "approval.requested",
         "approval.decided",
+        "evidence.recorded",
         "log"
       ],
       "title": "EventType",
       "type": "string"
+    },
+    "Evidence": {
+      "description": "A record of something an agent actually did, written by the system (never by the agent).\n\nReports and the activity feed are built from these, so claimed actions are provable.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "mission_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "file_listed",
+            "file_read",
+            "file_written",
+            "web_search",
+            "web_fetch",
+            "consult",
+            "approval"
+          ],
+          "type": "string"
+        },
+        "ref": {
+          "description": "path, URL, agent id or approval id",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "type": "string"
+        },
+        "ok": {
+          "default": true,
+          "type": "boolean"
+        },
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "mission_id",
+        "task_id",
+        "agent_id",
+        "kind",
+        "ref",
+        "detail",
+        "ok",
+        "at"
+      ],
+      "title": "Evidence",
+      "type": "object"
     },
     "MessageType": {
       "enum": [
@@ -838,6 +946,22 @@
           ],
           "default": null
         },
+        "attachments": {
+          "description": "files the user attached",
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "round": {
+          "default": 1,
+          "type": "integer"
+        },
+        "interrupted": {
+          "default": false,
+          "description": "was running when the server stopped",
+          "type": "boolean"
+        },
         "created_at": {
           "format": "date-time",
           "type": "string"
@@ -866,6 +990,9 @@
         "priority",
         "task_ids",
         "final_report_id",
+        "attachments",
+        "round",
+        "interrupted",
         "created_at",
         "closed_at"
       ],
@@ -963,6 +1090,17 @@
           },
           "type": "array"
         },
+        "version": {
+          "default": 1,
+          "description": "bumps with each follow-up round",
+          "type": "integer"
+        },
+        "deliverables": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
         "created_at": {
           "format": "date-time",
           "type": "string"
@@ -982,6 +1120,8 @@
         "next_actions",
         "references",
         "agent_report_ids",
+        "version",
+        "deliverables",
         "created_at"
       ],
       "title": "MissionReport",
@@ -1119,6 +1259,11 @@
           ],
           "default": null
         },
+        "round": {
+          "default": 1,
+          "description": "1 = initial plan; 2+ = follow-up rounds from the mission thread",
+          "type": "integer"
+        },
         "created_at": {
           "format": "date-time",
           "type": "string"
@@ -1163,6 +1308,7 @@
         "progress",
         "parent_task_id",
         "result_report_id",
+        "round",
         "created_at",
         "started_at",
         "completed_at"
@@ -1281,6 +1427,12 @@
           },
           "type": "array"
         },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "type": "array"
+        },
         "last_seq": {
           "default": 0,
           "type": "integer"
@@ -1297,6 +1449,7 @@
         "agent_reports",
         "mission_reports",
         "approvals",
+        "evidence",
         "last_seq"
       ],
       "title": "WorldState",
@@ -1338,6 +1491,9 @@
     },
     "AtlasEvent": {
       "$ref": "#/$defs/AtlasEvent"
+    },
+    "Evidence": {
+      "$ref": "#/$defs/Evidence"
     },
     "WorldState": {
       "$ref": "#/$defs/WorldState"

@@ -83,6 +83,7 @@ export type EventType =
   | "mission.report_ready"
   | "approval.requested"
   | "approval.decided"
+  | "evidence.recorded"
   | "log";
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
@@ -156,6 +157,7 @@ export interface AtlasContracts {
   MissionReport?: MissionReport;
   ApprovalRequest?: ApprovalRequest;
   AtlasEvent?: AtlasEvent;
+  Evidence?: Evidence;
   WorldState?: WorldState;
 }
 /**
@@ -266,6 +268,15 @@ export interface Mission {
   priority: Priority;
   task_ids: string[];
   final_report_id: string | null;
+  /**
+   * files the user attached
+   */
+  attachments: Attachment[];
+  round: number;
+  /**
+   * was running when the server stopped
+   */
+  interrupted: boolean;
   created_at: string;
   closed_at: string | null;
 }
@@ -281,6 +292,22 @@ export interface Usage {
   cache_read_tokens: number;
   llm_calls: number;
   est_cost_usd: number;
+}
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "Attachment".
+ */
+export interface Attachment {
+  id: string;
+  name: string;
+  kind: "text" | "markdown" | "json" | "file" | "url";
+  uri: string | null;
+  content: string | null;
+  size_bytes: number | null;
+  /**
+   * API path to download a file ATLAS stores
+   */
+  download_url: string | null;
 }
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
@@ -307,6 +334,10 @@ export interface Task {
   progress: number;
   parent_task_id: string | null;
   result_report_id: string | null;
+  /**
+   * 1 = initial plan; 2+ = follow-up rounds from the mission thread
+   */
+  round: number;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -333,17 +364,6 @@ export interface AgentMessage {
   created_at: string;
 }
 /**
- * This interface was referenced by `AtlasContracts`'s JSON-Schema
- * via the `definition` "Attachment".
- */
-export interface Attachment {
-  id: string;
-  name: string;
-  kind: "text" | "markdown" | "json" | "file" | "url";
-  uri: string | null;
-  content: string | null;
-}
-/**
  * Agent-level report (spec section 10).
  *
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
@@ -363,6 +383,14 @@ export interface AgentReport {
   confidence: Confidence2;
   limitations: string[];
   attachments: Attachment[];
+  /**
+   * system-recorded actions of this task
+   */
+  evidence: Evidence[];
+  /**
+   * files this task wrote
+   */
+  deliverables: Attachment[];
   created_at: string;
 }
 /**
@@ -374,6 +402,28 @@ export interface Claim {
   statement: string;
   sources: string[];
   confidence: Confidence1;
+}
+/**
+ * A record of something an agent actually did, written by the system (never by the agent).
+ *
+ * Reports and the activity feed are built from these, so claimed actions are provable.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "Evidence".
+ */
+export interface Evidence {
+  id: string;
+  mission_id: string;
+  task_id: string | null;
+  agent_id: string;
+  kind: "file_listed" | "file_read" | "file_written" | "web_search" | "web_fetch" | "consult" | "approval";
+  /**
+   * path, URL, agent id or approval id
+   */
+  ref: string;
+  detail: string;
+  ok: boolean;
+  at: string;
 }
 /**
  * ATLAS-level executive consolidation (spec section 10).
@@ -395,6 +445,11 @@ export interface MissionReport {
   next_actions: string[];
   references: string[];
   agent_report_ids: string[];
+  /**
+   * bumps with each follow-up round
+   */
+  version: number;
+  deliverables: Attachment[];
   created_at: string;
 }
 /**
@@ -450,5 +505,6 @@ export interface WorldState {
   agent_reports: AgentReport[];
   mission_reports: MissionReport[];
   approvals: ApprovalRequest[];
+  evidence: Evidence[];
   last_seq: number;
 }
