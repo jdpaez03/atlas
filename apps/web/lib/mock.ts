@@ -166,7 +166,7 @@ class MockEngine {
     const ts = now();
     const seed = seedHistory();
     for (const m of seed.missions) this.missions.set(m.id, m);
-    this.inbox = mockInbox((type, payload, summary, agentId) => this.emit(type, payload, summary, agentId, null), speed);
+    this.inbox = mockInbox((type, payload, summary, agentId, missionId) => this.emit(type, payload, summary, agentId, missionId ?? null), speed);
     this.world = {
       nodes: NODES,
       divisions: DIVISIONS,

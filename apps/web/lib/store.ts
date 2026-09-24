@@ -343,6 +343,7 @@ export function useAtlas() {
       patchFollowup: (id, p) => t().patchFollowup(id, p),
       draftFollowup: (id) => t().draftFollowup(id),
       decideDraft: (id, b) => t().decideDraft(id, b),
+      runDigest: (days) => t().runDigest(days),
     };
   }, []);
 

@@ -38,6 +38,8 @@ from ..core.models import (
     Priority,
     TaskStatus,
 )
+from ..core.store import _clip, _person
+from ..live.evidence import record
 from ..live.llm import LLMError
 from .prompts import DIGEST_NOTE, SUMMARIZE_THREADS_TOOL, digest_message
 from .sources.base import MailMessage, address_of, my_addresses, trim_quoted
@@ -260,34 +262,53 @@ def _strs(value: Any) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-async def run_digest(engine: InboxEngine, scope: MissionScope, src: MailSource, counts: ScanCounts, *,
-                     window_start: datetime | None, window_end: datetime | None) -> Digest | None:
+async def run_digest(engine: InboxEngine, scope: MissionScope, src: MailSource, messages: list[MailMessage],
+                     counts: ScanCounts, *, window_start: datetime | None, window_end: datetime | None,
+                     scope_label: str, record_reads: bool = False) -> Digest | None:
+    """Select the CC candidates among `messages`, summarize them and emit the digest (None when there are no
+    candidates: then a line explaining why goes to the activity feed and `counts.digest_note`).
+
+    `scope_label` completes "No CC emails …" ("among the 5 new emails", "in the last 3 days").
+    `record_reads`: record email_read evidence for the bodies fetched here (the window digest; a scan already
+    recorded them during extraction)."""
     s, mid = engine.store, scope.mission_id
     st = await engine.source_status()
     me = me_addresses(st.account if st else None)
     rules = load_rules()
     picked: list[MailMessage] = []
-    skipped = 0
-    for m in counts.processed_now:
+    skipped = cc_total = 0
+    for m in messages:
         if classify(m, me, rules) is None:
             continue
+        cc_total += 1
         sender = address_of(m.sender)
         if is_automated(m) or any(p in sender for p in rules.exclude_senders):
             skipped += 1
             continue
         picked.append(m)
+    counts.digest_candidates = cc_total
     counts.digest_skipped = skipped
     if not picked:
+        await _nothing(engine, scope, counts, cc_total, scope_label, me)
         return None
     engine._check_open(mid)
     bodies: dict[str, str] = {}
     kept: list[MailMessage] = []
+    unreadable = 0
     for m in picked:
         try:
             body = trim_quoted(await src.get_body(m.id))
-        except Exception:  # noqa: BLE001 — already analyzed once; leave it out of the digest
+        except Exception:  # noqa: BLE001 — leave it out of the digest
             log.info("digest: message %s unreadable; left out", m.id)
+            unreadable += 1
+            if record_reads:
+                await record(s, mission_id=mid, task_id=None, agent_id="hermes", kind="email_read", ref=m.subject,
+                             detail=f"from {m.sender}", ok=False,
+                             summary=f"HERMES could not read '{_clip(m.subject)}' · {_person(m.sender)}")
             continue
+        if record_reads:
+            await record(s, mission_id=mid, task_id=None, agent_id="hermes", kind="email_read", ref=m.subject,
+                         detail=f"from {m.sender}", summary=f"HERMES read '{_clip(m.subject)}' · {_person(m.sender)}")
         text = f"{m.subject}\n{body}"
         if (rules.include_keywords and not _contains_any(text, rules.include_keywords)) or \
                 _contains_any(text, rules.exclude_keywords):
@@ -297,6 +318,7 @@ async def run_digest(engine: InboxEngine, scope: MissionScope, src: MailSource, 
         kept.append(m)
     counts.digest_skipped = skipped
     if not kept:
+        await _nothing(engine, scope, counts, cc_total, scope_label, me, unreadable=unreadable)
         return None
 
     groups: dict[str, list[MailMessage]] = {}
@@ -400,6 +422,22 @@ async def run_digest(engine: InboxEngine, scope: MissionScope, src: MailSource, 
     await scope.set_agent("hermes", AgentStatus.COMPLETED, task_id=task.id,
                           activity=f"CC digest · {len(out)} conversation(s)")
     return digest
+
+
+async def _nothing(engine: InboxEngine, scope: MissionScope, counts: ScanCounts, cc_total: int, scope_label: str,
+                   me: set[str], *, unreadable: int = 0) -> None:
+    """No digest: say why, in the activity feed and (via counts.digest_note) in the mission report."""
+    if not me:
+        note = "No CC digest: ATLAS doesn't know your addresses (set ATLAS_MAIL_ME or connect Outlook)"
+    elif cc_total == 0:
+        note = f"No CC emails {scope_label}"
+    elif unreadable and unreadable + counts.digest_skipped >= cc_total:
+        note = (f"{cc_total} CC email{'s' if cc_total != 1 else ''}, all excluded by rules/automated or "
+                f"unreadable ({unreadable} unreadable)")
+    else:
+        note = f"{cc_total} CC email{'s' if cc_total != 1 else ''}, all excluded by rules/automated"
+    counts.digest_note = note
+    await engine.store.log(f"CC digest · {note}", mission_id=scope.mission_id, agent_id="hermes")
 
 
 async def _summarize(engine: InboxEngine, scope: MissionScope, batch: list[dict[str, Any]]) -> dict[str, Any]:

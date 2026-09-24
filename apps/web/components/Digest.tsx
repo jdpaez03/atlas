@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { Digest, DigestThread, FollowUp } from "@/lib/contracts";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { apiErrorText } from "@/lib/api";
+import type { AtlasEvent, Digest, DigestThread, FollowUp, Mission, MissionReport } from "@/lib/contracts";
 import { isOpen, parseAddr, shortDate } from "@/lib/followups";
 import { PRIORITY, cx } from "@/lib/ui";
 import { Tag } from "./primitives";
@@ -222,6 +223,124 @@ function ThreadCard({ t, followup, onAsk }: { t: DigestThread; followup: FollowU
   );
 }
 
+/* ------------------------------------------------------------------------------------------------ run a digest */
+
+export const DIGEST_RUN_DAYS = [1, 3, 7] as const;
+
+export interface DigestRun {
+  days: number;
+  setDays: (d: number) => void;
+  running: boolean;
+  error: string | null;
+  /** why the last run produced no digest (from its mission report or last log line) */
+  outcome: string | null;
+  start: () => void;
+}
+
+/**
+ * POST /digests/run {days} → a background mission. It's finished when that mission is CLOSED; a digest that
+ * appeared since the run started means success, otherwise the mission's own explanation is shown.
+ * Lives in the page so a run survives switching tabs.
+ */
+export function useDigestRun({
+  run,
+  digests,
+  missions,
+  reports,
+  feed,
+}: {
+  run: (days: number) => Promise<Mission>;
+  digests: Digest[];
+  missions: Mission[];
+  reports: MissionReport[];
+  feed: AtlasEvent[];
+}): DigestRun & { finishedWithDigest: number } {
+  const [days, setDays] = useState<number>(3);
+  const [missionId, setMissionId] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const [finishedWithDigest, setFinishedWithDigest] = useState(0);
+  const baseline = useRef<Set<string>>(new Set());
+
+  const start = useCallback(() => {
+    setStarting(true);
+    setError(null);
+    setOutcome(null);
+    baseline.current = new Set(digests.map((d) => d.id));
+    run(days)
+      .then((m) => setMissionId(m.id))
+      .catch((x) => setError(apiErrorText(x, "Could not start the digest")))
+      .finally(() => setStarting(false));
+  }, [run, days, digests]);
+
+  const mission = missionId ? missions.find((m) => m.id === missionId) : undefined;
+  const closed = !!mission && (mission.phase === "CLOSED" || mission.interrupted);
+  useEffect(() => {
+    if (!missionId || !closed) return;
+    const produced = digests.some((d) => d.mission_id === missionId || !baseline.current.has(d.id));
+    if (produced) {
+      setOutcome(null);
+      setFinishedWithDigest((n) => n + 1);
+    } else {
+      const report = reports.filter((r) => r.mission_id === missionId).sort((a, b) => b.version - a.version)[0];
+      const lastLog = feed.find((e) => e.mission_id === missionId && e.type === "log");
+      setOutcome(report?.executive_summary || lastLog?.summary || "The digest run finished without new CC emails to summarize.");
+    }
+    setMissionId(null);
+  }, [missionId, closed, digests, reports, feed]);
+
+  return { days, setDays, running: starting || !!missionId, error, outcome, start, finishedWithDigest };
+}
+
+export function DigestRunControl({ run, prominent }: { run: DigestRun; prominent?: boolean }) {
+  if (run.running) {
+    return (
+      <span className={cx("inline-flex items-center gap-2 font-mono text-violet-200", prominent ? "text-[12px]" : "text-[10.5px]")} role="status">
+        <svg width={prominent ? 14 : 12} height={prominent ? 14 : 12} viewBox="0 0 16 16" className="animate-spin" aria-hidden>
+          <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2" />
+          <path d="M14 8a6 6 0 00-6-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+        HERMES is reading your CC emails…
+      </span>
+    );
+  }
+  return (
+    <div className={cx("flex flex-wrap items-center gap-2", prominent && "justify-center")}>
+      <span className={cx("font-mono uppercase tracking-[0.14em] text-dim", prominent ? "text-[10.5px]" : "text-[9.5px]")}>Digest of the last</span>
+      <div role="radiogroup" aria-label="Period" className="flex items-center rounded-md border border-edge bg-black/30 p-0.5">
+        {DIGEST_RUN_DAYS.map((d) => {
+          const on = run.days === d;
+          return (
+            <button
+              key={d}
+              role="radio"
+              aria-checked={on}
+              onClick={() => run.setDays(d)}
+              className={cx(
+                "rounded px-2 font-mono tracking-[0.06em] transition",
+                prominent ? "h-7 text-[11px]" : "h-6 text-[10px]",
+                on ? "bg-violet-400/15 text-violet-100 shadow-[inset_0_0_0_1px_rgba(196,181,253,0.35)]" : "text-dim hover:text-slate-200",
+              )}
+            >
+              {d} day{d === 1 ? "" : "s"}
+            </button>
+          );
+        })}
+      </div>
+      <button
+        onClick={run.start}
+        className={cx(
+          "rounded-md border border-violet-400/50 bg-violet-500/15 font-mono font-semibold uppercase tracking-[0.16em] text-violet-100 transition hover:bg-violet-500/25",
+          prominent ? "h-8 px-4 text-[11px]" : "h-6 px-2.5 text-[9.5px]",
+        )}
+      >
+        Run
+      </button>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------------------------------------ view */
 
 export function DigestView({
@@ -229,6 +348,7 @@ export function DigestView({
   followups,
   onAsk,
   switcher,
+  run,
   className,
 }: {
   /** newest first */
@@ -236,9 +356,16 @@ export function DigestView({
   followups: FollowUp[];
   onAsk: (followupId: string) => void;
   switcher: ReactNode;
+  /** on-demand digest for a period (POST /digests/run); omitted when unsupported */
+  run?: DigestRun & { finishedWithDigest: number };
   className?: string;
 }) {
   const [picked, setPicked] = useState<string | null>(null); // null = follow the latest
+  // A run that produced a digest jumps to it.
+  const finished = run?.finishedWithDigest ?? 0;
+  useEffect(() => {
+    if (finished) setPicked(null);
+  }, [finished]);
   const latest = digests[0] ?? null;
   const digest = digests.find((d) => d.id === picked) ?? latest;
   const fuById = useMemo(() => new Map(followups.map((f) => [f.id, f])), [followups]);
@@ -261,6 +388,7 @@ export function DigestView({
           </h2>
           {switcher}
         </div>
+        {run && digests.length > 0 && <DigestRunControl run={run} />}
         {digests.length > 0 && (
           <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-dim">
             Digest
@@ -281,18 +409,41 @@ export function DigestView({
       </header>
 
       {!digest ? (
-        <div className="flex min-h-[320px] flex-col items-center justify-center gap-2 px-6 py-10 text-center">
+        <div className="flex min-h-[360px] flex-col items-center justify-center gap-3 px-6 py-10 text-center">
           <svg width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" className="text-mute" aria-hidden>
             <rect x="1.75" y="3.25" width="12.5" height="9.5" rx="1.25" />
             <path d="M2.25 4l5.75 4.5L13.75 4" />
           </svg>
-          <p className="text-[13px] text-slate-300">No CC digest yet: it&apos;s produced with each inbox scan.</p>
-          <p className="max-w-md font-mono text-[10.5px] leading-relaxed tracking-wide text-mute">
-            HERMES summarizes the emails where you&apos;re only in CC: what happened, decisions, key figures and anything asked of you.
+          {run?.outcome && !run.running ? (
+            <p className="max-w-lg rounded-md border border-violet-400/30 bg-violet-500/[0.07] px-3 py-2 text-[13px] text-violet-100" role="status">
+              {run.outcome}
+            </p>
+          ) : (
+            <p className="text-[13px] text-slate-300">No CC digest yet.</p>
+          )}
+          <p className="max-w-lg text-[12.5px] leading-relaxed text-slate-400">
+            The digest summarizes CC emails that arrive after each scan. For email you&apos;ve already scanned, run a digest for a period:
           </p>
+          {run && (
+            <div className="mt-1 rounded-lg border border-edge/80 bg-black/25 px-4 py-3">
+              <DigestRunControl run={run} prominent />
+            </div>
+          )}
+          {run?.error && <p className="font-mono text-[11px] text-red-400">{run.error}</p>}
         </div>
       ) : (
         <div className="flex flex-col gap-4 p-4 pb-0">
+          {run && (run.error || (run.outcome && !run.running)) && (
+            <p
+              className={cx(
+                "rounded-md border px-3 py-2 text-[12px]",
+                run.error ? "border-red-500/40 bg-red-500/[0.07] text-red-200" : "border-violet-400/30 bg-violet-500/[0.07] text-violet-100",
+              )}
+              role="status"
+            >
+              {run.error ?? run.outcome}
+            </p>
+          )}
           {/* briefing */}
           <div className="rounded-lg border border-violet-400/25 bg-gradient-to-br from-violet-500/[0.07] via-transparent to-transparent px-4 py-3.5">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] uppercase tracking-[0.16em] text-dim">

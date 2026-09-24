@@ -5,7 +5,7 @@ import { ActivityFeed } from "@/components/ActivityFeed";
 import { AgentBoard, type DivisionGroup } from "@/components/AgentBoard";
 import { ApprovalQueue } from "@/components/ApprovalQueue";
 import { CollabGraph } from "@/components/CollabGraph";
-import { DigestView, FollowUpsTabs, type FollowUpsTab } from "@/components/Digest";
+import { DigestView, FollowUpsTabs, useDigestRun, type FollowUpsTab } from "@/components/Digest";
 import { DraftDrawer } from "@/components/DraftDrawer";
 import { FollowUpsBoard, type FollowUpActions } from "@/components/FollowUps";
 import { Header, type View } from "@/components/Header";
@@ -183,6 +183,13 @@ export default function CommandCenter() {
     setFuTab("board");
     setHighlightFu(id);
   }, []);
+  const digestRun = useDigestRun({
+    run: atlas.inbox.runDigest,
+    digests,
+    missions: world.missions,
+    reports: world.mission_reports,
+    feed,
+  });
   const fuSwitch = <FollowUpsTabs tab={fuTab} onTab={setFuTab} unread={digestUnread} />;
 
   const toReview = useMemo(() => proposedDrafts(drafts).sort((a, b) => b.created_at.localeCompare(a.created_at)), [drafts]);
@@ -240,7 +247,7 @@ export default function CommandCenter() {
         <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_340px]">
             {fuTab === "digest" ? (
-              <DigestView digests={digests} followups={followups} onAsk={showFollowup} switcher={fuSwitch} className="min-h-[560px]" />
+              <DigestView digests={digests} followups={followups} onAsk={showFollowup} switcher={fuSwitch} run={digestRun} className="min-h-[560px]" />
             ) : (
               <FollowUpsBoard
                 followups={followups}

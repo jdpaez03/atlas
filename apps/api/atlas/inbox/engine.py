@@ -23,7 +23,7 @@ import asyncio
 import logging
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from difflib import SequenceMatcher
@@ -69,6 +69,7 @@ HERMES = "hermes"
 ALFRED = "alfred"
 BATCH_SIZE = 10
 MAX_DRAFTS_PER_SCAN = 10
+MAX_DIGEST_DAYS = 14
 LIST_LIMIT = 200
 OVERLAP = timedelta(hours=1)  # re-list a little before the last scan (late-arriving mail); ids dedupe
 DRAFT_CONTEXT_CHARS = 3000
@@ -190,8 +191,10 @@ class ScanCounts:
     failures: list[str] = field(default_factory=list)
     new_titles: list[str] = field(default_factory=list)
     processed_now: list[MailMessage] = field(default_factory=list)  # new messages analyzed in this scan
+    digest_candidates: int = 0  # CC emails before the automated / rules filters
     digest_threads: int = 0
     digest_skipped: int = 0
+    digest_note: str | None = None  # why there is no digest
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +342,79 @@ class InboxEngine:
                                                   name=f"inbox-scan:{mission.id}")
             return mission
 
+    async def start_digest(self, days: int = 1) -> Mission:
+        """POST /digests/run: a CC digest of the last `days` days, whatever was already scanned. Shares the scan
+        lock (never alongside a scan) and never touches the processed ids or last_scan."""
+        days = max(1, min(MAX_DIGEST_DAYS, int(days)))
+        async with self._lock:
+            src, backend = await self.check_ready()
+            label = f"last {days} day{'s' if days != 1 else ''}"
+            mission = await self.store.create_mission(f"CC digest · {label}", NODE, mode="live",
+                                                      context="trigger: digest")
+            self.scan_mission_id = mission.id
+            await self.store.log(
+                f"CC digest started · {label} · source {src.name} · "
+                f"{'your Claude plan' if backend == 'subscription' else 'the Claude API'}",
+                mission_id=mission.id, agent_id=self.store.registry.orchestrator.id,
+            )
+            self._scan_task = asyncio.create_task(
+                self._guarded(mission.id, backend, lambda scope: self._window_digest(scope, src, days)),
+                name=f"inbox-digest:{mission.id}")
+            return mission
+
+    async def _window_digest(self, scope: MissionScope, src: MailSource, days: int) -> None:
+        from .digest import run_digest
+
+        s, mid = self.store, scope.mission_id
+        atlas = scope.orchestrator.id
+        label = f"last {days} day{'s' if days != 1 else ''}"
+        end = self.now()
+        start = end - timedelta(days=days)
+        counts = ScanCounts()
+        await scope.set_agent(atlas, AgentStatus.WORKING, activity=f"Listing email of the {label}")
+        await self._phase(mid, MissionPhase.DECOMPOSITION)
+        try:
+            messages = await src.list_messages(since=start, limit=LIST_LIMIT)
+        except Exception as exc:  # noqa: BLE001
+            hint = getattr(exc, "hint", None)
+            await self._abort(scope, f"Could not read the mailbox: {exc}" + (f" · {hint}" if hint else ""))
+            return
+        messages = sorted(messages, key=lambda m: aware(m.received_at))
+        counts.listed = len(messages)
+        await s.log(f"CC digest · {len(messages)} email(s) in the {label}", mission_id=mid, agent_id=atlas)
+        if HERMES not in scope.agents:
+            await self._abort(scope, "HERMES (agents/corporate/hermes.yaml) is not available")
+            return
+        await self._phase(mid, MissionPhase.EXECUTION)
+        await scope.set_agent(atlas, AgentStatus.REVIEWING, activity="Supervising the CC digest")
+        digest = await run_digest(self, scope, src, messages, counts, window_start=start, window_end=end,
+                                  scope_label=f"in the {label}", record_reads=True)
+        await self._phase(mid, MissionPhase.CONSOLIDATION)
+        c = counts
+        summary = (f"CC digest · {label}: {c.digest_candidates} CC candidate(s) · {c.digest_skipped} skipped · "
+                   f"{c.digest_threads} thread(s)")
+        if c.digest_note:
+            summary += f" · {c.digest_note}"
+        if c.created or c.updated:
+            summary += f" · follow-ups: {c.created} new, {c.updated} updated"
+        tasks = s.tasks_for(mid)
+        report = MissionReport(
+            mission_id=mid, executive_summary=summary,
+            objective_status="PARTIAL" if c.failures else "ACHIEVED",
+            tasks_completed=[t.title for t in tasks if t.status == TaskStatus.COMPLETED.value],
+            tasks_pending=[t.title for t in tasks if t.status != TaskStatus.COMPLETED.value],
+            key_findings=[Claim(kind=ClaimKind.FACT, statement=h, sources=["email"], confidence=Confidence.MEDIUM)
+                          for h in (digest.headline if digest else [])],
+            needs_human_attention=list(c.failures),
+            next_actions=(["Read the CC digest in Follow-ups → Digest"] if digest else []),
+            agent_report_ids=[r.id for r in s.reports_for(mid)],
+        )
+        await self._phase(mid, MissionPhase.REPORTING)
+        await s.submit_mission_report(report)
+        await self._phase(mid, MissionPhase.FOLLOW_UP)
+        await scope.set_agent(atlas, AgentStatus.COMPLETED, activity="CC digest delivered")
+        await self._phase(mid, MissionPhase.CLOSED)
+
     async def wait(self) -> None:
         task = self._scan_task
         if task is not None and not task.done():
@@ -390,65 +466,15 @@ class InboxEngine:
         await self.store.set_phase(mission_id, phase)
 
     async def _run_scan(self, mission_id: str, src: MailSource, backend: str) -> None:
+        await self._guarded(mission_id, backend, lambda scope: self._scan(scope, src))
+
+    async def _guarded(self, mission_id: str, backend: str,
+                       body: Callable[[MissionScope], Awaitable[None]]) -> None:
+        """Run a scan-like mission body; any failure closes the mission with a NOT_ACHIEVED report."""
         s = self.store
-        started = self.now()
-        counts = ScanCounts()
-        mission = s.mission(mission_id)
-        scope = self._scope(mission_id, backend, mission.objective)
-        atlas = scope.orchestrator.id
+        scope = self._scope(mission_id, backend, s.mission(mission_id).objective)
         try:
-            await scope.set_agent(atlas, AgentStatus.WORKING, activity="Listing new email")
-            await self._phase(mission_id, MissionPhase.DECOMPOSITION)
-            since = (self.state.last_scan - OVERLAP) if self.state.last_scan else \
-                started - timedelta(days=self.lookback_days)
-            oldest_retry = self.state.oldest_retry()
-            if oldest_retry is not None and oldest_retry < since:
-                since = oldest_retry - timedelta(minutes=1)  # re-list the messages that failed last time
-            try:
-                messages = await src.list_messages(since=since, limit=LIST_LIMIT)
-            except Exception as exc:  # noqa: BLE001
-                hint = getattr(exc, "hint", None)
-                await self._abort(scope, f"Could not read the mailbox: {exc}" + (f" · {hint}" if hint else ""))
-                return
-            counts.listed = len(messages)
-            for m in messages:
-                self.state.observe(m)
-            new = sorted((m for m in messages if not self.state.is_processed(m.id)),
-                         key=lambda m: aware(m.received_at))
-            counts.new_messages = len(new)
-            await s.log(
-                f"Inbox · {len(messages)} email(s) since {since.astimezone(self.tz).strftime('%Y-%m-%d %H:%M')}"
-                f" · {len(new)} new", mission_id=mission_id, agent_id=atlas,
-            )
-            if new:
-                if HERMES not in scope.agents:
-                    await self._abort(scope, "HERMES (agents/corporate/hermes.yaml) is not available")
-                    return
-                await self._phase(mission_id, MissionPhase.DELEGATION)
-                await self._extract_all(scope, src, new, counts)
-            self.state.save()
-            if counts.processed_now:
-                from .digest import run_digest  # docs/INBOX.md §4
-
-                await run_digest(self, scope, src, counts, window_start=since, window_end=started)
-
-            await self._phase(mission_id, MissionPhase.VALIDATION)
-            await scope.set_agent(atlas, AgentStatus.REVIEWING, activity="Checking which follow-ups are overdue")
-            queue = await self._staleness(mission_id, counts)
-            if queue:
-                await self._draft_all(scope, src, queue, counts)
-
-            await self._phase(mission_id, MissionPhase.CONSOLIDATION)
-            await scope.set_agent(atlas, AgentStatus.WORKING, activity="Writing the scan report")
-            report = self._report(mission_id, counts)
-            await self._phase(mission_id, MissionPhase.REPORTING)
-            await s.submit_mission_report(report)
-            self.state.last_scan = started
-            self.state.prune(started)
-            self.state.save()
-            await self._phase(mission_id, MissionPhase.FOLLOW_UP)
-            await scope.set_agent(atlas, AgentStatus.COMPLETED, activity="Inbox scan delivered")
-            await self._phase(mission_id, MissionPhase.CLOSED)
+            await body(scope)
         except asyncio.CancelledError:
             self._save_quietly()
             raise
@@ -473,6 +499,66 @@ class InboxEngine:
             except Exception:  # pragma: no cover
                 log.debug("release after scan failed", exc_info=True)
 
+    async def _scan(self, scope: MissionScope, src: MailSource) -> None:
+        s = self.store
+        mission_id = scope.mission_id
+        started = self.now()
+        counts = ScanCounts()
+        atlas = scope.orchestrator.id
+        await scope.set_agent(atlas, AgentStatus.WORKING, activity="Listing new email")
+        await self._phase(mission_id, MissionPhase.DECOMPOSITION)
+        since = (self.state.last_scan - OVERLAP) if self.state.last_scan else \
+            started - timedelta(days=self.lookback_days)
+        oldest_retry = self.state.oldest_retry()
+        if oldest_retry is not None and oldest_retry < since:
+            since = oldest_retry - timedelta(minutes=1)  # re-list the messages that failed last time
+        try:
+            messages = await src.list_messages(since=since, limit=LIST_LIMIT)
+        except Exception as exc:  # noqa: BLE001
+            hint = getattr(exc, "hint", None)
+            await self._abort(scope, f"Could not read the mailbox: {exc}" + (f" · {hint}" if hint else ""))
+            return
+        counts.listed = len(messages)
+        for m in messages:
+            self.state.observe(m)
+        new = sorted((m for m in messages if not self.state.is_processed(m.id)),
+                     key=lambda m: aware(m.received_at))
+        counts.new_messages = len(new)
+        await s.log(
+            f"Inbox · {len(messages)} email(s) since {since.astimezone(self.tz).strftime('%Y-%m-%d %H:%M')}"
+            f" · {len(new)} new", mission_id=mission_id, agent_id=atlas,
+        )
+        if new:
+            if HERMES not in scope.agents:
+                await self._abort(scope, "HERMES (agents/corporate/hermes.yaml) is not available")
+                return
+            await self._phase(mission_id, MissionPhase.DELEGATION)
+            await self._extract_all(scope, src, new, counts)
+        self.state.save()
+        if counts.processed_now:
+            from .digest import run_digest  # docs/INBOX.md §4
+
+            n = len(counts.processed_now)
+            await run_digest(self, scope, src, counts.processed_now, counts, window_start=since,
+                             window_end=started, scope_label=f"among the {n} new email{'s' if n != 1 else ''}")
+
+        await self._phase(mission_id, MissionPhase.VALIDATION)
+        await scope.set_agent(atlas, AgentStatus.REVIEWING, activity="Checking which follow-ups are overdue")
+        queue = await self._staleness(mission_id, counts)
+        if queue:
+            await self._draft_all(scope, src, queue, counts)
+
+        await self._phase(mission_id, MissionPhase.CONSOLIDATION)
+        await scope.set_agent(atlas, AgentStatus.WORKING, activity="Writing the scan report")
+        report = self._report(mission_id, counts)
+        await self._phase(mission_id, MissionPhase.REPORTING)
+        await s.submit_mission_report(report)
+        self.state.last_scan = started
+        self.state.prune(started)
+        self.state.save()
+        await self._phase(mission_id, MissionPhase.FOLLOW_UP)
+        await scope.set_agent(atlas, AgentStatus.COMPLETED, activity="Inbox scan delivered")
+        await self._phase(mission_id, MissionPhase.CLOSED)
     def _save_quietly(self) -> None:
         try:
             self.state.save()
@@ -840,6 +926,8 @@ class InboxEngine:
             summary += f" · {len(c.unreadable)} unreadable"
         if c.digest_threads:
             summary += f"\nCC digest: {c.digest_threads} threads"
+        elif c.digest_note:
+            summary += f"\nCC digest: none · {c.digest_note}"
         attention = [f"Unreadable email: {u}" for u in c.unreadable] + list(c.failures)
         if c.drafts:
             attention.append(f"{c.drafts} follow-up draft(s) to review and approve (nothing was sent)")

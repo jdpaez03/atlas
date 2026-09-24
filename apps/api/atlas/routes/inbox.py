@@ -13,6 +13,8 @@
   GET   /drafts?status=&followup_id=     EmailDraft[] (newest first)
   POST  /drafts/{id}/decision            {decision: APPROVED|DISCARDED, subject?, body?, to?, cc?} -> EmailDraft
   GET   /drafts/{id}/eml                 the exported .eml (message/rfc822)
+  POST  /digests/run                     {days: 1..14 = 1} -> Mission "CC digest · last N day(s)" (background; same
+                                         409/422 rules as /inbox/scan; ignores processed ids / last_scan)
   GET   /digests?limit=                  Digest[] (CC digests, newest first; default limit 20)
   GET   /digests/{id}                    Digest
 """
@@ -210,6 +212,18 @@ def download_eml(draft_id: str, request: Request) -> FileResponse:
 # ---------------------------------------------------------------------------
 # CC digests (docs/INBOX.md §4)
 # ---------------------------------------------------------------------------
+
+
+class DigestRun(BaseModel):
+    days: int = Field(default=1, ge=1, le=14)
+
+
+@router.post("/digests/run", response_model=Mission)
+async def run_digest(request: Request, body: DigestRun | None = None) -> Mission:
+    try:
+        return await get_inbox(request).start_digest((body or DigestRun()).days)
+    except InboxError as exc:
+        raise _inbox_error(exc) from exc
 
 
 @router.get("/digests", response_model=list[Digest])

@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from test_inbox import (
     NOW,
     FakeSource,
+    _poll,
     everything_on_disk,
     make_engine,
     msg,
@@ -33,6 +34,7 @@ from atlas.inbox.digest import (
     rules_path,
     thread_key,
 )
+from atlas.inbox.engine import ScanBusyError
 from atlas.live import FakeLLM
 from atlas.live.llm import call_text, tool_use
 from atlas.live.sdk import FakeClaudeSDK, call, say
@@ -357,7 +359,9 @@ def test_no_candidates_no_digest(registry, monkeypatch):
     assert not [e for e in store.bus.history() if e.type == "digest.ready"]
     assert not [c for c in llm.calls if stage("INBOX DIGEST")(c)]
     report = store.mission_reports_for(mid)[0]
-    assert "CC digest" not in report.executive_summary and report.objective_status == "ACHIEVED"
+    note = "2 CC emails, all excluded by rules/automated"  # d7 and d8 are automated
+    assert f"CC digest: none · {note}" in report.executive_summary and report.objective_status == "ACHIEVED"
+    assert f"CC digest · {note}" in [e.summary for e in store.bus.history(mission_id=mid)]
 
 
 def test_http_digests(monkeypatch, rules):
@@ -384,3 +388,162 @@ def test_http_digests(monkeypatch, rules):
         events = client.get("/events").json()
         assert any(e["type"] == "digest.ready" for e in events)
         assert all(SECRET not in str(e) for e in events)
+
+
+# ---------------------------------------------------------------------------
+# on-demand window digest (POST /digests/run)
+# ---------------------------------------------------------------------------
+
+ASK_ITEM = {"items": [{"message_id": "d1", "kind": "REQUEST_TO_ME", "title": "Aprobar el cambio de proveedor",
+                       "counterpart": PEDRO, "excerpt": "¿puedes aprobar el cambio de proveedor?"}]}
+
+
+def _extract_items(text: str) -> dict:
+    return ASK_ITEM if "message_id: d1 " in text else {"items": []}
+
+
+def _backend(kind: str):
+    """(llm, sdk, count of extraction calls, count of digest calls) for the api or subscription backend."""
+    if kind == "api":
+        llm = FakeLLM()
+        llm.when(stage("INBOX EXTRACT"), lambda kw: tool_use("record_followups", _extract_items(call_text(kw))),
+                 repeat=True)
+        llm.when(stage("INBOX DIGEST"), lambda kw: tool_use("summarize_threads", summarize_valid(call_text(kw))),
+                 repeat=True)
+        return (llm, None, lambda: len([c for c in llm.calls if stage("INBOX EXTRACT")(c)]),
+                lambda: len([c for c in llm.calls if stage("INBOX DIGEST")(c)]))
+    sdk = FakeClaudeSDK()
+    sdk.when(lambda x: "STAGE: INBOX EXTRACT" in x.prompt,
+             [lambda x: call("record_followups", _extract_items(x.prompt)), say("ok")], repeat=True)
+    sdk.when(lambda x: "STAGE: INBOX DIGEST" in x.prompt,
+             [lambda x: call("summarize_threads", summarize_valid(x.prompt)), say("ok")], repeat=True)
+    return (None, sdk, lambda: len(sdk.matching(lambda x: "STAGE: INBOX EXTRACT" in x.prompt)),
+            lambda: len(sdk.matching(lambda x: "STAGE: INBOX DIGEST" in x.prompt)))
+
+
+@pytest.mark.parametrize("kind", ["api", "subscription"])
+def test_window_digest_of_already_scanned_mail(registry, rules, kind):
+    llm, sdk, n_extract, n_digest = _backend(kind)
+    clock = {"now": NOW}
+
+    async def go():
+        store, _live, inbox = make_engine(registry, FakeSource(cc_mailbox()), llm=llm, sdk=sdk,
+                                          clock=lambda: clock["now"], db=paths.local_dir() / "atlas.db")
+        await scan(inbox)  # extraction creates the REQUEST_TO_ME for d1 (and the scan's own digest)
+        clock["now"] = NOW + timedelta(hours=1)
+        mid2 = await scan(inbox)  # nothing new: no digest
+        before = (dict(inbox.state.processed), inbox.state.last_scan, n_extract(), n_digest())
+        clock["now"] = NOW + timedelta(hours=2)
+        mission = await inbox.start_digest(days=2)
+        await asyncio.wait_for(inbox.wait(), 5)
+        return store, inbox, mid2, before, mission
+
+    store, inbox, mid2, before, mission = asyncio.run(go())
+    processed, last_scan, extract_calls, digest_calls = before
+    assert len(store.digests()) == 2
+    assert not [d for d in store.digests() if d.mission_id == mid2]
+    assert "CC digest" not in store.mission_reports_for(mid2)[0].executive_summary  # 0 new: no run, no line
+    d = store.digests(limit=1)[0]
+    assert d.mission_id == mission.id and mission.objective == "CC digest · last 2 days"
+    assert {t.conversation_id for t in d.threads} == {"c-pol", "comité de crédito", "c9"} and d.skipped == 4
+    assert d.window_end - d.window_start == timedelta(days=2)
+    # only the digest step ran: no extraction, processed ids / last_scan untouched
+    assert n_extract() == extract_calls and n_digest() == digest_calls + 1
+    assert inbox.state.processed == processed and inbox.state.last_scan == last_scan
+    # asks_me reused the scan's follow-up (same conversation): no duplicate
+    asks = store.followups(kind="REQUEST_TO_ME")
+    assert len(asks) == 1 and d.threads[0].followup_id == asks[0].id
+    report = store.mission_reports_for(mission.id)[0]
+    assert report.executive_summary.startswith(
+        "CC digest · last 2 days: 9 CC candidate(s) · 4 skipped · 3 thread(s)")
+    assert report.objective_status == "ACHIEVED" and store.mission(mission.id).phase == "CLOSED"
+    reads = [e for e in store.evidence_for(mission.id) if e.kind == "email_read"]
+    assert len(reads) == 6 and all(e.detail.startswith("from ") for e in reads)  # d11 is read, then excluded
+    assert SECRET not in store.snapshot().model_dump_json()
+    assert all(SECRET not in e.model_dump_json() for e in store.bus.history())
+    assert SECRET.encode() not in everything_on_disk(paths.local_dir())
+
+
+@pytest.mark.parametrize("kind", ["api", "subscription"])
+def test_window_digest_zero_candidates_explained(registry, monkeypatch, kind):
+    monkeypatch.setenv("ATLAS_MAIL_ME", ALIAS)
+    llm, sdk, _n_extract, n_digest = _backend(kind)
+    box = [x for x in cc_mailbox() if x[0].id in ("d5", "d6")]  # to me, and mine
+
+    async def go():
+        store, _live, inbox = make_engine(registry, FakeSource(box), llm=llm, sdk=sdk)
+        mission = await inbox.start_digest(days=1)
+        await asyncio.wait_for(inbox.wait(), 5)
+        return store, mission.id
+
+    store, mid = asyncio.run(go())
+    assert store.digests() == [] and n_digest() == 0
+    assert "CC digest · No CC emails in the last 1 day" in [e.summary for e in store.bus.history(mission_id=mid)]
+    report = store.mission_reports_for(mid)[0]
+    assert report.executive_summary == ("CC digest · last 1 day: 0 CC candidate(s) · 0 skipped · 0 thread(s) · "
+                                        "No CC emails in the last 1 day")
+
+
+def test_digest_run_shares_the_scan_lock(registry, rules):
+    gate = asyncio.Event()
+
+    class Slow(FakeSource):
+        async def list_messages(self, since, limit=200):
+            await gate.wait()
+            return await super().list_messages(since, limit)
+
+    async def go():
+        _store, _live, inbox = make_engine(registry, Slow(cc_mailbox()), llm=digest_llm())
+        await inbox.start_scan()
+        with pytest.raises(ScanBusyError):
+            await inbox.start_digest(days=1)
+        gate.set()
+        await asyncio.wait_for(inbox.wait(), 5)
+        gate.clear()
+        await inbox.start_digest(days=3)
+        with pytest.raises(ScanBusyError):
+            await inbox.start_scan()
+        gate.set()
+        await asyncio.wait_for(inbox.wait(), 5)
+
+    asyncio.run(go())
+
+
+def test_http_digest_run(monkeypatch, rules):
+    import threading
+
+    from atlas.main import app
+
+    gate = threading.Event()
+
+    class Slow(FakeSource):
+        async def list_messages(self, since, limit=200):
+            while not gate.is_set():
+                await asyncio.sleep(0.005)
+            return await super().list_messages(since, limit)
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with TestClient(app) as client:
+        r = client.post("/digests/run", json={"days": 2})
+        assert r.status_code == 409 and "ATLAS_MS_CLIENT_ID" in r.json()["detail"]
+        inbox = app.state.inbox
+        inbox.source = Slow(cc_mailbox())
+        inbox.clock = lambda: NOW
+        assert client.post("/digests/run").status_code == 422  # no LLM backend
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        app.state.live.llm = digest_llm()
+        assert client.post("/digests/run", json={"days": 15}).status_code == 422
+        assert client.post("/digests/run", json={"days": 0}).status_code == 422
+        r = client.post("/digests/run", json={"days": 3})
+        assert r.status_code == 200 and r.json()["objective"] == "CC digest · last 3 days"
+        mid = r.json()["id"]
+        busy = client.post("/inbox/scan")
+        assert busy.status_code == 409 and "already running" in busy.json()["detail"]
+        assert client.post("/digests/run").status_code == 409
+        assert client.get("/inbox/status").json()["scan_mission_id"] == mid
+        gate.set()
+        _poll(client, lambda st: next(m for m in st.missions if m.id == mid).phase == "CLOSED")
+        digests = client.get("/digests").json()
+        assert len(digests) == 1 and digests[0]["mission_id"] == mid and len(digests[0]["threads"]) == 3
+        r = client.post("/digests/run")  # no body: 1 day
+        assert r.status_code == 200 and r.json()["objective"] == "CC digest · last 1 day"

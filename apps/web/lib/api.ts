@@ -220,6 +220,24 @@ export interface InboxApi {
   patchFollowup(id: string, patch: FollowUpPatch): Promise<FollowUp>;
   draftFollowup(id: string): Promise<unknown>;
   decideDraft(id: string, body: DraftDecisionBody): Promise<EmailDraft>;
+  /** POST /digests/run {days} — a CC digest of the last N days; runs as a background mission. */
+  runDigest(days: number): Promise<Mission>;
+}
+
+/** "ATLAS API 409: {\"detail\":\"…\"}" → "…" (plain words for the UI). */
+export function apiErrorText(x: unknown, fallback = "Request failed"): string {
+  const msg = x instanceof Error ? x.message : String(x ?? "");
+  const m = /^ATLAS API (\d+)(?::\s*([\s\S]*))?$/.exec(msg);
+  if (!m) return msg || fallback;
+  const body = m[2] ?? "";
+  try {
+    const d = (JSON.parse(body) as { detail?: unknown }).detail;
+    if (typeof d === "string" && d) return d;
+    if (Array.isArray(d)) return d.map((e) => (e as { msg?: string }).msg ?? "").filter(Boolean).join("; ") || fallback;
+  } catch {
+    /* not JSON */
+  }
+  return body || `${fallback} (${m[1]})`;
 }
 
 export const DRAFT_EML_URL = (id: string) => `${API_URL}/drafts/${encodeURIComponent(id)}/eml`;
@@ -262,4 +280,5 @@ export const inboxApi: InboxApi = {
     }).then((r) => json<FollowUp>(r)),
   draftFollowup: (id) => post(`/followups/${encodeURIComponent(id)}/draft`).then((r) => json<unknown>(r)),
   decideDraft: (id, body) => post(`/drafts/${encodeURIComponent(id)}/decision`, body).then((r) => json<EmailDraft>(r)),
+  runDigest: (days) => post("/digests/run", { days }).then((r) => json<Mission>(r)),
 };

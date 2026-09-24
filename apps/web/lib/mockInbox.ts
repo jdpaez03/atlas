@@ -7,10 +7,10 @@
  *   ?digest=none         → no seeded CC digest (empty Digest tab)
  */
 import type { DraftDecisionBody, FollowUpPatch, InboxApi, InboxConnectStart, InboxConnectState, InboxStatus } from "./api";
-import type { Digest, EmailDraft, EventType, FollowUp } from "./contracts";
+import type { Digest, EmailDraft, EventType, FollowUp, Mission, MissionReport } from "./contracts";
 import { digestFollowup, scanDigest, seedDigest } from "./mockDigest";
 
-type Emit = (type: EventType, payload: Record<string, unknown>, summary: string, agent: string | null) => void;
+type Emit = (type: EventType, payload: Record<string, unknown>, summary: string, agent: string | null, missionId?: string | null) => void;
 
 const NODE = "corporate";
 const HOUR = 3600_000;
@@ -334,6 +334,65 @@ export function mockInbox(emit: Emit, speed: number): MockInbox {
         emit("log", {}, "Inbox scan complete — 7 emails read, 1 new follow-up", "hermes");
       });
       return { ok: true };
+    },
+    async runDigest(days: number) {
+      if (!status.connected) throw new Error('ATLAS API 409: {"detail":"No mailbox is connected. Connect your inbox first."}');
+      if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('ATLAS API 422: {"detail":"days must be between 1 and 14"}');
+      const id = rid("msn");
+      const base: Mission = {
+        id,
+        objective: `CC digest · last ${days} day${days === 1 ? "" : "s"}`,
+        node: "corporate",
+        mode: "live",
+        attachments: [],
+        round: 1,
+        interrupted: false,
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, llm_calls: 0, est_cost_usd: 0 },
+        context: "Inbox",
+        phase: "EXECUTION",
+        priority: "MEDIUM",
+        task_ids: [],
+        final_report_id: null,
+        created_at: iso(0),
+        closed_at: null,
+      };
+      emit("mission.created", { mission: base }, `Mission received: ${base.objective}`, "hermes", id);
+      emit("log", {}, `HERMES is reading CC emails from the last ${days} day${days === 1 ? "" : "s"}`, "hermes", id);
+      later(3200, () => {
+        // days=1 → no candidates (exercises the "finished without a digest" path).
+        const empty = days === 1;
+        let summary: string;
+        if (empty) {
+          summary = "No CC emails in the last 1 day — nothing to digest (3 automated notices skipped).";
+        } else {
+          const dig = { ...seedDigest(), id: rid("dig"), window_start: iso(-days * DAY), window_end: iso(0), created_at: iso(0), mission_id: id };
+          digests.push(dig);
+          emit("digest.ready", { digest: dig }, `HERMES published a CC digest — ${dig.threads.length} threads`, "hermes", id);
+          summary = `CC digest: ${dig.threads.length} threads from the last ${days} days.`;
+        }
+        const report: MissionReport = {
+          id: rid("rpt"),
+          mission_id: id,
+          executive_summary: summary,
+          objective_status: empty ? "NOT_ACHIEVED" : "ACHIEVED",
+          tasks_completed: [],
+          tasks_pending: [],
+          key_findings: [],
+          conflicts: [],
+          assumptions: [],
+          needs_human_attention: [],
+          next_actions: [],
+          references: [],
+          agent_report_ids: [],
+          version: 1,
+          deliverables: [],
+          created_at: iso(0),
+        };
+        emit("log", {}, summary, "hermes", id);
+        emit("mission.report_ready", { report }, "HERMES published the mission report", "hermes", id);
+        emit("mission.closed", { mission: { ...base, phase: "CLOSED", final_report_id: report.id, closed_at: iso(0) } }, "Mission closed", "hermes", id);
+      });
+      return base;
     },
     async connect(): Promise<InboxConnectStart> {
       connectStarted = Date.now();
