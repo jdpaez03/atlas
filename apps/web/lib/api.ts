@@ -1,4 +1,4 @@
-import type { AgentDefinition, ApprovalRequest, AtlasEvent, Mission, MissionPhase, Usage, WorldState } from "./contracts";
+import type { AgentDefinition, ApprovalRequest, AtlasEvent, EmailDraft, FollowUp, Mission, MissionPhase, Usage, WorldState } from "./contracts";
 
 export const API_URL = (process.env.NEXT_PUBLIC_ATLAS_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
@@ -169,3 +169,97 @@ export async function getAgents(): Promise<AgentDefinition[]> {
   const res = await fetch(`${API_URL}/agents`, { cache: "no-store" });
   return json<AgentDefinition[]>(res);
 }
+
+/* ------------------------------------------------------------------------------------------------
+ * Inbox (docs/INBOX.md §2). Every /inbox/* call maps a 404 to null so the UI can hide itself
+ * when the backend has no inbox module.
+ * ---------------------------------------------------------------------------------------------- */
+
+export interface InboxStatus {
+  /** "graph" | "folder"; null/"" = not configured */
+  source: string | null;
+  connected: boolean;
+  account: string | null;
+  last_scan: string | null;
+  next_scan: string | null;
+  schedule: string | string[] | null;
+  processed_count: number;
+  hint: string | null;
+}
+
+export interface InboxConnectStart {
+  user_code: string;
+  verification_uri: string;
+  expires_in: number;
+  message?: string | null;
+}
+
+/** Normalized GET /inbox/connect/status. */
+export interface InboxConnectState {
+  state: "pending" | "connected" | "error";
+  account: string | null;
+  error: string | null;
+}
+
+export type FollowUpPatch = Partial<Pick<FollowUp, "status" | "due" | "title" | "priority">>;
+
+export interface DraftDecisionBody {
+  decision: "APPROVED" | "DISCARDED";
+  subject?: string;
+  body?: string;
+  to?: string[];
+  cc?: string[];
+}
+
+/** The operations the Follow-ups view needs; implemented by the live API and by mock mode. */
+export interface InboxApi {
+  status(): Promise<InboxStatus | null>;
+  scan(): Promise<unknown>;
+  connect(): Promise<InboxConnectStart>;
+  connectStatus(): Promise<InboxConnectState>;
+  patchFollowup(id: string, patch: FollowUpPatch): Promise<FollowUp>;
+  draftFollowup(id: string): Promise<unknown>;
+  decideDraft(id: string, body: DraftDecisionBody): Promise<EmailDraft>;
+}
+
+export const DRAFT_EML_URL = (id: string) => `${API_URL}/drafts/${encodeURIComponent(id)}/eml`;
+export const INBOX_SETUP_DOC = "https://github.com/jdpaez03/atlas/blob/main/docs/INBOX_SETUP.md";
+
+function normalizeConnectState(body: unknown): InboxConnectState {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const raw = String(b.state ?? b.status ?? "").toLowerCase();
+  const err = (b.hint ?? b.error ?? b.detail ?? null) as string | null; // hint is the plain-language one
+  const connected = b.connected === true || raw === "connected" || raw === "ok" || raw === "done";
+  const failed = !connected && (raw === "error" || raw === "expired" || raw === "failed" || raw === "declined" || (!!b.error && raw !== "pending"));
+  return {
+    state: connected ? "connected" : failed ? "error" : "pending",
+    account: (b.account as string | null) ?? null,
+    error: failed ? (err ?? (raw === "expired" ? "The code expired — start again." : "Sign-in failed.")) : null,
+  };
+}
+
+const post = (path: string, body?: unknown) =>
+  fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: body === undefined ? undefined : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+export const inboxApi: InboxApi = {
+  status: async () => {
+    const res = await fetch(`${API_URL}/inbox/status`, { cache: "no-store" });
+    if (res.status === 404) return null;
+    return json<InboxStatus>(res);
+  },
+  scan: () => post("/inbox/scan").then((r) => json<unknown>(r)),
+  connect: () => post("/inbox/connect").then((r) => json<InboxConnectStart>(r)),
+  connectStatus: () => fetch(`${API_URL}/inbox/connect/status`, { cache: "no-store" }).then((r) => json<unknown>(r)).then(normalizeConnectState),
+  patchFollowup: (id, patch) =>
+    fetch(`${API_URL}/followups/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }).then((r) => json<FollowUp>(r)),
+  draftFollowup: (id) => post(`/followups/${encodeURIComponent(id)}/draft`).then((r) => json<unknown>(r)),
+  decideDraft: (id, body) => post(`/drafts/${encodeURIComponent(id)}/decision`, body).then((r) => json<EmailDraft>(r)),
+};

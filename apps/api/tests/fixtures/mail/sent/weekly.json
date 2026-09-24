@@ -1,0 +1,12 @@
+{
+  "id": "AAMkAGsent001=",
+  "internetMessageId": "<sent001@empresa.com>",
+  "conversationId": "AAQkConv777",
+  "subject": "Minuta semanal",
+  "from": "jd@empresa.com",
+  "toRecipients": "equipo@empresa.com;Pedro Ruiz <pedro@empresa.com>",
+  "ccRecipients": "",
+  "receivedDateTime": "2026-09-23T15:00:00Z",
+  "isHtml": false,
+  "body": "Equipo,\nMe comprometo a enviar el presupuesto el lunes.\n\nOn Mon, Sep 21, 2026 Pedro wrote:\n> old stuff"
+}

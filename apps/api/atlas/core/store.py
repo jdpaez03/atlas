@@ -17,6 +17,9 @@ mutation so clients never have to derive anything):
     report.submitted                           {report, task?}   task.result_report_id was set
     mission.report_ready                       {report, mission} mission.final_report_id was set
     approval.requested / approval.decided      {approval}
+    evidence.recorded                          {evidence}
+    followup.upserted                          {followup}        inbox follow-up created/updated (docs/INBOX.md)
+    draft.upserted                             {draft}           email draft proposed/edited/decided/exported
     log                                        {}                or {reset: true, agent_states: [...]}
 
 Persistence (docs/PHASE3.md B): when the bus has an `EventLog`, every event is stored; `restore()` folds
@@ -752,6 +755,50 @@ class WorldStore:
         self._decisions.pop(approval_id, None)
         return self.approval(approval_id)
 
+    # -- inbox: follow-ups and drafts (docs/INBOX.md) -----------------------
+
+    def followups(self, *, status: str | None = None, kind: str | None = None,
+                  node: str | None = None) -> list[FollowUp]:
+        return [f for f in self._state.followups
+                if (status is None or f.status == status) and (kind is None or f.kind == kind)
+                and (node is None or f.node == node)]
+
+    def followup(self, followup_id: str) -> FollowUp:
+        return self._find(self._state.followups, followup_id, "follow-up")
+
+    def drafts(self, *, status: str | None = None, followup_id: str | None = None) -> list[EmailDraft]:
+        return [d for d in self._state.drafts
+                if (status is None or d.status == status) and (followup_id is None or d.followup_id == followup_id)]
+
+    def draft(self, draft_id: str) -> EmailDraft:
+        return self._find(self._state.drafts, draft_id, "draft")
+
+    async def upsert_followup(self, followup: FollowUp, *, summary: str | None = None,
+                              mission_id: str | None = None, agent_id: str | None = None) -> FollowUp:
+        """Create or replace a follow-up (by id); emits followup.upserted {followup}. `updated_at` is set now."""
+        self._check_node(followup.node)
+        previous = next((f for f in self._state.followups if f.id == followup.id), None)
+        followup = followup.model_copy(update={"updated_at": _now()})
+        _upsert(self._state.followups, followup)
+        await self._emit(
+            EventType.FOLLOWUP_UPSERTED, summary or _followup_summary(followup, previous),
+            {"followup": followup}, mission_id=mission_id, agent_id=agent_id,
+        )
+        return followup
+
+    async def upsert_draft(self, draft: EmailDraft, *, summary: str | None = None,
+                           mission_id: str | None = None, agent_id: str | None = None) -> EmailDraft:
+        """Create or replace an email draft (by id); emits draft.upserted {draft}. `updated_at` is set now."""
+        self._check_node(draft.node)
+        previous = next((d for d in self._state.drafts if d.id == draft.id), None)
+        draft = draft.model_copy(update={"updated_at": _now()})
+        _upsert(self._state.drafts, draft)
+        await self._emit(
+            EventType.DRAFT_UPSERTED, summary or _draft_summary(draft, previous),
+            {"draft": draft}, mission_id=mission_id, agent_id=agent_id,
+        )
+        return draft
+
     # -- misc ----------------------------------------------------------------
 
     async def record_evidence(self, evidence: Evidence, summary: str | None = None) -> Evidence:
@@ -762,7 +809,8 @@ class WorldStore:
             "file_listed": "listed", "file_read": "read", "file_written": "wrote",
             "web_search": "searched the web for", "web_fetch": "fetched", "consult": "consulted",
             "approval": "requested approval",
-        }[evidence.kind]
+            "email_read": "read email", "draft_created": "drafted",  # M2: inbox evidence kinds
+        }.get(evidence.kind, evidence.kind)
         name = self.registry.get(evidence.agent_id).name if evidence.agent_id != "human" else "Human"
         line = summary or f"{name} {verb} {evidence.ref}" + ("" if evidence.ok else " (failed)")
         await self._emit(
@@ -903,6 +951,59 @@ class WorldStore:
             TaskStatus.FAILED.value: f"{who} failed {t}",
             TaskStatus.CANCELLED.value: f"{t} was cancelled",
         }[task.status]
+
+
+# ---------------------------------------------------------------------------
+# Inbox event summaries
+# ---------------------------------------------------------------------------
+
+FOLLOWUP_KIND_LABELS = {
+    "MY_COMMITMENT": "I owe", "THEIR_COMMITMENT": "they owe", "AWAITING_REPLY": "awaiting reply",
+    "REQUEST_TO_ME": "request to me",
+}
+
+
+def _person(value: str | None) -> str:
+    """'Ana Pérez <ana@x.com>' -> 'Ana Pérez' (or the address when there is no name)."""
+    if not value:
+        return ""
+    name = value.split("<", 1)[0].strip().strip('"')
+    return name or value.strip("<> ")
+
+
+def _clip(text: str, n: int = 90) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def _followup_summary(f: FollowUp, previous: FollowUp | None) -> str:
+    title = f"'{_clip(f.title)}'"
+    who = f" · {_person(f.counterpart)}" if f.counterpart else ""
+    if previous is None:
+        due = f" · due {f.due.isoformat()}" if f.due else ""
+        return f"New follow-up ({FOLLOWUP_KIND_LABELS.get(f.kind, f.kind)}) · {title}{who}{due}"
+    if previous.status != f.status:
+        verb = {"OPEN": "reopened", "WAITING": "is waiting on a follow-up", "DONE": "done",
+                "DISMISSED": "dismissed"}[f.status]
+        return f"Follow-up {verb} · {title}{who}"
+    if previous.draft_id != f.draft_id and f.draft_id:
+        return f"Follow-up {title} has a draft to review"
+    if previous.due != f.due:
+        return f"Follow-up {title} due " + (f.due.isoformat() if f.due else "cleared")
+    return f"Follow-up updated · {title}{who}"
+
+
+def _draft_summary(d: EmailDraft, previous: EmailDraft | None) -> str:
+    subject = f"'{_clip(d.subject, 80)}'"
+    to = ", ".join(_person(x) for x in d.to[:3]) or "—"
+    if previous is None:
+        return f"Draft proposed · {subject} → {to}"
+    if previous.status != d.status:
+        if d.status == "EXPORTED":
+            where = "saved to Outlook Drafts" if d.export == "outlook_drafts" else "exported as .eml"
+            return f"Draft {where} · {subject}"
+        return f"Draft {d.status.lower()} · {subject}"
+    return f"Draft edited · {subject}"
 
 
 __all__ = [

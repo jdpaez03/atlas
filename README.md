@@ -19,7 +19,7 @@ agents you already run** (via http, cli or mcp adapters). See [docs/CONTRACTS.md
 
 ## Status
 
-**Phase 3 is done**: agents can read your files (sandboxed, per node), take attachments, write real deliverables, and every action they take is recorded as evidence; each mission has a follow-up thread and history survives restarts. **Phase 2**: live missions run on Claude, either on your **Claude Max/Pro plan** (through Claude Code, no API key) or on an API key. Simulated missions still work without either. Two scenarios are included:
+**Inbox follow-ups** (new): ATLAS can read your work Outlook and keep a follow-up board with drafted reminders — see [docs/INBOX_SETUP.md](docs/INBOX_SETUP.md). **Phase 3 is done**: agents can read your files (sandboxed, per node), take attachments, write real deliverables, and every action they take is recorded as evidence; each mission has a follow-up thread and history survives restarts. **Phase 2**: live missions run on Claude, either on your **Claude Max/Pro plan** (through Claude Code, no API key) or on an API key. Simulated missions still work without either. Two scenarios are included:
 a real-estate investment analysis, and an EOS quarterly Rocks diagnosis run by the EOS division.
 See the [roadmap](docs/ROADMAP.md).
 

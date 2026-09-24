@@ -18,6 +18,8 @@ const KIND: Record<EventType, { tag: string; color: string }> = {
   "approval.requested": { tag: "HMN", color: "#f59e0b" },
   "approval.decided": { tag: "HMN", color: "#f59e0b" },
   "evidence.recorded": { tag: "EVD", color: "#2dd4bf" },
+  "followup.upserted": { tag: "FUP", color: "#f0abfc" },
+  "draft.upserted": { tag: "DRF", color: "#34d399" },
   log: { tag: "LOG", color: "#64748b" },
 };
 

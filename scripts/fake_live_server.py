@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+import re
 from typing import Any
 
 os.environ.setdefault("ANTHROPIC_API_KEY", "fake-key-for-demo")  # makes /config report live_available
@@ -69,6 +70,28 @@ def _latest_attachment() -> str | None:
 async def brain(**kw: Any) -> Any:
     await asyncio.sleep(random.uniform(1.0, 2.5))
     tools, prompt = _tools(kw), call_text(kw)
+    if "record_followups" in tools:
+        items = []
+        for m in re.finditer(r"=== message_id: (\S+) \((SENT BY ME|RECEIVED)\) ===\n(.*?)=== end ===", prompt, re.DOTALL):
+            mid, direction, block = m.groups()
+            sender = re.search(r"From: (.*)", block).group(1)
+            subject = re.search(r"Subject: (.*)", block).group(1)
+            body = block.split("--- body ---", 1)[1].strip()
+            first = re.split(r"(?<=[.!?])\s", body, maxsplit=1)[0][:200]
+            if direction == "SENT BY ME":
+                items.append({"message_id": mid, "kind": "AWAITING_REPLY", "title": f"Respuesta a: {subject}",
+                              "counterpart": re.search(r"To: (.*)", block).group(1), "excerpt": first})
+            else:
+                items.append({"message_id": mid, "kind": "THEIR_COMMITMENT", "title": subject,
+                              "counterpart": sender, "due": "2026-09-21", "priority": "HIGH", "excerpt": first})
+        return tool_use("record_followups", {"items": items})
+    if "draft_email" in tools:
+        fid = re.search(r"followup_id: (\S+)", prompt).group(1)
+        who = (re.search(r"Counterpart: (.*)", prompt).group(1) or "").strip()
+        title = re.search(r"Title: (.*)", prompt).group(1)
+        return tool_use("draft_email", {"followup_id": fid, "to": [who], "subject": f"Seguimiento: {title}",
+                                        "body": "Hola,\n\nTe escribo para dar seguimiento a lo que quedamos. "
+                                                "¿Me confirmas el estatus y una fecha?\n\nGracias,\nJuan Diego"})
     if "acknowledge" in tools:
         return tool_use("acknowledge", {"text": "Noted — I'll pass this to the agents still working."})
     if "respond_to_followup" in tools:

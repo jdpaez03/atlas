@@ -18,6 +18,8 @@
   POST /missions/{id}/messages      {text} mission thread (guidance, follow-up rounds) -> AgentMessage
   POST /approvals/{id}/decision     {decision: APPROVED|REJECTED, note?} -> ApprovalRequest
   POST /reset                       clear all missions (dev only)
+  Inbox (docs/INBOX.md, routes/inbox.py): /inbox/status, /inbox/scan, /inbox/connect[/status], /followups,
+                                    /followups/{id}[/draft], /drafts, /drafts/{id}/decision, /drafts/{id}/eml
   WS   /ws?since=<seq>              replay events with seq > since, then live
 
 Run: `uv run python -m atlas` (required on Windows for the subscription backend, see atlas/__main__.py).
@@ -43,8 +45,11 @@ from .core.events import EventBus
 from .core.models import AgentDefinition
 from .core.registry import DEFAULT_AGENTS_DIR, AgentRegistry
 from .core.store import WorldStore
+from .inbox.engine import InboxEngine
+from .inbox.scheduler import InboxScheduler
+from .inbox.sources import make_source
 from .live.orchestrator import LiveEngine
-from .routes import approvals, live, missions, stream, world
+from .routes import approvals, inbox, live, missions, stream, world
 from .sim.runner import ScenarioLibrary, Simulator
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -85,6 +90,10 @@ async def lifespan(app: FastAPI):
     app.state.store = store
     app.state.sim = sim
     app.state.live = live_engine
+    inbox_engine = InboxEngine(store, live_engine, source_factory=make_source)  # docs/INBOX.md
+    inbox_scheduler = InboxScheduler(inbox_engine)
+    app.state.inbox = inbox_engine
+    app.state.inbox_scheduler = inbox_scheduler
     n_scenarios = len(library.all())
     info = live_engine.backend_info()
     live_line = (
@@ -103,9 +112,12 @@ async def lifespan(app: FastAPI):
             + (f" · {len(interrupted)} interrupted" if interrupted else ""),
             agent_id=registry.orchestrator.id,
         )
+    await inbox_scheduler.start()
     try:
         yield
     finally:
+        await inbox_scheduler.stop()  # fast: cancels the sleep; a running scan is left for recover_interrupted
+        await inbox_engine.stop()
         # stop the engines without closing their missions: on the next start they come back interrupted
         await live_engine.stop_all()
         await sim.cancel_all()
@@ -137,4 +149,5 @@ app.include_router(world.router)
 app.include_router(missions.router)
 app.include_router(live.router)
 app.include_router(approvals.router)
+app.include_router(inbox.router)
 app.include_router(stream.router)

@@ -29,6 +29,7 @@ import type {
   TaskStatus,
   WorldState,
 } from "./contracts";
+import { mockInbox, type MockInbox } from "./mockInbox";
 import type { Transport } from "./store";
 
 /* ---------------------------------------------------------------- organization (mirrors /agents) */
@@ -69,6 +70,7 @@ const AGENTS: AgentDefinition[] = [
   agent({ id: "argos", name: "ARGOS", title: "Monitor", color: "#fbbf24", description: "Watches sources, processes and events; detects changes, anomalies and inconsistencies and alerts ATLAS.", capabilities: ["monitoring", "change_detection", "anomaly_detection", "consistency_checks"] }),
   agent({ id: "oracle", name: "ORACLE", title: "Strategy & Analysis", color: "#a78bfa", description: "Analyzes what other agents gather, compares scenarios and builds recommendations — always separating facts, assumptions, scenarios and recommendations.", capabilities: ["analysis", "scenario_modeling", "financial_reasoning"] }),
   agent({ id: "alfred", name: "ALFRED", title: "Execution / Operations", color: "#34d399", description: "Turns approved decisions into concrete actions — deliverables, follow-ups and routine workflows. External actions always go through human approval.", capabilities: ["execution", "deliverables", "follow_up"] }),
+  agent({ id: "hermes", name: "HERMES", title: "Inbox", color: "#f0abfc", nodes: ["corporate"], description: "Reads the work mailbox and extracts commitments, requests and pending replies as follow-ups — precisely, without speculation.", capabilities: ["email", "follow_up", "extraction"] }),
   eos("vision", "Vision", "V/TO, Core Values, Core Focus, 10-Year Target, 3-Year Picture and 1-Year Plan."),
   eos("people", "People", "Accountability Chart, seats, GWC and Core Values."),
   eos("data", "Data", "Scorecard, measurables per seat, thresholds and data integrity."),
@@ -149,6 +151,7 @@ class MockEngine {
   deliverables: Attachment[] = [];
   lastReport: MissionReport | null = null;
   lastApprovalId: string | null = null;
+  inbox: MockInbox;
 
   publishReport(report: MissionReport) {
     const m = this.mission!;
@@ -163,6 +166,7 @@ class MockEngine {
     const ts = now();
     const seed = seedHistory();
     for (const m of seed.missions) this.missions.set(m.id, m);
+    this.inbox = mockInbox((type, payload, summary, agentId) => this.emit(type, payload, summary, agentId, null), speed);
     this.world = {
       nodes: NODES,
       divisions: DIVISIONS,
@@ -175,6 +179,8 @@ class MockEngine {
       mission_reports: [],
       approvals: [],
       evidence: [],
+      followups: this.inbox.followups,
+      drafts: this.inbox.drafts,
       last_seq: 0,
     };
   }
@@ -228,7 +234,9 @@ class MockEngine {
       web_fetch: "fetched",
       consult: "consulted",
       approval: "requested approval",
-      };
+      email_read: "read the email",
+      draft_created: "drafted",
+    };
     const short = ref.split(/[\\/]/).pop() || ref;
     this.emit("evidence.recorded", { evidence: ev }, `${name} ${verb[kind]} ${kind === "consult" ? short.toUpperCase() : short}${ok ? "" : ` — failed: ${detail}`}`, agentId);
     return ev;
@@ -246,8 +254,8 @@ class MockEngine {
     return structuredClone({ ...this.world, last_seq: this.seq });
   }
 
-  emit(type: EventType, payload: Record<string, unknown>, summary: string, agent_id: string | null = null) {
-    const e: AtlasEvent = { id: rid("evt"), seq: ++this.seq, type, mission_id: this.mission?.id ?? null, agent_id, summary, payload, ts: now() };
+  emit(type: EventType, payload: Record<string, unknown>, summary: string, agent_id: string | null = null, missionId?: string | null) {
+    const e: AtlasEvent = { id: rid("evt"), seq: ++this.seq, type, mission_id: missionId !== undefined ? missionId : this.mission?.id ?? null, agent_id, summary, payload, ts: now() };
     this.listener?.(e);
   }
 
@@ -929,6 +937,7 @@ export function mockTransport({ speed = 1 }: { speed?: number } = {}): Transport
     scenarios: async () => SCENARIOS,
     config: async () => mockConfig(),
     availability: async () => AVAILABILITY,
+    inbox: engine.inbox.api,
     async cancel(id: string) {
       const m = engine.mission;
       if (!m || m.id !== id) throw new Error("ATLAS API 404: mission not found");

@@ -11,8 +11,9 @@ def test_registry_loads_initial_team():
     reg = AgentRegistry.load()
     core = {"atlas", "sofia", "argos", "oracle", "alfred"}
     eos = {f"eos-{c}" for c in ["vision", "people", "data", "issues", "process", "traction"]}
-    assert {a.id for a in reg.all()} == core | eos | {"market-studies"}
+    assert {a.id for a in reg.all()} == core | eos | {"market-studies", "hermes"}
     assert not reg.can_work_in("market-studies", "personal")
+    assert not reg.can_work_in("hermes", "personal")
     assert reg.orchestrator.id == "atlas"
     assert {a.id for a in reg.division_members("eos")} == eos
 
@@ -53,7 +54,7 @@ def test_api_health_agents_events():
     from atlas.main import app
     with TestClient(app) as client:
         assert client.get("/health").json()["status"] == "ok"
-        assert len(client.get("/agents").json()) == 12
+        assert len(client.get("/agents").json()) == 13
         events = client.get("/events").json()
         assert events and events[0]["summary"].startswith("ATLAS online")
 

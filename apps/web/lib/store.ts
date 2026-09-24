@@ -1,14 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { NO_LIVE_CONFIG, api, wsUrl, type AtlasConfig, type Availability, type Decision, type LaunchMissionBody, type MissionSummary, type Scenario } from "./api";
+import { NO_LIVE_CONFIG, api, inboxApi, wsUrl, type InboxApi, type AtlasConfig, type Availability, type Decision, type LaunchMissionBody, type MissionSummary, type Scenario } from "./api";
 import type {
   AgentMessage,
   AgentReport,
   AgentState,
   ApprovalRequest,
   AtlasEvent,
+  EmailDraft,
   Evidence,
+  FollowUp,
   Mission,
   MissionReport,
   Task,
@@ -33,6 +35,8 @@ export function emptyWorld(): WorldState {
     mission_reports: [],
     approvals: [],
     evidence: [],
+    followups: [],
+    drafts: [],
     last_seq: 0,
   };
 }
@@ -67,6 +71,8 @@ export function applyEvent(s: WorldState, e: AtlasEvent): WorldState {
   if (p.task) next.tasks = upsertBy(s.tasks, p.task as Task, byId);
   if (p.state) next.agent_states = upsertBy(s.agent_states, p.state as AgentState, (x) => x.agent_id);
   if (p.evidence) next.evidence = upsertBy(s.evidence ?? [], p.evidence as Evidence, byId);
+  if (p.followup) next.followups = upsertBy(s.followups ?? [], p.followup as FollowUp, byId);
+  if (p.draft) next.drafts = upsertBy(s.drafts ?? [], p.draft as EmailDraft, byId);
   if (p.approval) next.approvals = upsertBy(s.approvals, p.approval as ApprovalRequest, byId);
   if (p.message) {
     const m = p.message as AgentMessage;
@@ -111,6 +117,8 @@ export interface Transport {
   cancel(id: string): Promise<Mission>;
   config(): Promise<AtlasConfig>;
   availability(): Promise<Availability>;
+  /** Inbox follow-ups & drafts (docs/INBOX.md). */
+  inbox: InboxApi;
 }
 
 export function liveTransport(): Transport {
@@ -125,6 +133,7 @@ export function liveTransport(): Transport {
     missions: (node) => api.missions(node),
     config: api.config,
     availability: api.availability,
+    inbox: inboxApi,
     connect(h) {
       let closed = false;
       let ws: WebSocket | null = null;
@@ -221,7 +230,7 @@ function storeReducer(s: StoreState, a: Action): StoreState {
   switch (a.type) {
     case "snapshot":
       // Tolerate a pre-Phase-3 snapshot without `evidence`.
-      return { ...s, world: { ...a.world, evidence: a.world.evidence ?? [] }, loaded: true };
+      return { ...s, world: { ...a.world, evidence: a.world.evidence ?? [], followups: a.world.followups ?? [], drafts: a.world.drafts ?? [] }, loaded: true };
     case "event":
       return { ...s, world: applyEvent(s.world, a.event), feed: mergeFeed(s.feed, [a.event]) };
     case "backfill":
@@ -316,6 +325,24 @@ export function useAtlas() {
     return t.scenarios();
   }, []);
 
+  // Inbox: stable wrappers that route to whichever transport is active.
+  const inbox = useMemo<InboxApi>(() => {
+    const t = () => {
+      const x = transportRef.current;
+      if (!x) throw new Error("not connected");
+      return x.inbox;
+    };
+    return {
+      status: () => (transportRef.current ? transportRef.current.inbox.status().catch(() => null) : Promise.resolve(null)),
+      scan: () => t().scan(),
+      connect: () => t().connect(),
+      connectStatus: () => t().connectStatus(),
+      patchFollowup: (id, p) => t().patchFollowup(id, p),
+      draftFollowup: (id) => t().draftFollowup(id),
+      decideDraft: (id, b) => t().decideDraft(id, b),
+    };
+  }, []);
+
   return useMemo(
     () => ({
       world: state.world,
@@ -333,8 +360,9 @@ export function useAtlas() {
       sendMessage,
       attach,
       missionHistory,
+      inbox,
     }),
-    [state, conn, transport, launch, decide, scenarios, cancel, config, availability, sendMessage, attach, missionHistory],
+    [state, conn, transport, launch, decide, scenarios, cancel, config, availability, sendMessage, attach, missionHistory, inbox],
   );
 }
 

@@ -1,0 +1,12 @@
+{
+  "Id": "AAMkAGpa002=",
+  "InternetMessageId": "<pa002@cliente.com>",
+  "ConversationId": "AAQkConv888",
+  "Subject": "Contrato firmado",
+  "From": "Carlos Díaz <carlos@cliente.com>",
+  "To": "jd@empresa.com",
+  "Cc": "legal@cliente.com; Ana <ana@cliente.com>",
+  "DateTimeReceived": "2026-09-23T18:30:00+00:00",
+  "WebLink": "https://outlook.office365.com/owa/?ItemID=AAMkAGpa002%3D",
+  "Body": "<html><body><div>Juan, adjunto el contrato.</div><div>Quedo atento a tus comentarios antes del 30.</div><div>&nbsp;</div><div>De: Juan Paez</div><div>Enviado: lunes</div></body></html>"
+}

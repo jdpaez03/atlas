@@ -1,0 +1,24 @@
+From: "Laura Gómez" <laura.gomez@proveedor.com>
+To: "Juan Paez" <jd@empresa.com>
+Cc: compras@empresa.com
+Subject: RE: Cotización de materiales
+Date: Tue, 22 Sep 2026 16:05:00 -0600
+Message-ID: <abc123@proveedor.com>
+Thread-Index: AQHZ1234
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="BOUNDARY"
+
+--BOUNDARY
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+<html><head><style>p {margin:0}</style></head><body>
+<p>Hola Juan,</p>
+<p>Te env=C3=ADo la cotizaci=C3=B3n actualizada el <b>viernes 25</b>.<br>Saludos,</p>
+<p>Laura</p>
+<hr>
+<div id=3D"divRplyFwdMsg"><b>From:</b> Juan Paez &lt;jd@empresa.com&gt;<br>
+<b>Sent:</b> Monday<br>
+<p>Laura, =C2=BFpuedes mandarme la cotizaci=C3=B3n?</p></div>
+</body></html>
+--BOUNDARY--

@@ -45,3 +45,7 @@ work in parallel against it without colliding.
   took → sandboxed file tools per node, attachments, deliverables, and *evidence written by the system, not the agent*
   (reports carry it; unverified claims are flagged). Plus a mission thread (follow-up rounds, report versions) and
   persistent history. Corporate agents read `~/Documents` by default (`ATLAS_FILE_ROOTS_CORPORATE`).
+- 2026-09-24 · **Inbox (Phase 4 slice)**: HERMES reads the work Outlook mailbox (Microsoft Graph device-code sign-in,
+  or a Power Automate → OneDrive folder when IT approval isn't available), turns commitments into follow-ups on the
+  ATLAS board, and ALFRED drafts follow-ups. ATLAS never sends: approved drafts go to Outlook Drafts or an `.eml`.
+  Email bodies are never stored (only sender, subject, date and a verbatim excerpt). Setup: docs/INBOX_SETUP.md.

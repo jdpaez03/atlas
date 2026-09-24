@@ -16,6 +16,8 @@ const EVIDENCE: Record<Evidence["kind"], { label: string; color: string }> = {
   web_fetch: { label: "Fetch", color: "#c4b5fd" },
   consult: { label: "Consult", color: "#2dd4bf" },
   approval: { label: "Approval", color: "#f59e0b" },
+  email_read: { label: "Email", color: "#f0abfc" },
+  draft_created: { label: "Draft", color: "#34d399" },
 };
 
 export function EvidenceIcon({ kind, color, size = 12 }: { kind: Evidence["kind"]; color: string; size?: number }) {
@@ -62,6 +64,21 @@ export function EvidenceIcon({ kind, color, size = 12 }: { kind: Evidence["kind"
           <path d="M12 6.25h2v5.5h-1v2l-2.5-2H7.5v-1.5" />
         </svg>
       );
+    case "email_read":
+      return (
+        <svg {...p} aria-hidden>
+          <rect x="1.75" y="3.25" width="12.5" height="9.5" rx="1.25" />
+          <path d="M2.25 4l5.75 4.5L13.75 4" />
+        </svg>
+      );
+    case "draft_created":
+      return (
+        <svg {...p} aria-hidden>
+          <path d="M9 3.25H2.75v9.5h10.5V8.5" />
+          <path d="M2.75 4.25l4.5 3.5 1.25-1" />
+          <path d="M9.25 9.5l.5-2 4-4 1.5 1.5-4 4z" />
+        </svg>
+      );
     case "approval":
       return (
         <svg {...p} aria-hidden>
@@ -77,6 +94,8 @@ function shortRef(e: Evidence, agents: Map<string, AgentDefinition>): string {
   if (e.kind === "consult") return agents.get(e.ref)?.name ?? e.ref.toUpperCase();
   if (e.kind === "approval") return e.ref.length > 14 ? `${e.ref.slice(0, 12)}…` : e.ref;
   if (e.kind === "web_search") return `“${e.ref}”`;
+  // email_read / draft_created refs are subjects (or message ids), not paths.
+  if (e.kind === "email_read" || e.kind === "draft_created") return e.ref;
   if (/^https?:\/\//.test(e.ref)) {
     try {
       const u = new URL(e.ref);

@@ -5,7 +5,10 @@ import { ActivityFeed } from "@/components/ActivityFeed";
 import { AgentBoard, type DivisionGroup } from "@/components/AgentBoard";
 import { ApprovalQueue } from "@/components/ApprovalQueue";
 import { CollabGraph } from "@/components/CollabGraph";
-import { Header } from "@/components/Header";
+import { DraftDrawer } from "@/components/DraftDrawer";
+import { FollowUpsBoard, type FollowUpActions } from "@/components/FollowUps";
+import { Header, type View } from "@/components/Header";
+import { InboxChip } from "@/components/InboxChip";
 import { MissionHistory } from "@/components/MissionHistory";
 import { MissionPanel } from "@/components/MissionPanel";
 import { MissionThread } from "@/components/MissionThread";
@@ -14,8 +17,16 @@ import { Reports } from "@/components/Reports";
 import { TaskBoard } from "@/components/TaskBoard";
 import { API_URL, type AtlasConfig, type Availability, type MissionSummary } from "@/lib/api";
 import type { AgentDefinition, Task } from "@/lib/contracts";
+import { followupCounts, proposedDrafts } from "@/lib/followups";
 import { useAtlas } from "@/lib/store";
-import { STATUS, msgFrom, msgTo } from "@/lib/ui";
+import { STATUS, msgFrom, msgTo, useNow } from "@/lib/ui";
+
+const INBOX_EVENTS = new Set(["followup.upserted", "draft.upserted"]);
+
+function initialView(): View {
+  if (typeof window === "undefined") return "missions";
+  return new URLSearchParams(window.location.search).get("view") === "followups" ? "followups" : "missions";
+}
 
 export default function CommandCenter() {
   const atlas = useAtlas();
@@ -115,13 +126,91 @@ export default function CommandCenter() {
     [feed, nodeMissionIds],
   );
 
+  /* ---- Inbox: follow-ups & drafts (docs/INBOX.md) */
+  const [view, setView] = useState<View>("missions");
+  useEffect(() => setView(initialView()), []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      if (e.key === "1") setView("missions");
+      else if (e.key === "2") setView("followups");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const followups = useMemo(() => (world.followups ?? []).filter((f) => !nodeId || f.node === nodeId), [world.followups, nodeId]);
+  const drafts = useMemo(() => (world.drafts ?? []).filter((d) => !nodeId || d.node === nodeId), [world.drafts, nodeId]);
+  const toReview = useMemo(() => proposedDrafts(drafts).sort((a, b) => b.created_at.localeCompare(a.created_at)), [drafts]);
+  const fuNow = useNow(60_000);
+  const fuCounts = useMemo(() => followupCounts(followups, fuNow), [followups, fuNow]);
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const openDraft = world.drafts?.find((d) => d.id === draftId) ?? null;
+  const openDraftFollowup = openDraft?.followup_id ? world.followups.find((f) => f.id === openDraft.followup_id) ?? null : null;
+  // "Draft follow-up" → open the drawer as soon as ALFRED's draft lands.
+  const [awaitDraftFor, setAwaitDraftFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!awaitDraftFor) return;
+    const f = followups.find((x) => x.id === awaitDraftFor);
+    const d = f?.draft_id ? drafts.find((x) => x.id === f.draft_id) : undefined;
+    if (d?.status === "PROPOSED") {
+      setDraftId(d.id);
+      setAwaitDraftFor(null);
+    }
+  }, [awaitDraftFor, followups, drafts]);
+  const { inbox } = atlas;
+  const fuActions = useMemo<FollowUpActions>(
+    () => ({
+      patch: (id, p) => inbox.patchFollowup(id, p),
+      draft: (id) => {
+        setAwaitDraftFor(id);
+        return inbox.draftFollowup(id);
+      },
+      openDraft: setDraftId,
+    }),
+    [inbox],
+  );
+  const inboxEvents = useMemo(
+    () => feed.filter((e) => INBOX_EVENTS.has(e.type) || e.agent_id === "hermes" || (e.type === "evidence.recorded" && /email_read|draft_created/.test(JSON.stringify(e.payload?.evidence ?? "")))),
+    [feed],
+  );
+
   const activeAgents = org.visible.filter((a) => STATUS[states.get(a.id)?.status ?? "IDLE"].active).length;
 
   if (!loaded) return <Boot conn={conn} />;
 
   return (
     <div className="min-h-screen">
-      <Header nodes={world.nodes} node={nodeId} onNode={(id) => { setNodeId(id); setPicked(null); }} conn={conn} />
+      <Header
+        nodes={world.nodes}
+        node={nodeId}
+        onNode={(id) => { setNodeId(id); setPicked(null); }}
+        conn={conn}
+        view={view}
+        onView={setView}
+        counts={fuCounts}
+        inbox={<InboxChip inbox={inbox} ready={ready} conn={conn} />}
+      />
+      <DraftDrawer draft={openDraft} followup={openDraftFollowup} onClose={() => setDraftId(null)} decide={inbox.decideDraft} />
+      {view === "followups" ? (
+        <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_340px]">
+            <FollowUpsBoard followups={followups} drafts={drafts} actions={fuActions} inboxAvailable className="min-h-[560px]" />
+            <div className="flex min-w-0 flex-col gap-4">
+              <ApprovalQueue approvals={approvals} agents={agents} decide={atlas.decide} drafts={toReview} onOpenDraft={setDraftId} />
+              <ActivityFeed events={inboxEvents} agents={agents} className="h-[420px] xl:h-auto xl:min-h-[360px] xl:flex-1" />
+            </div>
+          </div>
+          <footer className="flex items-center justify-between py-2 font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
+            <span>ATLAS · Follow-ups from your work email · never sends email</span>
+            <span>
+              {atlas.mode === "mock" ? "Simulated stream" : API_URL} · seq {world.last_seq}
+            </span>
+          </footer>
+        </main>
+      ) : (
       <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
         <MissionPanel
           mission={mission}
@@ -184,7 +273,7 @@ export default function CommandCenter() {
             <TaskBoard className="flex-1" tasks={tasks} agents={agents} />
           </div>
           <div className={`flex min-w-0 flex-col gap-4 lg:col-span-2 xl:order-none xl:col-span-1 ${pendingCount > 0 ? "order-first" : ""}`}>
-            <ApprovalQueue approvals={approvals} agents={agents} decide={atlas.decide} />
+            <ApprovalQueue approvals={approvals} agents={agents} decide={atlas.decide} drafts={toReview} onOpenDraft={setDraftId} />
             {/* thread + feed share what's left; absolutely positioned so they never drive the row height */}
             <div className="relative h-[460px] xl:h-auto xl:min-h-[600px] xl:flex-1">
               <div className="absolute inset-0 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-1 xl:grid-rows-[minmax(0,1.1fr)_minmax(0,1fr)]">
@@ -219,6 +308,7 @@ export default function CommandCenter() {
           </span>
         </footer>
       </main>
+      )}
     </div>
   );
 }

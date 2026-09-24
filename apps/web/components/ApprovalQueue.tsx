@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { Decision } from "@/lib/api";
-import type { AgentDefinition, ApprovalRequest } from "@/lib/contracts";
+import type { AgentDefinition, ApprovalRequest, EmailDraft } from "@/lib/contracts";
 import { QUESTION_REASONS, cx, hms, reasonLabel, useNow } from "@/lib/ui";
 import { AgentName, Panel } from "./primitives";
 
@@ -105,15 +105,42 @@ function PendingCard({
   );
 }
 
+/** A proposed email draft, compact: opens the Draft review drawer. */
+function DraftItem({ d, onOpen }: { d: EmailDraft; onOpen: () => void }) {
+  return (
+    <button
+      onClick={onOpen}
+      className="group flex w-full items-center gap-2.5 rounded-lg border border-emerald-500/35 bg-emerald-500/[0.06] px-3 py-2 text-left transition hover:border-emerald-400/60 hover:bg-emerald-500/[0.1]"
+    >
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#34d399" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden>
+        <path d="M9 3.25H2.75v9.5h10.5V8.5" />
+        <path d="M2.75 4.25l4.5 3.5 1.25-1" />
+        <path d="M9.25 9.5l.5-2 4-4 1.5 1.5-4 4z" />
+      </svg>
+      <span className="min-w-0 flex-1">
+        <span className="block font-mono text-[9px] uppercase tracking-[0.16em] text-emerald-300/90">Draft to review</span>
+        <span className="block truncate text-[12px] text-slate-200">{d.subject}</span>
+        <span className="block truncate text-[10.5px] text-mute">to {d.to.join(", ") || "—"}</span>
+      </span>
+      <span className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-emerald-300 opacity-70 group-hover:opacity-100">Review →</span>
+    </button>
+  );
+}
+
 export function ApprovalQueue({
   approvals,
   agents,
   decide,
+  drafts = [],
+  onOpenDraft,
   className,
 }: {
   approvals: ApprovalRequest[];
   agents: Map<string, AgentDefinition>;
   decide: (id: string, d: Decision, note?: string) => Promise<ApprovalRequest>;
+  /** proposed email drafts (docs/INBOX.md) — shown compactly; clicking opens the review drawer */
+  drafts?: EmailDraft[];
+  onOpenDraft?: (id: string) => void;
   className?: string;
 }) {
   const pending = approvals.filter((a) => a.state === "PENDING");
@@ -126,15 +153,18 @@ export function ApprovalQueue({
       title="Human intervention"
       className={cx(className, pending.length > 0 && "!border-amber-500/40")}
       meta={
-        pending.length > 0 ? (
-          <span className="font-semibold text-amber-300">{pending.length} pending</span>
+        pending.length > 0 || drafts.length > 0 ? (
+          <span className="flex items-center gap-2 whitespace-nowrap">
+            {pending.length > 0 && <span className="font-semibold text-amber-300">{pending.length} pending</span>}
+            {drafts.length > 0 && <span className="text-emerald-300">{drafts.length} draft{drafts.length === 1 ? "" : "s"}</span>}
+          </span>
         ) : (
           <span>{history.length} decided</span>
         )
       }
       bodyClassName="flex flex-col gap-2.5 p-3"
     >
-      {pending.length === 0 && (
+      {pending.length === 0 && drafts.length === 0 && (
         <div className="flex items-center gap-3 rounded-lg border border-edge/70 bg-black/15 px-3 py-2.5">
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-emerald-500/40 bg-emerald-500/10 text-emerald-300">
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -149,6 +179,9 @@ export function ApprovalQueue({
       )}
       {pending.map((a) => (
         <PendingCard key={a.id} a={a} agents={agents} decide={decide} />
+      ))}
+      {drafts.map((d) => (
+        <DraftItem key={d.id} d={d} onOpen={() => onOpenDraft?.(d.id)} />
       ))}
       {history.length > 0 && (
         <div>

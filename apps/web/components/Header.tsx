@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import type { NodeDefinition } from "@/lib/contracts";
 import type { ConnStatus } from "@/lib/store";
 import { cx, useNow } from "@/lib/ui";
@@ -13,16 +14,69 @@ const CONN: Record<ConnStatus, { label: string; color: string; pulse: boolean }>
   mock: { label: "Simulated", color: "#a78bfa", pulse: true },
 };
 
+export type View = "missions" | "followups";
+
+function ViewSwitch({ view, onView, counts }: { view: View; onView: (v: View) => void; counts: { open: number; overdue: number } }) {
+  const tabs: { id: View; label: string; key: string }[] = [
+    { id: "missions", label: "Missions", key: "1" },
+    { id: "followups", label: "Follow-ups", key: "2" },
+  ];
+  return (
+    <div role="tablist" aria-label="View" className="flex shrink-0 items-center rounded-md border border-edge bg-black/30 p-0.5">
+      {tabs.map((t) => {
+        const active = view === t.id;
+        return (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={active}
+            onClick={() => onView(t.id)}
+            title={`${t.label} (${t.key})`}
+            className={cx(
+              "flex h-7 items-center gap-1.5 rounded px-2.5 font-mono text-[10.5px] uppercase tracking-[0.16em] transition",
+              active ? "bg-signal/[0.12] text-ink shadow-[inset_0_0_0_1px_rgba(125,211,252,0.3)]" : "text-dim hover:text-slate-200",
+            )}
+          >
+            {t.label}
+            {t.id === "followups" && counts.open > 0 && (
+              <span className="flex items-center gap-1 tracking-normal">
+                <span className={cx("rounded-full px-1.5 text-[9.5px] leading-[16px] tabular-nums", active ? "bg-white/10 text-slate-200" : "bg-white/[0.06] text-slate-300")}>
+                  {counts.open}
+                </span>
+                {counts.overdue > 0 && (
+                  <span className="rounded-full bg-red-500/20 px-1.5 text-[9.5px] leading-[16px] text-red-300 tabular-nums" title={`${counts.overdue} overdue`}>
+                    {counts.overdue}
+                  </span>
+                )}
+              </span>
+            )}
+            <kbd className="hidden rounded border border-edge px-1 text-[8.5px] leading-[13px] text-mute 2xl:inline">{t.key}</kbd>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function Header({
   nodes,
   node,
   onNode,
   conn,
+  view,
+  onView,
+  counts,
+  inbox,
 }: {
   nodes: NodeDefinition[];
   node: string | null;
   onNode: (id: string) => void;
   conn: ConnStatus;
+  view: View;
+  onView: (v: View) => void;
+  counts: { open: number; overdue: number };
+  /** the inbox status chip (renders nothing when the backend has no inbox) */
+  inbox?: ReactNode;
 }) {
   const now = useNow(1000);
   const c = CONN[conn];
@@ -30,17 +84,19 @@ export function Header({
 
   return (
     <header className="sticky top-0 z-30 border-b border-edge/80 bg-void/80 backdrop-blur-md">
-      <div className="mx-auto flex h-14 max-w-[1680px] items-center gap-6 px-4 lg:px-6">
+      <div className="mx-auto flex h-14 max-w-[1680px] items-center gap-4 px-4 lg:gap-5 lg:px-6">
         {/* wordmark */}
         <div className="flex shrink-0 items-center gap-3">
           <Emblem size={30} />
           <div className="leading-none">
             <div className="font-mono text-[19px] font-semibold tracking-[0.42em] text-ink">ATLAS</div>
-            <div className="mt-1 hidden font-mono text-[9px] tracking-[0.26em] text-dim uppercase xl:block">
+            <div className="mt-1 hidden font-mono text-[9px] tracking-[0.26em] text-dim uppercase 2xl:block">
               The intelligence behind the intelligence
             </div>
           </div>
         </div>
+
+        <ViewSwitch view={view} onView={onView} counts={counts} />
 
         {/* node switcher */}
         <nav className="flex min-w-0 flex-1 items-center justify-center gap-1" aria-label="Nodes">
@@ -75,7 +131,8 @@ export function Header({
         </nav>
 
         {/* connection + clock */}
-        <div className="flex shrink-0 items-center gap-4">
+        <div className="flex shrink-0 items-center gap-3">
+          {inbox}
           <div
             className="flex items-center gap-2 rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.2em]"
             style={{ color: c.color, borderColor: `${c.color}44`, background: `${c.color}10` }}
