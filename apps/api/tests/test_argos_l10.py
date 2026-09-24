@@ -216,3 +216,17 @@ def test_preflight(monkeypatch):
     with pytest.raises(CheckNotConfigured):
         L10Check().preflight({})
     L10Check(client()).preflight({})
+
+
+def test_paga_suite_row_states_map_to_done():
+    """Real l10_todos rows: 'cumplido' / 'cancelado' / 'promovido_a_issue' are not open to-dos (regression:
+    finished to-dos past their date were flagged overdue)."""
+    from atlas.argos.suite import map_todo
+
+    base = {"id": 7, "codigo": "PC-007", "titulo": "Firmar contrato", "responsable_nombre": "Ana",
+            "fecha_compromiso": "2026-09-01"}
+    for estado in ("cumplido", "cancelado", "promovido_a_issue"):
+        assert map_todo({**base, "estado": estado}).done, estado
+    for estado in ("abierto", "en_proceso"):
+        assert not map_todo({**base, "estado": estado}).done, estado
+    assert map_todo({**base, "semaforo": "cumplido"}).done

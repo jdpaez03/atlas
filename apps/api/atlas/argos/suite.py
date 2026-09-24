@@ -61,7 +61,9 @@ WRAPPERS = ("data", "items", "results", "resultados", "rows", "registros", "todo
 CLOSED_WORDS = {"done", "completado", "completada", "completo", "complete", "completed", "terminado",
                 "terminada", "hecho", "hecha", "cerrado", "cerrada", "closed", "resuelto", "resuelta",
                 "resolved", "solved", "finalizado", "finalizada", "cancelado", "cancelada", "cancelled",
-                "canceled", "archivado", "archived"}
+                "canceled", "archivado", "archived",
+                # PAGA Suite (l10_todos.estado): finished, and moved to the Issues list — neither is an open to-do
+                "cumplido", "cumplida", "promovido", "promovida", "promovido_a_issue"}
 _KNOWN = set(ID + TITLE + OWNER + DUE + STATUS + DONE_FLAG + PROGRESS + SEMAFORO + REPORTED + LAST_REPORT
              + REPORTS + WEEK + DECIDER + OPENED + PROJECT)
 
@@ -201,8 +203,10 @@ def map_todo(rec: dict[str, Any]) -> Todo | None:
     progress = _float(_pick(r, PROGRESS))
     if progress is not None and 0 < progress <= 1 and "pct" not in "".join(k for k in r if k in PROGRESS):
         progress *= 100  # a 0-1 fraction
+    semaforo = _text(_pick(r, SEMAFORO))
     done = bool(flag) if flag is not None else (is_closed(status) if status else progress is not None
                                                  and progress >= 100)
+    done = done or is_closed(semaforo)  # the Suite's semáforo says "cumplido" for a finished row
     reports_raw = _pick(r, REPORTS)
     weeks: list[str] = []
     last = parse_date(_pick(r, LAST_REPORT))
@@ -220,7 +224,7 @@ def map_todo(rec: dict[str, Any]) -> Todo | None:
     return Todo(
         id=str(ident if ident is not None else title), title=title or f"To-do {ident}",
         owner=_text(_pick(r, OWNER)), due=parse_date(_pick(r, DUE)), done=done, status=status,
-        progress_pct=progress, semaforo=_text(_pick(r, SEMAFORO)), week_id=_text(_pick(r, WEEK)),
+        progress_pct=progress, semaforo=semaforo, week_id=_text(_pick(r, WEEK)),
         reported=next((b for b in (_bool(r.get(k)) for k in REPORTED) if b is not None), None),
         last_report=last, report_weeks=weeks, project=_text(_pick(r, PROJECT)), raw=rec,
     )
