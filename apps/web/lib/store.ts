@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { NO_LIVE_CONFIG, api, argosApi, inboxApi, wsUrl, type ArgosApi, type InboxApi, type AtlasConfig, type Availability, type Decision, type LaunchMissionBody, type MissionSummary, type Scenario } from "./api";
+import { NO_LIVE_CONFIG, api, argosApi, inboxApi, wsUrl, type ArgosApi, type InboxApi, type AtlasConfig, type Availability, type Decision, type LaunchMissionBody, type MissionSummary, type Scenario, type UsageReport } from "./api";
 import type {
   AgentMessage,
   AgentReport,
@@ -9,6 +9,7 @@ import type {
   Alert,
   ApprovalRequest,
   AtlasEvent,
+  Audit,
   Brief,
   Digest,
   EmailDraft,
@@ -45,6 +46,7 @@ export function emptyWorld(): WorldState {
     alerts: [],
     rocks: [],
     briefs: [],
+    audits: [],
     last_seq: 0,
   };
 }
@@ -69,7 +71,7 @@ export function applyEvent(s: WorldState, e: AtlasEvent): WorldState {
   if (e.type === "log" && p.reset) {
     return {
       ...next,
-      missions: [], tasks: [], messages: [], agent_reports: [], mission_reports: [], approvals: [], evidence: [],
+      missions: [], tasks: [], messages: [], agent_reports: [], mission_reports: [], approvals: [], evidence: [], audits: [],
       agent_states: (p.agent_states as AgentState[] | undefined) ?? s.agent_states,
     };
   }
@@ -85,6 +87,7 @@ export function applyEvent(s: WorldState, e: AtlasEvent): WorldState {
   if (p.alert) next.alerts = upsertBy(s.alerts ?? [], p.alert as Alert, byId);
   if (p.rock) next.rocks = upsertBy(s.rocks ?? [], p.rock as RockStatus, byId);
   if (p.brief) next.briefs = upsertBy(s.briefs ?? [], p.brief as Brief, byId);
+  if (p.audit) next.audits = upsertBy(s.audits ?? [], p.audit as Audit, byId);
   if (p.approval) next.approvals = upsertBy(s.approvals, p.approval as ApprovalRequest, byId);
   if (p.message) {
     const m = p.message as AgentMessage;
@@ -127,6 +130,10 @@ export interface Transport {
   missions(node: string | null): Promise<MissionSummary[] | null>;
   decide(id: string, decision: Decision, note?: string): Promise<ApprovalRequest>;
   cancel(id: string): Promise<Mission>;
+  /** POST /missions/{id}/resume — re-run FAILED/CANCELLED tasks as a new round (409 when refused). */
+  resume(id: string): Promise<Mission>;
+  /** GET /usage?days=&node= — null when the backend has no usage endpoint. */
+  usage(days: number, node: string | null): Promise<UsageReport | null>;
   config(): Promise<AtlasConfig>;
   availability(): Promise<Availability>;
   /** Inbox follow-ups & drafts (docs/INBOX.md). */
@@ -142,6 +149,8 @@ export function liveTransport(): Transport {
     launch: api.launch,
     decide: api.decide,
     cancel: api.cancel,
+    resume: api.resume,
+    usage: api.usage,
     sendMessage: api.sendMessage,
     attach: api.attach,
     missions: (node) => api.missions(node),
@@ -244,8 +253,8 @@ function mergeFeed(feed: AtlasEvent[], events: AtlasEvent[]): AtlasEvent[] {
 function storeReducer(s: StoreState, a: Action): StoreState {
   switch (a.type) {
     case "snapshot":
-      // Tolerate a pre-Phase-3 snapshot without `evidence`.
-      return { ...s, world: { ...a.world, evidence: a.world.evidence ?? [], followups: a.world.followups ?? [], drafts: a.world.drafts ?? [], digests: a.world.digests ?? [], alerts: a.world.alerts ?? [], rocks: a.world.rocks ?? [], briefs: a.world.briefs ?? [] }, loaded: true };
+      // Tolerate older snapshots without `evidence` (Phase 3) … `audits` (Phase 5).
+      return { ...s, world: { ...a.world, evidence: a.world.evidence ?? [], followups: a.world.followups ?? [], drafts: a.world.drafts ?? [], digests: a.world.digests ?? [], alerts: a.world.alerts ?? [], rocks: a.world.rocks ?? [], briefs: a.world.briefs ?? [], audits: a.world.audits ?? [] }, loaded: true };
     case "event":
       return { ...s, world: applyEvent(s.world, a.event), feed: mergeFeed(s.feed, [a.event]) };
     case "backfill":
@@ -324,6 +333,16 @@ export function useAtlas() {
     if (!t) return Promise.reject(new Error("not connected"));
     return t.cancel(id);
   }, []);
+  const resume = useCallback((id: string) => {
+    const t = transportRef.current;
+    if (!t) return Promise.reject(new Error("not connected"));
+    return t.resume(id);
+  }, []);
+  const usage = useCallback((days: number, node: string | null) => {
+    const t = transportRef.current;
+    if (!t) return Promise.resolve(null);
+    return t.usage(days, node);
+  }, []);
   const config = useCallback(() => {
     const t = transportRef.current;
     if (!t) return Promise.resolve(NO_LIVE_CONFIG);
@@ -392,6 +411,8 @@ export function useAtlas() {
       decide,
       scenarios,
       cancel,
+      resume,
+      usage,
       config,
       availability,
       sendMessage,
@@ -400,7 +421,7 @@ export function useAtlas() {
       inbox,
       argos,
     }),
-    [state, conn, transport, launch, decide, scenarios, cancel, config, availability, sendMessage, attach, missionHistory, inbox, argos],
+    [state, conn, transport, launch, decide, scenarios, cancel, resume, usage, config, availability, sendMessage, attach, missionHistory, inbox, argos],
   );
 }
 

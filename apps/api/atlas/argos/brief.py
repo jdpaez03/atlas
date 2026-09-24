@@ -22,7 +22,7 @@ from ..core.models import Alert, Attachment, Brief, FollowUp, RockStatus
 from ..live.files import render_deliverable
 from .checks import CheckContext, CheckNotConfigured
 from .l10 import local_today, record_evidence
-from .rocks import RocksFileError, evaluate, summary_line
+from .rocks import RocksFileError, evaluate, rocks_source, summary_line
 
 log = logging.getLogger("atlas.argos.brief")
 
@@ -103,6 +103,9 @@ class BriefFacts:
 
 
 def _rocks_for(ctx: CheckContext, rocks_path: Path | None) -> tuple[list[RockStatus], str | None]:
+    if rocks_path is None and rocks_source(ctx.config) == "suite":
+        # The Suite is the source: the brief reads what the last Rocks check brought from it.
+        return list(ctx.store.snapshot().rocks), "Rocks from PAGA Suite (last check)"
     try:
         return evaluate(ctx.now, rocks_path, write_example=False).rocks, None
     except (CheckNotConfigured, RocksFileError) as exc:

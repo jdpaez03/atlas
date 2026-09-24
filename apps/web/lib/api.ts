@@ -71,6 +71,21 @@ export type Availability = Record<string, { available: boolean; reason?: string 
 
 export type Decision = "APPROVED" | "REJECTED";
 
+/** GET /usage?days=&node= — LLM usage over a window (Phase 5). */
+export interface UsageReport {
+  days: number;
+  node: string | null;
+  missions: number;
+  totals: Usage;
+  by_agent: Record<string, Usage>;
+  by_day: { date: string; est_cost_usd: number; llm_calls: number }[];
+  /** what runs live missions; on "subscription" est_cost_usd is an API-equivalent estimate, not a bill */
+  backend: "subscription" | "api" | null;
+  note: string;
+}
+
+export const ZERO_USAGE: Usage = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, llm_calls: 0, est_cost_usd: 0 };
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -144,6 +159,10 @@ export const api = {
     }).then((r) => json<ApprovalRequest>(r)),
   cancel: (id: string) =>
     fetch(`${API_URL}/missions/${encodeURIComponent(id)}/cancel`, { method: "POST" }).then((r) => json<Mission>(r)),
+  /** POST /missions/{id}/resume — re-runs FAILED/CANCELLED tasks as a new round. 409 {detail} when refused. */
+  resume: (id: string) => resumeMission(id),
+  /** GET /usage — null when the backend has no usage endpoint (404). */
+  usage: (days: number, node: string | null) => getUsage(days, node),
   config: async (): Promise<AtlasConfig> => {
     const res = await fetch(`${API_URL}/config`, { cache: "no-store" });
     if (res.status === 404) return NO_LIVE_CONFIG;
@@ -164,6 +183,29 @@ export const api = {
     return json<Availability>(res);
   },
 };
+
+export function resumeMission(id: string): Promise<Mission> {
+  return fetch(`${API_URL}/missions/${encodeURIComponent(id)}/resume`, { method: "POST" }).then((r) => json<Mission>(r));
+}
+
+/** GET /usage?days=&node=. A 404/405 (backend without the endpoint) → null, like the other optional modules. */
+export async function getUsage(days: number, node: string | null): Promise<UsageReport | null> {
+  const q = new URLSearchParams({ days: String(days) });
+  if (node) q.set("node", node);
+  const res = await fetch(`${API_URL}/usage?${q}`, { cache: "no-store" });
+  if (res.status === 404 || res.status === 405) return null;
+  const b = await json<Partial<UsageReport>>(res);
+  return {
+    days: b.days ?? days,
+    node: b.node ?? null,
+    missions: b.missions ?? 0,
+    totals: { ...ZERO_USAGE, ...(b.totals ?? {}) },
+    by_agent: b.by_agent ?? {},
+    by_day: Array.isArray(b.by_day) ? b.by_day : [],
+    backend: b.backend ?? null,
+    note: b.note ?? "",
+  };
+}
 
 export async function getAgents(): Promise<AgentDefinition[]> {
   const res = await fetch(`${API_URL}/agents`, { cache: "no-store" });

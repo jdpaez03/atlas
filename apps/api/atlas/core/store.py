@@ -52,6 +52,7 @@ from .models import (
     ApprovalState,
     AtlasEvent,
     Attachment,
+    Audit,
     Brief,
     Claim,
     Confidence,
@@ -113,6 +114,7 @@ _COLLECTIONS: dict[str, tuple[str, type[BaseModel], str]] = {
     "alert": ("alerts", Alert, "id"),
     "rock": ("rocks", RockStatus, "id"),
     "brief": ("briefs", Brief, "id"),
+    "audit": ("audits", Audit, "id"),
 }
 
 
@@ -133,6 +135,7 @@ def _clear(state: WorldState) -> None:
     state.mission_reports = []
     state.approvals = []
     state.evidence = []
+    state.audits = []
 
 
 def apply_event(state: WorldState, event: AtlasEvent) -> WorldState:
@@ -340,18 +343,27 @@ class WorldStore:
         )
         return mission
 
-    async def update_usage(self, mission_id: str, delta: Usage) -> Mission:
-        """Add one LLM call's usage (tokens + estimated cost) to the mission; emits mission.updated."""
+    async def update_usage(self, mission_id: str, delta: Usage, agent_id: str | None = None) -> Mission:
+        """Add one LLM call's usage (tokens + estimated cost) to the mission, and to `agent_id`'s share when
+        given (the per-agent split always sums to at most the mission total); emits mission.updated."""
         mission = self.mission(mission_id)
-        u = mission.usage
-        usage = Usage(
-            input_tokens=u.input_tokens + delta.input_tokens,
-            output_tokens=u.output_tokens + delta.output_tokens,
-            cache_read_tokens=u.cache_read_tokens + delta.cache_read_tokens,
-            llm_calls=u.llm_calls + delta.llm_calls,
-            est_cost_usd=round(u.est_cost_usd + delta.est_cost_usd, 6),
-        )
-        mission = self._replace(self._state.missions, mission, {"usage": usage.model_dump()})
+
+        def add(u: Usage) -> Usage:
+            return Usage(
+                input_tokens=u.input_tokens + delta.input_tokens,
+                output_tokens=u.output_tokens + delta.output_tokens,
+                cache_read_tokens=u.cache_read_tokens + delta.cache_read_tokens,
+                llm_calls=u.llm_calls + delta.llm_calls,
+                est_cost_usd=round(u.est_cost_usd + delta.est_cost_usd, 6),
+            )
+
+        usage = add(mission.usage)
+        changes: dict[str, Any] = {"usage": usage.model_dump()}
+        if agent_id:
+            by_agent = {k: Usage.model_validate(v) for k, v in (mission.usage_by_agent or {}).items()}
+            by_agent[agent_id] = add(by_agent.get(agent_id, Usage()))
+            changes["usage_by_agent"] = {k: v.model_dump() for k, v in by_agent.items()}
+        mission = self._replace(self._state.missions, mission, changes)
         tokens = usage.input_tokens + usage.output_tokens + usage.cache_read_tokens
         await self._emit(
             EventType.MISSION_UPDATED,
@@ -453,6 +465,7 @@ class WorldStore:
         requires_approval: bool = False,
         approval_reason: ApprovalReason | str | None = None,
         parent_task_id: str | None = None,
+        revision_of: str | None = None,
     ) -> Task:
         mission = self._open_mission(mission_id)
         created_by = created_by or self.registry.orchestrator.id
@@ -477,6 +490,7 @@ class WorldStore:
             approval_reason=approval_reason,
             parent_task_id=parent_task_id,
             round=mission.round,
+            revision_of=revision_of,
         )
         self._state.tasks.append(task)
         mission = self._replace(self._state.missions, mission, {"task_ids": [*mission.task_ids, task.id]})
@@ -502,10 +516,13 @@ class WorldStore:
         status: TaskStatus | str | None = None,
         progress: float | None = None,
         assigned_to: str | None = None,
+        retries: int | None = None,
     ) -> Task:
         task = self.task(task_id)
         changes: dict[str, Any] = {}
         now = _now()
+        if retries is not None:
+            changes["retries"] = retries
         if assigned_to is not None and assigned_to != task.assigned_to:
             self._check_agent(assigned_to, self.mission(task.mission_id))
             changes["assigned_to"] = assigned_to
@@ -532,6 +549,19 @@ class WorldStore:
         )
         if status == TaskStatus.COMPLETED.value:
             await self._promote_ready(task.mission_id)
+        return task
+
+    async def reopen_task(self, task_id: str, round_no: int, *, ready: bool) -> Task:
+        """Resume (Phase 5): a FAILED/CANCELLED task runs again in round `round_no`, READY or PENDING on its
+        dependencies. Its earlier failure stays in the event history."""
+        task = self.task(task_id)
+        status = TaskStatus.READY.value if ready else TaskStatus.PENDING.value
+        task = self._replace(self._state.tasks, task, {
+            "status": status, "round": round_no, "progress": 0.0, "completed_at": None, "result_report_id": None})
+        await self._emit(
+            EventType.TASK_UPDATED, f"'{task.title}' reopened for round {round_no}", {"task": task},
+            mission_id=task.mission_id, agent_id=task.assigned_to,
+        )
         return task
 
     async def _promote_ready(self, mission_id: str) -> None:
@@ -927,6 +957,35 @@ class WorldStore:
             mission_id=evidence.mission_id, agent_id=evidence.agent_id,
         )
         return evidence
+
+    async def record_audit(self, audit: Audit) -> Audit:
+        """AUDITOR's verdict on one agent report (docs/AUDITOR.md). Emits audit.recorded."""
+        self.mission(audit.mission_id)
+        self._state.audits.append(audit)
+        n = len(audit.issues)
+        what = {"PASS": "holds up", "ISSUES": f"holds up with {n} caveat(s)",
+                "FAIL": f"does not hold up ({n} issue(s))"}.get(str(audit.verdict), str(audit.verdict))
+        try:
+            title = self.task(audit.task_id).title
+        except StoreError:
+            title = audit.task_id
+        line = f"AUDITOR · '{title}' by {self._name(audit.agent_id)} {what}"
+        if audit.revision_task_id:
+            line += " · sent back for revision"
+        await self._emit(
+            EventType.AUDIT_RECORDED, line, {"audit": _dump(audit)},
+            mission_id=audit.mission_id, agent_id=self._auditor_id(),
+        )
+        return audit
+
+    def _auditor_id(self) -> str | None:
+        try:
+            return self.registry.get("auditor").id
+        except RegistryError:
+            return None
+
+    def audits_for(self, mission_id: str) -> list[Audit]:
+        return [a for a in self._state.audits if a.mission_id == mission_id]
 
     def evidence_for(self, mission_id: str, task_id: str | None = None) -> list[Evidence]:
         return [

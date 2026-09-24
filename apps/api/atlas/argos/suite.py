@@ -7,7 +7,7 @@
     ATLAS_SUITE_AUTH_HEADER  optional header name (default Authorization; any other header gets the raw token)
     ATLAS_SUITE_TIMEOUT      optional seconds per request (default 20)
 
-Endpoints: GET /l10/admin/todos, GET /l10/issues, GET /l10/resumen/{semana_id}.
+Endpoints: GET /l10/admin/todos, GET /l10/issues, GET /l10/resumen/{semana_id}, GET /rocks.
 
 The Suite's field names are not a published contract, so every record is mapped through alias lists
 (`responsable`, `fecha`, `avance_pct`, `semaforo`, `estado`/`status`, `decide`, `abierto_desde`/`created_at`, …).
@@ -381,6 +381,14 @@ class SuiteClient:
             log.warning("PAGA Suite /l10/issues: unrecognized response shape (%s)", type(payload).__name__)
         self._log_unknown("issues", records)
         return [i for i in (map_issue(r) for r in records) if i is not None]
+
+    async def rocks(self) -> dict[str, Any]:
+        """The Suite's Rocks board (GET /rocks): the current quarter, each Rock with the status the Suite
+        computed (on/off-track, pace, the owner's declaration)."""
+        payload = await self.get("/rocks")
+        if not isinstance(payload, dict) or not isinstance(payload.get("rocks"), list):
+            raise SuiteError("PAGA Suite GET /rocks: unrecognized response (expected {rocks: [...]})")
+        return payload
 
     async def resumen(self, semana_id: str) -> dict[str, Any]:
         payload = await self.get(f"/l10/resumen/{semana_id}")

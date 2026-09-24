@@ -65,6 +65,13 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return max(0.0, float(os.getenv(name, default)))
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class LiveConfig:
     models: ModelConfig = field(default_factory=ModelConfig)
@@ -77,6 +84,12 @@ class LiveConfig:
     max_tokens: int = 8000
     orchestrator_max_tokens: int = 12000
     consult_max_tokens: int = 1500
+    # Phase 5 (docs/AUDITOR.md): quality gate and error recovery
+    audit: bool = True
+    audit_revisions: int = 1  # FAIL → one revision round; 0 = audit only
+    audit_max_tokens: int = 6000
+    task_retries: int = 1  # automatic re-runs of a task after a transient error
+    retry_delay: float = 10.0  # seconds before the first re-run (doubles each time)
 
     @classmethod
     def from_env(cls, backend: str = "api") -> LiveConfig:
@@ -92,6 +105,10 @@ class LiveConfig:
             max_consults=_env_int("ATLAS_MAX_CONSULTS", 2, minimum=0),
             web_search=raw_web in ("1", "true", "yes", "on") if raw_web else sub,
             web_search_tool=os.getenv("ATLAS_WEB_SEARCH_TOOL") or DEFAULT_WEB_SEARCH_TOOL,
+            audit=os.getenv("ATLAS_AUDIT", "on").strip().lower() not in ("0", "off", "false", "no"),
+            audit_revisions=_env_int("ATLAS_AUDIT_REVISIONS", 1, minimum=0),
+            task_retries=_env_int("ATLAS_TASK_RETRIES", 1, minimum=0),
+            retry_delay=_env_float("ATLAS_TASK_RETRY_DELAY", 10.0),
         )
 
 
@@ -108,6 +125,7 @@ class MissionScope:
     node: str
     agents: dict[str, ResolvedAgent]  # planned roster (allowed in the node AND available)
     orchestrator: ResolvedAgent
+    auditor: ResolvedAgent | None = None  # AUDITOR, when registered and available (never planned)
     touched: set[str] = field(default_factory=set)
     consulted: bool = False
     _ctx: dict[str, str] = field(default_factory=dict)
@@ -121,6 +139,8 @@ class MissionScope:
         r = self.agents.get(agent_id)
         if r:
             return r.agent.name
+        if self.auditor is not None and agent_id == self.auditor.id:
+            return self.auditor.agent.name
         return self.orchestrator.agent.name if agent_id == self.orchestrator.id else agent_id
 
     async def set_agent(self, agent_id: str, status: AgentStatus | str, *, activity: str | None = None,

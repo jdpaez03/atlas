@@ -13,6 +13,7 @@ report. You stay the director: every consequential action waits for your approva
 | **ARGOS** | Monitor: changes, anomalies, alerts |
 | **ORACLE** | Strategy: scenarios and analysis, with facts kept apart from assumptions |
 | **ALFRED** | Execution: deliverables and operations, with approval gates |
+| **AUDITOR** | Quality: checks every report against what the system recorded before it reaches you |
 
 Agents are YAML files in [`/agents`](agents). You can add, remove or swap them, including **existing
 agents you already run** (via http, cli or mcp adapters). See [docs/CONTRACTS.md](docs/CONTRACTS.md).

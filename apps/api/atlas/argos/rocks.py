@@ -1,4 +1,11 @@
-"""Rocks check (docs/ARGOS.md § Rocks): statuses and paces from the user's own `rocks.yaml`.
+"""Rocks check (docs/ARGOS.md § Rocks): statuses and paces from PAGA Suite's Rocks module, or from the
+user's own `rocks.yaml`.
+
+Source (watch.yaml `rocks.source`: auto | suite | file; default auto): with PAGA Suite configured
+(ATLAS_SUITE_URL + token or scope) the Suite is the source — it computes each Rock's status itself (pace rule,
+owner's weekly declaration) and ARGOS maps it (see `from_suite`). Otherwise rocks.yaml, with the rules below.
+
+Rules for rocks.yaml (the user's dossier):
 
 Rules (the user's dossier):
   done: true                                   → DONE
@@ -404,6 +411,89 @@ async def emit(store: Any, rocks: list[RockStatus], mission_id: str | None = Non
     return n
 
 
+# ── PAGA Suite as the source ─────────────────────────────────────────────────────────────────────────────
+
+SUITE_SOURCE = "PAGA Suite /rocks"
+SUITE_STATUS = {"on_track": "ON_TRACK", "off_track": "OFF_TRACK", "sin_registro": "UNKNOWN",
+                "por_declarar": "FAILED", "cumplido": "DONE", "no_cumplido": "FAILED"}
+
+
+def suite_configured() -> bool:
+    import os
+
+    return bool(os.getenv("ATLAS_SUITE_URL", "").strip()
+                and (os.getenv("ATLAS_SUITE_TOKEN", "").strip() or os.getenv("ATLAS_SUITE_SCOPE", "").strip()))
+
+
+def rocks_source(config: dict[str, Any] | None) -> str:
+    """'suite' or 'file', from watch.yaml `rocks.source` (auto → the Suite when it is configured)."""
+    section = (config or {}).get("rocks") if isinstance((config or {}).get("rocks"), dict) else {}
+    wanted = str((section or {}).get("source") or "auto").strip().lower()
+    if wanted in ("suite", "file"):
+        return wanted
+    return "suite" if suite_configured() else "file"
+
+
+def _f(v: Any) -> float | None:
+    try:
+        return None if v is None else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def from_suite(payload: dict[str, Any]) -> Evaluation:
+    """The Suite's board → RockStatus + alerts. The Suite already decided each status; ARGOS only translates it
+    and quotes the Suite's own reason as evidence."""
+    out = Evaluation()
+    trimestre = str(payload.get("trimestre") or "")
+    for r in payload.get("rocks") or []:
+        if not isinstance(r, dict) or not r.get("codigo"):
+            continue
+        estado = str(r.get("estado") or "")
+        fuente = str(r.get("estado_fuente") or "")
+        motivo = str(r.get("estado_motivo") or "")
+        ritmo = r.get("ritmo") or {}
+        due = _date(r.get("fecha_compromiso"))
+        if due is None:
+            out.notes.append(f"{r.get('codigo')}: no fecha_compromiso in the Suite's answer; skipped")
+            continue
+        rid = f"{r.get('trimestre') or trimestre}-{r['codigo']}"
+        owner = str(r.get("responsable_nombre") or r.get("responsable_email") or "—")
+        title = str(r.get("titulo") or rid)
+        rock = RockStatus(
+            id=rid, title=title, owner=owner, project=r.get("proyecto"), quarter=str(r.get("trimestre") or trimestre),
+            due=due, metric=r.get("metrica"), target=_f(r.get("meta")), current=_f(r.get("valor_actual")),
+            start_value=_f(r.get("valor_inicial")), start_date=_date(r.get("fecha_inicio")),
+            status=SUITE_STATUS.get(estado, "UNKNOWN"), reason=motivo,
+            required_pace=_f(ritmo.get("requerido")), observed_pace=_f(ritmo.get("observado")),
+        )
+        out.rocks.append(rock)
+        quote = f"{r['codigo']} · {estado} ({fuente}) · {motivo}"[:300]
+        ev = [AlertEvidence(source=SUITE_SOURCE, quote=quote)]
+        weeks_left = _f(r.get("semanas_restantes")) or 0.0
+        if estado == "off_track":
+            automatic = fuente == "automatico"
+            sev: Severity = "HIGH" if automatic or weeks_left <= 2 else "MEDIUM"
+            what = "off-track by the pace rule (owner said on-track)" if automatic else "off-track"
+            out.alerts.append(AlertDraft(
+                check="rocks", kind="rock_at_risk", severity=sev, title=f"Rock {what} · {title}",
+                detail=f"{owner} · {motivo}", project=r.get("proyecto"), evidence=ev,
+                fingerprint=fingerprint("rocks", "rock_at_risk", rid)))
+        elif estado == "por_declarar":
+            out.alerts.append(AlertDraft(
+                check="rocks", kind="rock_failed", severity="HIGH", title=f"Rock past due, not declared · {title}",
+                detail=f"{owner} · due {due.isoformat()} — declare it cumplido, fallido or redefinido",
+                project=r.get("proyecto"), evidence=ev, fingerprint=fingerprint("rocks", "rock_failed", rid)))
+        elif estado == "sin_registro":
+            out.alerts.append(AlertDraft(
+                check="rocks", kind="other", severity="LOW", title=f"Rock without this week's update · {title}",
+                detail=f"{owner} · {motivo}", project=r.get("proyecto"), evidence=ev,
+                fingerprint=fingerprint("rocks", "no_update", rid)))
+    if not out.rocks:
+        out.notes.append(f"PAGA Suite has no Rocks for {trimestre or 'this quarter'} yet")
+    return out
+
+
 class RocksCheck:
     name = "rocks"
 
@@ -411,7 +501,13 @@ class RocksCheck:
         self.path = path
 
     def preflight(self, config: dict[str, Any]) -> None:
-        """Raises CheckNotConfigured when rocks.yaml is missing (the example is written) or still the example."""
+        """Raises CheckNotConfigured when rocks.yaml is missing (the example is written) or still the example;
+        with the Suite as the source, when the Suite isn't configured."""
+        if self.path is None and rocks_source(config) == "suite":
+            from .suite import SuiteClient
+
+            SuiteClient.from_env()  # raises CheckNotConfigured with the setup hint
+            return
         path = self.path or rocks_path()
         if ensure_example(path):
             raise CheckNotConfigured("rocks.yaml was missing; an example was written",
@@ -425,6 +521,17 @@ class RocksCheck:
             return  # the run reports the parse error
 
     async def run(self, ctx: CheckContext) -> CheckResult:
+        if self.path is None and rocks_source(ctx.config) == "suite":
+            from .suite import SuiteClient
+
+            client = SuiteClient.from_env()
+            payload = await client.rocks()
+            await record_evidence(ctx, "web_fetch", f"{client.base_url}/rocks",
+                                  f"{len(payload.get('rocks') or [])} Rocks · {payload.get('trimestre', '')}")
+            ev = from_suite(payload)
+            await emit(ctx.store, ev.rocks, ctx.mission_id)
+            return CheckResult(alerts=ev.alerts, notes=[f"Source: PAGA Suite · {payload.get('trimestre', '')}",
+                                                        summary_line(ev.rocks), *ev.notes])
         path = self.path or rocks_path()
         ev = evaluate(ctx.now, path)
         await record_evidence(ctx, "file_read", str(path), f"{len(ev.rocks)} Rocks")

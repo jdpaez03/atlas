@@ -194,3 +194,85 @@ def test_preflight(rocks_file):
         RocksCheck().preflight({})
     with pytest.raises(CheckNotConfigured, match="still the example"):
         RocksCheck().preflight({})
+
+
+# ── PAGA Suite as the source ─────────────────────────────────────────────────────────────────────────────
+
+SUITE_BOARD = {
+    "trimestre": "2026-Q4",
+    "rocks": [
+        {"codigo": "R1", "trimestre": "2026-Q4", "titulo": "B600: 51 expedientes con fecha", "proyecto": "BALCONES",
+         "responsable_email": "josue@paga.com", "responsable_nombre": "Josué Saldaña", "tipo": "numerico",
+         "metrica": "expedientes", "valor_inicial": 28, "meta": 51, "valor_actual": 34,
+         "fecha_inicio": "2026-10-05", "fecha_compromiso": "2026-12-28", "estado": "on_track",
+         "estado_fuente": "dueno", "estado_motivo": "Lo declaró el dueño", "semanas_restantes": 8,
+         "ritmo": {"observado": 1.5, "requerido": 2.12, "ratio": 0.71}},
+        {"codigo": "R4", "trimestre": "2026-Q4", "titulo": "Ventas Amāra en objetivo", "proyecto": "AMARA",
+         "responsable_email": "rene@paga.com", "responsable_nombre": "René Capistrán", "tipo": "numerico",
+         "metrica": "ventas", "valor_inicial": 0, "meta": 48, "valor_actual": 7,
+         "fecha_inicio": "2026-10-05", "fecha_compromiso": "2026-12-28", "estado": "off_track",
+         "estado_fuente": "automatico", "semanas_restantes": 8,
+         "estado_motivo": "Ritmo 27% del requerido (< 50%) — el dueño dijo on-track",
+         "ritmo": {"observado": 1.4, "requerido": 5.1, "ratio": 0.27}},
+        {"codigo": "R7", "trimestre": "2026-Q4", "titulo": "Préstamos entre proyectos", "proyecto": None,
+         "responsable_email": "jorge@paga.com", "responsable_nombre": None, "tipo": "numerico",
+         "metrica": "renglones", "valor_inicial": 0, "meta": 14, "valor_actual": 3,
+         "fecha_inicio": "2026-10-05", "fecha_compromiso": "2026-12-28", "estado": "sin_registro",
+         "estado_fuente": "sin_registro", "estado_motivo": "Sin registro esta semana", "semanas_restantes": 8,
+         "ritmo": {}},
+        {"codigo": "R9", "trimestre": "2026-Q4", "titulo": "Vencido", "responsable_email": "x@paga.com",
+         "tipo": "hitos", "fecha_inicio": "2026-10-05", "fecha_compromiso": "2026-10-30", "estado": "por_declarar",
+         "estado_fuente": "vencido", "estado_motivo": "Venció sin declararse", "ritmo": {}},
+    ],
+}
+
+
+def test_from_suite_maps_statuses_and_alerts():
+    ev = rocks_mod.from_suite(SUITE_BOARD)
+    by = {r.id: r for r in ev.rocks}
+    assert by["2026-Q4-R1"].status == "ON_TRACK" and by["2026-Q4-R1"].observed_pace == 1.5
+    assert by["2026-Q4-R4"].status == "OFF_TRACK" and by["2026-Q4-R7"].status == "UNKNOWN"
+    assert by["2026-Q4-R9"].status == "FAILED" and by["2026-Q4-R7"].owner == "jorge@paga.com"
+    kinds = {(a.kind, a.severity) for a in ev.alerts}
+    assert ("rock_at_risk", "HIGH") in kinds          # the pace rule overrode the owner
+    assert ("rock_failed", "HIGH") in kinds and ("other", "LOW") in kinds
+    r4 = next(a for a in ev.alerts if a.kind == "rock_at_risk")
+    assert r4.evidence[0].source == "PAGA Suite /rocks" and "27%" in r4.evidence[0].quote
+
+
+def test_source_selection(monkeypatch):
+    monkeypatch.delenv("ATLAS_SUITE_URL", raising=False)
+    monkeypatch.delenv("ATLAS_SUITE_TOKEN", raising=False)
+    monkeypatch.delenv("ATLAS_SUITE_SCOPE", raising=False)
+    assert rocks_mod.rocks_source({}) == "file"
+    monkeypatch.setenv("ATLAS_SUITE_URL", "https://suite.example/api")
+    monkeypatch.setenv("ATLAS_SUITE_TOKEN", "t" * 40)
+    assert rocks_mod.rocks_source({}) == "suite"
+    assert rocks_mod.rocks_source({"rocks": {"source": "file"}}) == "file"
+
+
+def test_check_reads_the_suite(registry, monkeypatch):
+    import httpx
+
+    monkeypatch.setenv("ATLAS_SUITE_URL", "https://suite.example/api")
+    monkeypatch.setenv("ATLAS_SUITE_TOKEN", "t" * 40)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json=SUITE_BOARD)
+
+    from atlas.argos import suite as suite_mod
+
+    real = suite_mod.SuiteClient.from_env.__func__
+    monkeypatch.setattr(suite_mod.SuiteClient, "from_env",
+                        classmethod(lambda cls, transport=None: real(cls, transport=httpx.MockTransport(handler))))
+    store = WorldStore(registry, EventBus())
+    ctx = CheckContext(store=store, scope=None, mail=None, config={}, now=datetime(2026, 11, 2, 15, tzinfo=UTC))
+    check = rocks_mod.RocksCheck()
+    check.preflight({})
+    result = asyncio.run(check.run(ctx))
+    assert seen["path"] == "/api/rocks" and seen["auth"] == "Bearer " + "t" * 40
+    assert {r.id for r in store.rocks()} == {"2026-Q4-R1", "2026-Q4-R4", "2026-Q4-R7", "2026-Q4-R9"}
+    assert "Source: PAGA Suite" in result.notes[0] and "1 of 4 on-track" in result.notes[1]

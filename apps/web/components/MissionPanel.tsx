@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { AtlasConfig, LaunchMissionBody, MissionMode, Scenario } from "@/lib/api";
-import type { Mission, MissionPhase, NodeDefinition, Task, Usage } from "@/lib/contracts";
-import { PHASES, PRIORITY, cx, elapsed, human, useNow } from "@/lib/ui";
+import { apiErrorText, type AtlasConfig, type LaunchMissionBody, type MissionMode, type Scenario } from "@/lib/api";
+import type { AgentDefinition, Mission, MissionPhase, NodeDefinition, Task, Usage } from "@/lib/contracts";
+import { PHASES, PRIORITY, cx, elapsed, fmtTokens, fmtUsd, human, useNow } from "@/lib/ui";
 import { DropZone, PendingFiles, acceptFiles } from "./Files";
 import { Tag } from "./primitives";
+import { UsageByAgent } from "./Usage";
 
 /* ---------------------------------------------------------------- phase rail */
 
@@ -323,6 +324,8 @@ export function MissionPanel({
   onLaunched,
   config,
   cancelMission,
+  resumeMission,
+  agents,
   historyCount,
   onOpenHistory,
 }: {
@@ -339,11 +342,15 @@ export function MissionPanel({
   onLaunched: (m: Mission) => void;
   config: AtlasConfig | null;
   cancelMission: (id: string) => Promise<Mission>;
+  /** POST /missions/{id}/resume */
+  resumeMission: (id: string) => Promise<Mission>;
+  agents: Map<string, AgentDefinition>;
   /** null = no history endpoint (fallback to the in-state mission picker). */
   historyCount: number | null;
   onOpenHistory: () => void;
 }) {
   const [composing, setComposing] = useState(false);
+  const [byAgentOpen, setByAgentOpen] = useState(false);
   const now = useNow(1000);
 
   if (!mission) {
@@ -381,6 +388,10 @@ export function MissionPanel({
   const interrupted = !!mission.interrupted && !closed;
   const round = mission.round ?? 1;
   const pr = PRIORITY[mission.priority];
+  const unfinished = tasks.filter((t) => t.status === "FAILED" || t.status === "CANCELLED").length;
+  // Resume: a live mission that stopped (closed or interrupted) with tasks that didn't finish.
+  const resumable = mission.mode === "live" && ((closed && unfinished > 0) || !!mission.interrupted);
+  const agentUsage = Object.values(mission.usage_by_agent ?? {}).filter((u) => u.llm_calls > 0).length;
 
   return (
     <section className="panel overflow-hidden">
@@ -395,7 +406,7 @@ export function MissionPanel({
             <Tag color={pr.color}>{pr.label}</Tag>
             {round > 1 && <Tag color="#c4b5fd">Round {round}</Tag>}
             {interrupted ? (
-              <span title="The server stopped while this mission was running. Send a message in the thread to resume it.">
+              <span title="The server stopped while this mission was running. Resume it, or send a message in the thread.">
                 <Tag color="#f87171">Interrupted</Tag>
               </span>
             ) : closed ? (
@@ -433,7 +444,12 @@ export function MissionPanel({
           <h1 className="mt-2 line-clamp-2 text-[19px] leading-snug font-normal tracking-tight text-ink" title={mission.objective}>
             {mission.objective}
           </h1>
-          <UsageReadout usage={mission.usage} mode={mission.mode} />
+          <UsageReadout
+            usage={mission.usage}
+            mode={mission.mode}
+            byAgent={agentUsage > 0 ? { open: byAgentOpen, count: agentUsage, toggle: () => setByAgentOpen((v) => !v) } : undefined}
+          />
+          {byAgentOpen && agentUsage > 0 && <UsageByAgent byAgent={mission.usage_by_agent} agents={agents} className="mt-2.5 max-w-[640px]" />}
         </div>
 
         {/* stats + action */}
@@ -446,6 +462,7 @@ export function MissionPanel({
           <Stat label="Agents active" value={`${activeAgents}/${totalAgents}`} />
           <Stat label="Approvals" value={String(pendingApprovals)} alert={pendingApprovals > 0} />
           {!closed && !interrupted && <CancelMission key={mission.id} onConfirm={() => cancelMission(mission.id)} />}
+          {resumable && <ResumeMission key={`resume-${mission.id}-${mission.round}`} unfinished={unfinished} onResume={() => resumeMission(mission.id)} />}
 
           <button
             onClick={() => setComposing((v) => !v)}
@@ -507,10 +524,16 @@ export function ModeBadge({ mode, closed }: { mode: Mission["mode"] | undefined;
   );
 }
 
-const fmtTokens = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n));
-const fmtUsd = (n: number) => (n > 0 && n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);
-
-function UsageReadout({ usage, mode }: { usage: Usage | undefined; mode: Mission["mode"] | undefined }) {
+function UsageReadout({
+  usage,
+  mode,
+  byAgent,
+}: {
+  usage: Usage | undefined;
+  mode: Mission["mode"] | undefined;
+  /** toggle for the per-agent breakdown (only when the mission has per-agent usage) */
+  byAgent?: { open: boolean; count: number; toggle: () => void };
+}) {
   const u = usage ?? { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, llm_calls: 0, est_cost_usd: 0 };
   if (mode !== "live" && u.llm_calls === 0) {
     return <p className="mt-2 font-mono text-[9.5px] tracking-[0.08em] text-mute">Simulated scenario · no LLM usage</p>;
@@ -532,6 +555,56 @@ function UsageReadout({ usage, mode }: { usage: Usage | undefined; mode: Mission
         <span className="tabular-nums text-emerald-300">{fmtUsd(u.est_cost_usd)}</span>
         <span className="text-[8.5px] uppercase tracking-[0.16em] text-mute">est.</span>
       </span>
+      {byAgent && (
+        <button
+          onClick={byAgent.toggle}
+          aria-expanded={byAgent.open}
+          className="flex items-center gap-1 rounded border border-edge-2 px-1.5 text-[8.5px] uppercase tracking-[0.18em] text-dim transition hover:border-signal/40 hover:text-slate-200"
+          title="LLM usage by agent for this mission"
+        >
+          By agent <span className="tracking-normal text-slate-400">· {byAgent.count}</span>
+          <span className="text-[9px]">{byAgent.open ? "▴" : "▾"}</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ResumeMission({ unfinished, onResume }: { unfinished: number; onResume: () => Promise<unknown> }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function go() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await onResume();
+    } catch (x) {
+      setErr(apiErrorText(x, "Resume failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="ml-1 flex max-w-[220px] flex-col justify-center gap-1">
+      <button
+        onClick={go}
+        disabled={busy}
+        title="Re-run the failed and cancelled tasks, then write a new report version"
+        className="flex min-h-9 flex-1 items-center gap-2 rounded-md border border-emerald-400/50 bg-emerald-500/10 px-3 font-mono text-[10.5px] font-semibold uppercase tracking-[0.2em] text-emerald-300 transition hover:bg-emerald-500/20 disabled:opacity-50"
+      >
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden>
+          <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v2.6h-2.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        {busy ? "Resuming…" : "Resume"}
+        {unfinished > 0 && !busy && <span className="font-normal tracking-normal text-emerald-200/70">· {unfinished}</span>}
+      </button>
+      {err && (
+        <p className="font-mono text-[9.5px] leading-snug text-red-300/90" role="alert">
+          {err}
+        </p>
+      )}
     </div>
   );
 }

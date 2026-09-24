@@ -675,7 +675,7 @@ function RocksPanel({ rocks, patch, reload, now, colorOf, className }: { rocks: 
     setReloading(true);
     setError(null);
     reload()
-      .catch((x) => setError(apiErrorText(x, "Could not reload rocks.yaml")))
+      .catch((x) => setError(apiErrorText(x, "Could not reload the Rocks")))
       .finally(() => setReloading(false));
   };
   return (
@@ -693,7 +693,7 @@ function RocksPanel({ rocks, patch, reload, now, colorOf, className }: { rocks: 
               on-track
             </span>
           )}
-          <button onClick={doReload} disabled={reloading} className={cx(BTN_QUIET, "h-6 px-2 text-[9px]")} title="Re-read rocks.yaml">
+          <button onClick={doReload} disabled={reloading} className={cx(BTN_QUIET, "h-6 px-2 text-[9px]")} title="Re-read the Rocks (PAGA Suite or rocks.yaml)">
             {reloading ? <Spinner size={10} /> : "↻"} Reload
           </button>
         </>
@@ -701,7 +701,7 @@ function RocksPanel({ rocks, patch, reload, now, colorOf, className }: { rocks: 
     >
       {error && <p className="mx-4 mt-3 font-mono text-[11px] text-red-400">{error}</p>}
       {rocks.length === 0 ? (
-        <Empty>No Rocks yet. Add them to rocks.yaml under ATLAS_LOCAL_DIR/argos/ and reload.</Empty>
+        <Empty>No Rocks yet. They come from PAGA Suite (Rocks module) when it is connected, otherwise from rocks.yaml under ATLAS_LOCAL_DIR/argos/.</Empty>
       ) : (
         <div className="overflow-x-auto scroll-thin">
           <table className="w-full min-w-[980px] border-collapse text-left">

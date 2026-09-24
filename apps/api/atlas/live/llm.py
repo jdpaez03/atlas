@@ -9,6 +9,7 @@ returning a Message-like object (`.content` blocks with `.type`, `.stop_reason`,
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import os
 from collections.abc import Callable
@@ -217,10 +218,17 @@ def call_text(kwargs: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+# The agent whose work an LLM call belongs to, for the per-agent usage split. Set by the orchestrator around each
+# task / ATLAS step / audit; asyncio tasks copy the context, so parallel tasks don't mix.
+current_agent: contextvars.ContextVar[str | None] = contextvars.ContextVar("atlas_current_agent", default=None)
+
+
 class Meter:
     """Performs LLM calls for one mission and records usage + estimated cost in the store."""
 
-    def __init__(self, llm: LLMClient | None, store: WorldStore, mission_id: str, prices: PriceTable):
+    def __init__(self, llm: LLMClient | None, store: WorldStore, mission_id: str, prices: PriceTable,
+                 default_agent: str | None = None):
+        self.default_agent = default_agent  # who gets the usage when no task/step set `current_agent`
         self.llm = llm  # None on the subscription backend (no Messages API calls; only record_totals)
         self.store = store
         self.mission_id = mission_id
@@ -257,7 +265,7 @@ class Meter:
             llm_calls=1,
             est_cost_usd=cost,
         )
-        await self.store.update_usage(self.mission_id, delta)
+        await self.store.update_usage(self.mission_id, delta, agent_id=current_agent.get() or self.default_agent)
 
     async def record_totals(self, model: str, *, input_tokens: int = 0, output_tokens: int = 0,
                             cache_read_tokens: int = 0, cache_write_tokens: int = 0, calls: int = 1,
@@ -275,4 +283,4 @@ class Meter:
             llm_calls=max(1, calls),
             est_cost_usd=float(cost),
         )
-        await self.store.update_usage(self.mission_id, delta)
+        await self.store.update_usage(self.mission_id, delta, agent_id=current_agent.get() or self.default_agent)

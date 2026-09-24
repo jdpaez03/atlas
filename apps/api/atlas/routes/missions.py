@@ -12,6 +12,7 @@ Phase 3 (docs/PHASE3.md B, docs/EVENTS.md):
   POST /missions/{id}/attachments                          multipart files[] -> Mission
   GET  /missions/{id}/files/{attachments|outputs}/{name}   download
   POST /missions/{id}/messages {text}                      mission thread -> the human's AgentMessage
+  POST /missions/{id}/resume                               re-run failed/cancelled tasks as a new round (Phase 5)
 """
 
 from __future__ import annotations
@@ -247,6 +248,20 @@ async def cancel_mission(mission_id: str, sim: SimDep, live: LiveDep, store: Sto
         return store.mission(mission_id)
     except StoreError as exc:
         raise http_error(exc) from exc
+
+
+@router.post("/missions/{mission_id}/resume", response_model=Mission)
+async def resume_mission(mission_id: str, live: LiveDep, store: StoreDep) -> Mission:
+    """Phase 5: re-run a closed live mission's FAILED / CANCELLED tasks (also after an interrupted run) as a new
+    round with a new report version. 409 when it is running or there is nothing to resume."""
+    try:
+        store.mission(mission_id)
+    except StoreError as exc:
+        raise http_error(exc) from exc
+    try:
+        return await live.resume(mission_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.post("/missions/{mission_id}/attachments", response_model=Mission,

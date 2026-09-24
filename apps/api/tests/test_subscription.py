@@ -69,7 +69,8 @@ MISSION_REPORT = [call("submit_mission_report", {
 
 def make_sub(registry: AgentRegistry, sdk: FakeClaudeSDK, **cfg) -> tuple[WorldStore, LiveEngine]:
     store = WorldStore(registry, EventBus())
-    config = LiveConfig(models=MODELS, **({"max_turns": 8, "web_search": True} | cfg))
+    config = LiveConfig(models=MODELS, **({"max_turns": 8, "web_search": True, "audit": False,
+                                            "task_retries": 0} | cfg))
     engine = LiveEngine(
         store, loader=AgentLoader(registry, MODELS),
         context=NodeContext(registry, local_dir=Path("/nonexistent-atlas-local")),

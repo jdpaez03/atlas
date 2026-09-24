@@ -10,7 +10,7 @@
   GET   /alerts?status=&check=&project=   Alert[] (OPEN, then ACKNOWLEDGED, then RESOLVED; HIGH first; newest)
   PATCH /alerts/{id} {status}         OPEN | ACKNOWLEDGED | RESOLVED -> Alert
   GET   /rocks                        RockStatus[] (by id)
-  POST  /rocks/reload                 re-read rocks.yaml (runs the rocks check) -> RockStatus[]
+  POST  /rocks/reload                 re-read the Rocks source — PAGA Suite or rocks.yaml (runs the rocks check) -> RockStatus[]
   PATCH /rocks/{id} {current}         manual progress -> RockStatus (atlas.argos.rocks.update_current writes rocks.yaml;
                                       501 when that function is not installed)
   GET   /briefs?limit=                Brief[] (newest first; default 20)
@@ -175,6 +175,9 @@ async def patch_rock(rock_id: str, body: RockPatch, request: Request) -> RockSta
         mod = importlib.import_module("atlas.argos.rocks")
     except ImportError:
         mod = None
+    source = getattr(mod, "rocks_source", None)
+    if callable(source) and source(argos.config()[0]) == "suite":
+        raise HTTPException(409, "Rocks come from PAGA Suite: the owner reports progress there (ATLAS reads it)")
     fn = getattr(mod, "update_current", None)
     if not callable(fn):
         raise HTTPException(501, "Updating a Rock is not available yet (atlas.argos.rocks.update_current)")

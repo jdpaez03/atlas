@@ -13,6 +13,12 @@ runs, the note becomes "human guidance" for every task / review / consolidation 
 ATLAS acknowledges it (fast model). On a closed (or interrupted) mission it opens a follow-up: ATLAS calls
 `respond_to_followup {answer?, tasks?}`; tasks start round N (DELEGATION → … → CLOSED, Task.round = N) and
 end with MissionReport version N (earlier versions stay).
+
+Phase 5 (docs/AUDITOR.md): after execution, AUDITOR checks every report of the round against the evidence ATLAS
+recorded; a FAIL goes back to its agent for one revision (Task.revision_of), audited again as final. The mission
+report carries `audit_summary` and `untraced` (figures that appear in no agent report). A task that hits a
+transient error is re-run (`ATLAS_TASK_RETRIES`, backoff `ATLAS_TASK_RETRY_DELAY`); a closed mission with failed
+or cancelled tasks can be resumed (`LiveEngine.resume`): they run again as a new round with a new report version.
 """
 
 from __future__ import annotations
@@ -24,9 +30,12 @@ from typing import Any
 from ..core.models import (
     HUMAN,
     AgentMessage,
+    AgentReport,
     AgentStatus,
     ApprovalReason,
     Attachment,
+    Audit,
+    AuditVerdict,
     Claim,
     ClaimKind,
     MessageType,
@@ -37,12 +46,14 @@ from ..core.models import (
     Task,
     TaskStatus,
 )
+from ..core.registry import RegistryError
 from ..core.store import WorldStore
+from . import auditor as audit_mod
 from .agent_loader import AgentLoader, ResolvedAgent
 from .backend import BackendInfo, detect_backend
 from .context import NodeContext
 from .executor import ApiExecutor, Executor
-from .llm import LLMClient, LLMError, Meter, UsageLimitError
+from .llm import LLMClient, LLMError, Meter, UsageLimitError, current_agent
 from .pricing import PriceTable
 from .prompts import (
     ACKNOWLEDGE_TOOL,
@@ -76,10 +87,39 @@ log = logging.getLogger("atlas.live")
 
 _TERMINAL = {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.CANCELLED.value}
 _DEAD = {TaskStatus.FAILED.value, TaskStatus.CANCELLED.value}
+EXTERNAL_ADAPTERS = {"http", "cli"}  # docs/AGENTS.md "External agents"; mcp stays unavailable
 _PRIO_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 MAX_FOLLOWUPS = 3
 MAX_ROUND_TASKS = 6  # tasks ATLAS may open for one follow-up round from the mission thread
 ACK_FALLBACK = "Noted. I'll apply this to the work that starts from now on."
+AUDIT_CONSOLIDATION_NOTE = (
+    "AUDITOR checked the reports (see each AUDIT line). Build on what held up. Where a report was sent back and "
+    "revised, use the revision. Never present a finding AUDITOR marked unsupported or mislabeled as a FACT: "
+    "drop it, relabel it, or list it under needs_human_attention. Every figure you write must come from a report."
+)
+
+
+def _retryable(exc: BaseException) -> bool:
+    """Transient failures worth one more try: API/LLM errors (not the plan's usage limit), network, timeouts,
+    and external agents that failed to answer."""
+    if isinstance(exc, UsageLimitError):
+        return False
+    if isinstance(exc, (LLMError, TimeoutError, ConnectionError, asyncio.TimeoutError)):
+        return True
+    if type(exc).__name__ in ("ExternalAgentError", "ReadTimeout", "ConnectTimeout", "ConnectError",
+                              "RemoteProtocolError"):
+        return True
+    return isinstance(exc, OSError)
+
+
+def _resolve_auditor(loader: AgentLoader, config: LiveConfig) -> ResolvedAgent | None:
+    if not config.audit:
+        return None
+    try:
+        agent = loader.resolve("auditor")
+    except RegistryError:  # not registered (custom agents dir): no audit, missions still run
+        return None
+    return agent if agent.available else None
 
 
 # ---------------------------------------------------------------------------
@@ -188,9 +228,11 @@ class LiveMission:
         loader = engine.loader_for(backend)
         orchestrator = loader.resolve(self.store.registry.orchestrator.id)
         roster = loader.roster(mission.node)
+        auditor = _resolve_auditor(loader, self.config)
         self.scope = MissionScope(
             store=self.store,
-            meter=Meter(engine.llm if backend == "api" else None, self.store, mission.id, engine.prices),
+            meter=Meter(engine.llm if backend == "api" else None, self.store, mission.id, engine.prices,
+                        default_agent=orchestrator.id),
             config=self.config,
             context=engine.context,
             mission_id=mission.id,
@@ -198,6 +240,7 @@ class LiveMission:
             node=mission.node,
             agents={r.id: r for r in roster},
             orchestrator=orchestrator,
+            auditor=auditor,
         )
         self.refs: dict[str, str] = {}  # plan ref -> task id
         for i, tid in enumerate(mission.task_ids):  # earlier rounds (follow-ups): T1, T2...
@@ -208,6 +251,7 @@ class LiveMission:
         self.limited: str | None = None  # plan usage limit hit: no more LLM calls in this mission
         self._active: dict[str, list[str]] = {}  # agent id -> running task ids
         self._children: set[asyncio.Task[None]] = set()
+        self.audit_skipped: str | None = None  # why the audit of this round didn't run, if it didn't
 
     @property
     def atlas(self) -> str:
@@ -222,10 +266,14 @@ class LiveMission:
         return [o.role_prompt, ORCHESTRATOR, context_block(self.scope.context_for(o.agent))]
 
     async def _atlas_step(self, tool: dict[str, Any], prompt: str, **kw: Any) -> dict[str, Any] | None:
-        return await self.executor.structured(
-            self.scope, model=self.scope.orchestrator.model, system=self._system(), prompt=prompt, tool=tool,
-            max_tokens=self.config.orchestrator_max_tokens, **kw,
-        )
+        token = current_agent.set(self.atlas)
+        try:
+            return await self.executor.structured(
+                self.scope, model=self.scope.orchestrator.model, system=self._system(), prompt=prompt, tool=tool,
+                max_tokens=self.config.orchestrator_max_tokens, **kw,
+            )
+        finally:
+            current_agent.reset(token)
 
     async def _atlas(self, status: AgentStatus, activity: str) -> None:
         await self.scope.set_agent(self.atlas, status, activity=activity)
@@ -295,6 +343,8 @@ class LiveMission:
             await self._mark_waiting(fids)
             await self._atlas(AgentStatus.REVIEWING, f"Supervising {len(fids)} follow-up tasks")
             await self._execute(fids)
+
+        await self._audit_round()
 
         await self._phase(MissionPhase.CONSOLIDATION)
         n = len(s.reports_for(self.mission_id))
@@ -447,9 +497,9 @@ class LiveMission:
                 await self._fail_unstarted(task_id)
                 return
             self._active.setdefault(agent_id, []).append(task_id)
+            token = current_agent.set(agent_id)
             try:
-                await self.executor.run_task(self.scope, self._briefed(task),
-                                             dependency_inputs(self.scope, task, self.refs))
+                await self._attempts(task)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -466,6 +516,7 @@ class LiveMission:
                             mission_id=self.mission_id, agent_id=agent_id)
                 return
             finally:
+                current_agent.reset(token)
                 self._active[agent_id].remove(task_id)
             others = self._active.get(agent_id) or []
             if others:
@@ -475,6 +526,45 @@ class LiveMission:
             else:
                 await self.scope.set_agent(agent_id, AgentStatus.COMPLETED,
                                            activity=f"Delivered '{task.title}'", task_id=task_id)
+
+    async def _attempts(self, task: Task) -> None:
+        """Run a task; a transient error (API/network/timeout/external agent) re-runs it up to
+        `config.task_retries` times with exponential backoff. The last error propagates."""
+        s = self.store
+        for attempt in range(self.config.task_retries + 1):
+            try:
+                await self._run_agent(s.task(task.id))
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                done = s.task(task.id).status == TaskStatus.COMPLETED.value
+                if (done or self.limited or attempt >= self.config.task_retries or not _retryable(exc)):
+                    raise
+                delay = self.config.retry_delay * (2 ** attempt)
+                agent_id = task.assigned_to or ""
+                await s.update_task(task.id, status=TaskStatus.IN_PROGRESS, retries=attempt + 1)
+                await s.log(
+                    f"{self.scope.name(agent_id)} hit an error on '{task.title}' · retrying in {delay:g}s "
+                    f"({attempt + 1}/{self.config.task_retries}) · {_short(str(exc), 140)}",
+                    mission_id=self.mission_id, agent_id=agent_id,
+                )
+                await self.scope.set_agent(agent_id, AgentStatus.WAITING,
+                                           activity=_short(f"Retrying '{task.title}' after an error", 120),
+                                           task_id=task.id)
+                await asyncio.sleep(delay)
+
+    async def _run_agent(self, task: Task) -> None:
+        """One attempt at a task: native agents through the backend's executor, external agents (http / cli
+        adapters) through atlas.live.external."""
+        deps = dependency_inputs(self.scope, task, self.refs)
+        agent = self.scope.agents.get(task.assigned_to or "")
+        if agent is not None and agent.agent.adapter in EXTERNAL_ADAPTERS:
+            from .external import run_external
+
+            await run_external(self.scope, self._briefed(task), deps)
+            return
+        await self.executor.run_task(self.scope, self._briefed(task), deps)
 
     async def _on_limit(self, reason: str) -> None:
         if self.limited:
@@ -495,6 +585,75 @@ class LiveMission:
                                    task_id=task_id)
         await s.log(f"'{task.title}' not started · {self.limited}", mission_id=self.mission_id, agent_id=agent_id)
 
+    # -- audit (docs/AUDITOR.md) ----------------------------------------------
+
+    def _unaudited(self) -> list[AgentReport]:
+        done = {a.agent_report_id for a in self.store.audits_for(self.mission_id)}
+        return [r for r in self.store.reports_for(self.mission_id)
+                if r.id not in done and self.store.task(r.task_id).round == self.round]
+
+    async def _audit_round(self) -> None:
+        """AUDITOR checks this round's reports; each FAIL goes back to its agent for one revision, which is
+        audited again (final: no further revision). Never raises: a failed audit is noted in the report."""
+        auditor = self.scope.auditor
+        reports = self._unaudited()
+        if auditor is None or not reports:
+            return
+        if self.limited:
+            self.audit_skipped = self.limited
+            await self.store.log(f"Audit skipped · {self.limited}", mission_id=self.mission_id, agent_id=auditor.id)
+            return
+        if self.store.mission(self.mission_id).phase != MissionPhase.VALIDATION.value:
+            await self._phase(MissionPhase.VALIDATION)
+        revisions = await self._audit(reports, final=False)
+        if not revisions:
+            return
+        await self._atlas(AgentStatus.REVIEWING, f"Supervising {len(revisions)} revision(s) AUDITOR asked for")
+        await self._mark_waiting(revisions)
+        await self._execute(revisions)
+        revised = [r for r in self._unaudited() if self.store.task(r.task_id).revision_of]
+        if revised and not self.limited:
+            await self._audit(revised, final=True)
+
+    async def _audit(self, reports: list[AgentReport], *, final: bool) -> list[str]:
+        """One audit step; records the audits and returns the ids of the revision tasks it opened."""
+        s, auditor = self.store, self.scope.auditor
+        assert auditor is not None
+        await self.scope.set_agent(auditor.id, AgentStatus.REVIEWING,
+                                   activity=f"Auditing {len(reports)} report(s)" + (" (revisions)" if final else ""))
+        try:
+            audits = await audit_mod.run_audit(self, reports, final=final)
+        except LLMError as exc:
+            if isinstance(exc, UsageLimitError):
+                await self._on_limit(str(exc))
+            self.audit_skipped = _short(str(exc), 160)
+            await s.log(f"Audit skipped · {_short(str(exc), 160)}", mission_id=self.mission_id, agent_id=auditor.id)
+            await self.scope.set_agent(auditor.id, AgentStatus.ERROR, activity=_short(f"Audit failed: {exc}", 120))
+            return []
+        revisions: list[str] = []
+        budget = self.config.audit_revisions
+        for audit in audits:
+            task = s.task(audit.task_id)
+            if (audit.verdict == AuditVerdict.FAIL and not final and budget > 0 and not self.limited
+                    and not task.revision_of and task.assigned_to in self.scope.agents):
+                revision = await s.create_task(
+                    self.mission_id, f"Revise: {task.title}", audit_mod.revision_description(task.description, audit),
+                    task.assigned_to, created_by=self.atlas, priority=Priority.HIGH, depends_on=[task.id],
+                    revision_of=task.id,
+                )
+                self.refs[f"{self._ref(task.id)}-rev"] = revision.id
+                audit = audit.model_copy(update={"revision_task_id": revision.id})
+                revisions.append(revision.id)
+            await s.record_audit(audit)
+        failed = sum(1 for a in audits if a.verdict == AuditVerdict.FAIL)
+        await self.scope.set_agent(
+            auditor.id, AgentStatus.COMPLETED,
+            activity=f"Audited {len(audits)} report(s)" + (f" · {failed} did not hold up" if failed else ""))
+        return revisions
+
+    def _ref(self, task_id: str) -> str:
+        return next((k for k, v in self.refs.items() if v == task_id), task_id)
+
     # -- review + consolidation ---------------------------------------------
 
     def _tasks_text(self) -> str:
@@ -506,11 +665,17 @@ class LiveMission:
 
     def _reports_text(self) -> list[str]:
         ref_of = {v: k for k, v in self.refs.items()}
+        by_report: dict[str, list[Audit]] = {}
+        for a in self.store.audits_for(self.mission_id):
+            by_report.setdefault(a.agent_report_id, []).append(a)
         out = []
         for r in self.store.reports_for(self.mission_id):
             t = self.store.task(r.task_id)
-            out.append(render_report(r, title=t.title, agent_name=self.scope.name(r.agent_id),
-                                     ref=ref_of.get(t.id)))
+            text = render_report(r, title=t.title, agent_name=self.scope.name(r.agent_id), ref=ref_of.get(t.id))
+            if t.revision_of:
+                text += f"\n(Revision of '{self.store.task(t.revision_of).title}' requested by AUDITOR)"
+            block = audit_mod.audit_block(by_report.get(r.id, []))
+            out.append(text + ("\n" + block if block else ""))
         return out
 
     async def _review(self) -> list[dict[str, Any]]:
@@ -551,6 +716,8 @@ class LiveMission:
                 attention.append(f)
         reports = s.reports_for(self.mission_id)
         fields.setdefault("deliverables", [d for r in reports for d in getattr(r, "deliverables", [])])
+        fields.setdefault("audit_summary", audit_mod.audit_summary(
+            [a for a in s.audits_for(self.mission_id) if a.round == self.round], skipped=self.audit_skipped))
         return MissionReport(
             mission_id=self.mission_id,
             version=self.round,
@@ -567,6 +734,9 @@ class LiveMission:
                 raise LLMError(self.limited)
             prompt = consolidation_message(
                 self.scope.objective, self._tasks_text(), self._reports_text(), self.failures)
+            if self.store.audits_for(self.mission_id):
+                prompt = prompt.replace("Call submit_mission_report now.", AUDIT_CONSOLIDATION_NOTE
+                                        + "\n\nCall submit_mission_report now.")
             if self.followup_request is not None:
                 prompt = prompt.replace("Call submit_mission_report now.", followup_consolidation_note(
                     self.followup_request, self.round) + "\n\nCall submit_mission_report now.")
@@ -582,7 +752,7 @@ class LiveMission:
         status = str(data.get("objective_status") or "").upper()
         if status not in ("ACHIEVED", "PARTIAL", "NOT_ACHIEVED"):
             status = "PARTIAL"
-        return self._base_report(
+        return await self._traced(self._base_report(
             executive_summary=str(data.get("executive_summary") or "").strip() or "(no summary)",
             objective_status=status,
             key_findings=to_claims(data.get("key_findings")),
@@ -591,7 +761,18 @@ class LiveMission:
             needs_human_attention=_str_list(data.get("needs_human_attention")),
             next_actions=_str_list(data.get("next_actions")),
             references=_str_list(data.get("references")),
-        )
+        ))
+
+    async def _traced(self, report: MissionReport) -> MissionReport:
+        """System check on the executive report: figures that come from no agent report / evidence / human."""
+        untraced = audit_mod.untraced_figures(report, audit_mod.report_corpus(self))
+        if untraced:
+            await self.store.log(
+                f"AUDITOR · {len(untraced)} figure(s) in the executive report trace to no agent report: "
+                + "; ".join(u.split(" — ")[0] for u in untraced[:5]),
+                mission_id=self.mission_id, agent_id=self.scope.auditor.id if self.scope.auditor else self.atlas,
+            )
+        return report.model_copy(update={"untraced": untraced})
 
     def _fallback_report(self, why: str) -> MissionReport:
         reports = self.store.reports_for(self.mission_id)
@@ -608,6 +789,57 @@ class LiveMission:
             key_findings=findings[:10],
             needs_human_attention=[f"Consolidation failed: {why}"],
         )
+
+    # -- resume (Phase 5) ---------------------------------------------------------
+
+    def resumable(self) -> list[Task]:
+        """Tasks a resume would run again: FAILED or CANCELLED, not superseded by a completed revision."""
+        tasks = self.store.tasks_for(self.mission_id)
+        revised = {t.revision_of for t in tasks if t.revision_of and t.status == TaskStatus.COMPLETED.value}
+        return [t for t in tasks if t.status in _DEAD and t.id not in revised]
+
+    async def run_resume(self) -> None:
+        try:
+            await self._resume_flow()
+        except asyncio.CancelledError:
+            await self._cancel_children()
+            raise
+        except Exception as exc:
+            log.exception("resume of mission %s failed", self.mission_id)
+            await self._cancel_children()
+            try:
+                await self._abort(f"Unexpected error while resuming: {exc}")
+            except Exception:  # pragma: no cover
+                log.exception("could not close the resumed mission %s", self.mission_id)
+        await self.store.release_agents(self.mission_id, self.scope.touched)
+
+    async def _resume_flow(self) -> None:
+        s = self.store
+        again = self.resumable()
+        mission = await s.begin_round(self.mission_id)
+        self.round = mission.round
+        titles = ", ".join(f"'{t.title}'" for t in again[:4]) + (" …" if len(again) > 4 else "")
+        await s.log(f"ATLAS resumes the mission · round {self.round} re-runs {len(again)} task(s): {titles}",
+                    mission_id=self.mission_id, agent_id=self.atlas)
+        # the same tasks run again in this round: reset them (deps first) so the DAG scheduler picks them up
+        ids = [t.id for t in again]
+        for t in again:
+            ready = all(s.task(d).status == TaskStatus.COMPLETED.value for d in t.depends_on)
+            await s.reopen_task(t.id, self.round, ready=ready)
+        await self._mark_waiting(ids)
+        await self._phase(MissionPhase.EXECUTION)
+        await self._atlas(AgentStatus.REVIEWING, f"Supervising {len(ids)} resumed task(s)")
+        await self._execute(ids)
+
+        await self._audit_round()
+        await self._phase(MissionPhase.CONSOLIDATION)
+        await self._atlas(AgentStatus.WORKING, f"Consolidating round {self.round}")
+        report = await self._consolidate()
+        await self._phase(MissionPhase.REPORTING)
+        await s.submit_mission_report(report)
+        await self._phase(MissionPhase.FOLLOW_UP)
+        await self._atlas(AgentStatus.COMPLETED, f"Mission report v{report.version} delivered")
+        await self._phase(MissionPhase.CLOSED)
 
     # -- mission thread (docs/PHASE3.md B) -----------------------------------
 
@@ -751,6 +983,7 @@ class LiveMission:
         await self._execute(ids)
 
         await self._phase(MissionPhase.VALIDATION)
+        await self._audit_round()
         await self._phase(MissionPhase.CONSOLIDATION)
         await self._atlas(AgentStatus.WORKING, f"Consolidating round {self.round}")
         report = await self._consolidate()
@@ -895,6 +1128,24 @@ class LiveEngine:
         self._running[mission_id] = (live, task)
         task.add_done_callback(lambda _t, mid=mission_id: self._running.pop(mid, None))
         return message
+
+    async def resume(self, mission_id: str, backend: str | None = None) -> Mission:
+        """Re-run a closed live mission's failed and cancelled tasks as a new round (new report version).
+        Raises ValueError when there is nothing to resume or the mission is still running."""
+        s = self.store
+        mission = s.mission(mission_id)
+        if mission.mode != "live":
+            raise ValueError("only live missions can be resumed")
+        if mission_id in self._running or mission.phase != MissionPhase.CLOSED.value:
+            raise ValueError("the mission is still running")
+        chosen = backend or self.backend_info().backend or "api"
+        live = LiveMission(self, mission, chosen)
+        if not live.resumable():
+            raise ValueError("nothing to resume: no failed or cancelled tasks")
+        task = asyncio.create_task(live.run_resume(), name=f"live-resume:{mission_id}")
+        self._running[mission_id] = (live, task)
+        task.add_done_callback(lambda _t, mid=mission_id: self._running.pop(mid, None))
+        return s.mission(mission_id)
 
     def mission(self, mission_id: str) -> LiveMission | None:
         entry = self._running.get(mission_id)

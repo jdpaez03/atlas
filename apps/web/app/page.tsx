@@ -17,6 +17,7 @@ import { MonitorView } from "@/components/Monitor";
 import { Emblem } from "@/components/primitives";
 import { Reports } from "@/components/Reports";
 import { TaskBoard } from "@/components/TaskBoard";
+import { UsageView } from "@/components/Usage";
 import { API_URL, type AtlasConfig, type Availability, type MissionSummary } from "@/lib/api";
 import type { AgentDefinition, Task } from "@/lib/contracts";
 import { followupCounts, proposedDrafts } from "@/lib/followups";
@@ -30,7 +31,7 @@ const MONITOR_EVENTS = new Set(["alert.upserted", "rock.updated", "brief.ready"]
 function initialView(): View {
   if (typeof window === "undefined") return "missions";
   const v = new URLSearchParams(window.location.search).get("view");
-  return v === "followups" || v === "monitor" ? v : "missions";
+  return v === "followups" || v === "monitor" || v === "usage" ? v : "missions";
 }
 
 export default function CommandCenter() {
@@ -99,6 +100,7 @@ export default function CommandCenter() {
   const agentMessages = useMemo(() => messages.filter((m) => msgFrom(m) !== "human" && msgTo(m) !== "human"), [messages]);
   const agentReports = useMemo(() => world.agent_reports.filter((r) => r.mission_id === mid), [world.agent_reports, mid]);
   const missionReports = useMemo(() => world.mission_reports.filter((r) => r.mission_id === mid), [world.mission_reports, mid]);
+  const audits = useMemo(() => (world.audits ?? []).filter((a) => a.mission_id === mid), [world.audits, mid]);
 
   /* ---- Phase 3: mission history (GET /missions?node=; null → endpoint missing, hide the drawer) */
   const { missionHistory } = atlas;
@@ -143,6 +145,7 @@ export default function CommandCenter() {
       if (e.key === "1") setView("missions");
       else if (e.key === "2") setView("followups");
       else if (e.key === "3") setView("monitor");
+      else if (e.key === "4") setView("usage");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -257,7 +260,24 @@ export default function CommandCenter() {
         inbox={<InboxChip inbox={inbox} ready={ready} conn={conn} />}
       />
       <DraftDrawer draft={openDraft} followup={openDraftFollowup} onClose={() => setDraftId(null)} decide={inbox.decideDraft} />
-      {view === "monitor" ? (
+      {view === "usage" ? (
+        <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
+          <UsageView
+            load={atlas.usage}
+            node={nodeId}
+            nodeName={node?.name ?? "—"}
+            agents={agents}
+            ready={ready}
+            refreshKey={`${conn}|${missionsKey}`}
+          />
+          <footer className="flex items-center justify-between py-2 font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
+            <span>ATLAS · LLM usage by agent and day · estimates, not a bill</span>
+            <span>
+              {atlas.mode === "mock" ? "Simulated stream" : API_URL} · seq {world.last_seq}
+            </span>
+          </footer>
+        </main>
+      ) : view === "monitor" ? (
         <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
           <MonitorView
             alerts={alerts}
@@ -319,6 +339,8 @@ export default function CommandCenter() {
           onLaunched={(m) => setPicked(m.id)}
           config={config}
           cancelMission={atlas.cancel}
+          resumeMission={atlas.resume}
+          agents={agents}
           historyCount={history ? history.length : null}
           onOpenHistory={() => {
             setHistoryOpen(true);
@@ -390,6 +412,7 @@ export default function CommandCenter() {
           agentReports={agentReports}
           agents={agents}
           tasks={tasksById}
+          audits={audits}
           missionActive={!!mission}
           missionClosed={mission?.phase === "CLOSED" || !!mission?.interrupted}
         />

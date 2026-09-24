@@ -76,8 +76,24 @@ export function TaskBoard({ tasks, agents, className }: { tasks: Task[]; agents:
                           </svg>
                         </span>
                       )}
+                      {(t.retries ?? 0) > 0 && (
+                        <span
+                          className="shrink-0 rounded border border-amber-400/30 px-1 font-mono text-[8.5px] uppercase tracking-[0.12em] text-amber-300/80"
+                          title={`Re-run automatically ${t.retries} time${t.retries === 1 ? "" : "s"} after a transient failure`}
+                        >
+                          retried {t.retries}×
+                        </span>
+                      )}
                     </div>
-                    <p className="truncate text-[10.5px] text-mute">{t.description}</p>
+                    <p className="truncate text-[10.5px] text-mute">
+                      {t.revision_of && (
+                        <span className="text-violet-300/85" title="AUDITOR sent this task's report back for revision">
+                          revision of &lsquo;{byId.get(t.revision_of)?.title ?? t.revision_of}&rsquo;
+                          {" · "}
+                        </span>
+                      )}
+                      {t.description}
+                    </p>
                   </div>
                   <AgentName agent={agent} id={t.assigned_to} className="truncate text-[10.5px]" />
                   <span className="inline-flex items-center gap-1.5 whitespace-nowrap font-mono text-[9.5px] uppercase tracking-[0.1em]" style={{ color: st.color }}>

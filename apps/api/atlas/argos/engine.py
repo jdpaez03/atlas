@@ -477,7 +477,8 @@ class ArgosEngine:
                 log.debug("ARGOS agent unavailable for LLM steps", exc_info=True)
             scope = MissionScope(
                 store=self.store,
-                meter=Meter(live.llm if backend == "api" else None, self.store, mission_id, live.prices),
+                meter=Meter(live.llm if backend == "api" else None, self.store, mission_id, live.prices,
+                            default_agent="argos"),
                 config=live.config_for(backend), context=live.context, mission_id=mission_id,
                 objective=objective, node=NODE, agents=agents,
                 orchestrator=loader.resolve(self.store.registry.orchestrator.id),

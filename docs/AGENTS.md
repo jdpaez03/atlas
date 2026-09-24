@@ -11,6 +11,7 @@ approval rules, node isolation, language; see [LIVE.md](LIVE.md)), so role promp
 | `argos` | ARGOS | Monitor | shared |
 | `oracle` | ORACLE | Strategy & Analysis | shared |
 | `alfred` | ALFRED | Execution / Operations | shared |
+| `auditor` | AUDITOR | Quality: checks every report against the evidence (never planned; docs/AUDITOR.md) | shared |
 | `eos-vision`, `eos-people`, `eos-data`, `eos-issues`, `eos-process`, `eos-traction` | EOS division | One specialist per EOS component (`claude_md`, prompts kept locally) | corporate |
 
 Typical flow: **gather** (sofia and the EOS members) → **verify** (argos) → **analyze** (oracle) →
@@ -124,3 +125,22 @@ questions to them by component:
 | `eos-issues` | Issues List, IDS quality, root causes |
 | `eos-process` | Core processes, documentation, standardization |
 | `eos-traction` | Rocks, SMART quality, Level 10 meetings, cadence |
+
+## External agents (http / cli)
+
+Any agent that already exists outside ATLAS can join a mission: add a YAML file with `kind: external` and an
+`http` or `cli` adapter (start from [`agents/_template.external.yaml`](../agents/_template.external.yaml)).
+ATLAS sends it one request JSON per task (mission objective, task, the reports of the tasks it depends on) and
+reads one report JSON back. The exact contract (`atlas.external/1`), the config keys of both adapters and the
+security notes are in [CONTRACTS.md](CONTRACTS.md#external-agents-bring-your-own).
+
+- Secrets come from environment variables (`${NAME}`), never from YAML.
+- ATLAS only calls the `url` / runs the `command` written in your YAML; `cli` commands run as the ATLAS
+  process's OS user.
+- Their reports record the call as `external_call` evidence and are marked as self-reported; their confidence is
+  capped at MEDIUM unless every FACT cites sources.
+- A task that `requires_approval` is approved by the human **before** the agent is called.
+- `mcp` agents are not supported yet (unavailable).
+
+Runnable example: [`examples/external-agents/echo_agent.py`](../examples/external-agents/echo_agent.py) with
+[`agents/_example.cli.yaml`](../agents/_example.cli.yaml) (copy it to `agents/echo.yaml` and enable it).

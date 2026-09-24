@@ -1,18 +1,22 @@
 # Template for plugging an EXISTING agent into ATLAS.
 # Copy to <your-agent>.yaml (no leading underscore) and fill in.
-# ATLAS sends the agent a Task (JSON) and expects an AgentReport (JSON) back.
-# See docs/CONTRACTS.md -> "External agents".
+# ATLAS sends the agent a request JSON (contract atlas.external/1: mission, task, dependency inputs) and
+# expects a report JSON back. See docs/CONTRACTS.md -> "External agents" and agents/_example.cli.yaml.
+# Secrets never go in YAML: reference environment variables as ${NAME}.
 id: my-agent
 name: MYAGENT
 title: What it does in two words
 description: One sentence on what this agent is responsible for.
 color: "#f472b6"
 kind: external
-adapter: http            # http | mcp | cli | claude_md
+adapter: http            # http | cli | claude_md (mcp: not supported yet)
 adapter_config:
-  url: https://example.com/atlas-task     # http: POST Task, receive AgentReport
-  # command: python my_agent.py           # cli: Task JSON on stdin, AgentReport JSON on stdout
-  # server: my-mcp-server                 # mcp: MCP server name; tool: run_task
+  url: https://example.com/atlas-task     # http: POST the request, receive the report
+  # headers: {Authorization: "Bearer ${MY_AGENT_TOKEN}"}
+  # command: ${ATLAS_PYTHON} my_agent.py  # cli: request JSON on stdin, report JSON on stdout (no shell)
+  # cwd: ${ATLAS_REPO_DIR}                # cli: working directory
+  # env: {MY_TOKEN: "${MY_TOKEN}"}        # cli: extra environment variables
+  # server: my-mcp-server                 # mcp: not supported yet
   # path: ${ATLAS_CLAUDE_AGENTS_DIR}/x.md  # claude_md: a Claude Code agent file
   timeout_seconds: 300
 capabilities: [example_capability]

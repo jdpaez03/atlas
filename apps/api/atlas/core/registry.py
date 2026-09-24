@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from pathlib import Path
 
 import yaml
@@ -163,12 +164,20 @@ ENV_DEFAULTS = {
     "ATLAS_CLAUDE_AGENTS_DIR": "~/.claude/agents",
     # private material next to the repo: <repo>/../atlas-local
     "ATLAS_LOCAL_DIR": str(DEFAULT_AGENTS_DIR.parent.parent / "atlas-local"),
+    # external cli agents: the repo checkout and the Python running ATLAS (examples/external-agents)
+    "ATLAS_REPO_DIR": str(DEFAULT_AGENTS_DIR.parent),
+    "ATLAS_PYTHON": sys.executable,
 }
+
+
+def expand_env(value: str) -> str:
+    """Expand ${ENV_VAR} (uppercase names) from the environment or ENV_DEFAULTS; unknown ones stay as is."""
+    def sub(m: re.Match[str]) -> str:
+        return os.getenv(m.group(1)) or ENV_DEFAULTS.get(m.group(1), m.group(0))
+
+    return _ENV.sub(sub, value)
 
 
 def resolve_path(value: str) -> Path:
     """Expand ${ENV_VAR} and ~ in adapter paths, so personal paths stay out of the public repo."""
-    def sub(m: re.Match[str]) -> str:
-        return os.getenv(m.group(1)) or ENV_DEFAULTS.get(m.group(1), m.group(0))
-
-    return Path(os.path.expanduser(_ENV.sub(sub, value)))
+    return Path(os.path.expanduser(expand_env(value)))

@@ -11,7 +11,7 @@ work in parallel against it without colliding.
 | **2 · Live orchestrator** | ATLAS decomposes objectives with Claude into a task DAG, delegates, runs SOFIA/ORACLE/ALFRED on the Claude API, structured messages between agents | Type an objective → real agents work live | ✅ done (Max plan or API key) |
 | **3 · Files, evidence, thread, history** | Sandboxed read access to your folders per node, attachments, real deliverables (md/csv/xlsx/docx), system-recorded evidence + unverified-claim check, mission thread with follow-up rounds and report versions, SQLite history that survives restarts | Attach a file → agents read it, write a deliverable, prove it; follow up in the thread | ✅ done |
 | **4 · Tools & live data** | Web search (SOFIA/MERCATO), deliverables, Inbox (follow-ups, drafts, CC digest), ARGOS monitoring (dashboards from email week-over-week, L10 via PAGA Suite, Rocks rules, Monday L10 brief) | Real information in, real deliverables out, alerts with verbatim evidence | ✅ built · L10 needs a Suite token |
-| **5 · Modularity & quality** | External agents (http / mcp / cli adapters) live, AUDITOR agent, cost/token tracking, retries & error recovery | Add an agent = add a YAML file | |
+| **5 · Modularity & quality** | External agents (http / mcp / cli adapters) live, AUDITOR agent, cost/token tracking, retries & error recovery | Add an agent = add a YAML file | ✅ built (AUDITOR, retries/resume, usage by agent, http/cli agents) |
 
 ## Parallel build plan (Phase 1 onward)
 
@@ -54,3 +54,11 @@ work in parallel against it without colliding.
   and issues via the PAGA Suite API (read-only); Rocks from a private rocks.yaml with the dossier's rules (overdue = failed,
   pace < 50% = at risk, two owners = no owner, no measurable = finding); Monday 07:30 L10 brief (.docx). A brief never
   says "all clear" for a source it couldn't check.
+- 2026-09-24 · **Phase 5**: AUDITOR (shared, never planned) checks every report against the system's evidence after
+  each round, with deterministic prechecks, PASS / ISSUES / FAIL verdicts, one revision round for a FAIL, and a
+  system check that every figure in the executive report traces to an agent report (docs/AUDITOR.md). Transient task
+  failures are retried with backoff, and a closed mission's failed or cancelled tasks can be resumed as a new round.
+  Usage is split by agent (`GET /usage`). External agents run live via `http` and `cli` (contract
+  `atlas.external/1`, docs/CONTRACTS.md); `mcp` stays unavailable. Deployment on the home PC runs natively on Windows
+  (service + Tailscale), not in Docker: ATLAS depends on the user's Claude Code login, the DPAPI-encrypted Outlook
+  token cache and local/OneDrive files.

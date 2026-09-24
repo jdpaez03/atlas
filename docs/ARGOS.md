@@ -65,7 +65,7 @@ mail source (`atlas.inbox.sources.make_source()`), `paths`, the loaded `watch.ya
 
 ## L10 and Rocks checks + weekly brief (builder A3: `atlas/argos/{suite,l10,rocks,brief}.py`)
 
-**PAGA Suite client** (`suite.py`): `ATLAS_SUITE_URL` (e.g. `https://pagasuite.com/api`), `ATLAS_SUITE_TOKEN` (a Bearer token), and optional `ATLAS_SUITE_AUTH_HEADER` (default `Authorization`). Endpoints (per the dossier): `GET /l10/admin/todos`, `GET /l10/issues`, `GET /l10/resumen/{semana_id}`. It must be defensive about field names (log unknown shapes and map aliases: `responsable`, `fecha`, `avance_pct`, `semaforo`, `estado`/`status`, `decide`, `abierto_desde`/`created_at`), with timeouts and clear errors. Without configuration the check is "not configured" (its status carries a hint), not an error.
+**PAGA Suite client** (`suite.py`): `ATLAS_SUITE_URL` (e.g. `https://pagasuite.com/api`), `ATLAS_SUITE_TOKEN` (a Bearer token), and optional `ATLAS_SUITE_AUTH_HEADER` (default `Authorization`). Endpoints: `GET /l10/admin/todos`, `GET /l10/issues`, `GET /l10/resumen/{semana_id}`, `GET /rocks`. It must be defensive about field names (log unknown shapes and map aliases: `responsable`, `fecha`, `avance_pct`, `semaforo`, `estado`/`status`, `decide`, `abierto_desde`/`created_at`), with timeouts and clear errors. Without configuration the check is "not configured" (its status carries a hint), not an error.
 
 **L10 check** (`l10.py`, deterministic, with no LLM needed):
 - `overdue_todo`: past its date and not done.
@@ -74,7 +74,9 @@ mail source (`atlas.inbox.sources.make_source()`), `paths`, the loaded `watch.ya
 
 Severity depends on the age. Fingerprints are `l10:<kind>:<id>`. The rule "don't report on behalf of others" applies: ATLAS only reads and never writes to the Suite.
 
-**Rocks** (`rocks.py`): `rocks.yaml` holds the quarter and a list of Rocks, each with `{id, title, owner, project?, due, metric?, target?, current?, start_value?, start_date?, done?: bool}`. The rules, straight from the user's dossier:
+**Rocks from PAGA Suite** (default when the Suite is configured; `watch.yaml` → `rocks.source: auto | suite | file`): the Suite's Rocks module (`GET /rocks`) computes each Rock's status itself — the owner declares on/off-track weekly and the Suite's pace rule overrides an on-track below 50% of the required pace. ARGOS maps it: `on_track` → ON_TRACK, `off_track` → OFF_TRACK (alert `rock_at_risk`, HIGH when the pace rule overrode the owner or ≤ 2 weeks remain), `por_declarar` (past due, not declared) → FAILED (alert `rock_failed`, HIGH), `sin_registro` → UNKNOWN (alert `other`, LOW), `cumplido`/`no_cumplido` → DONE/FAILED. The evidence quotes the Suite's own reason. Rock ids are `<quarter>-<code>` (`2026-Q4-R1`). In this mode `PATCH /rocks/{id}` answers 409 — progress is reported in the Suite, ATLAS only reads it — and the brief uses the Rocks from the last check. The Suite's ATLAS key must allow `GET /rocks` (paga-app `ATLAS_GET_EXACT`).
+
+**Rocks from a file** (`rocks.py`, when the Suite isn't configured or `rocks.source: file`): `rocks.yaml` holds the quarter and a list of Rocks, each with `{id, title, owner, project?, due, metric?, target?, current?, start_value?, start_date?, done?: bool}`. The rules, straight from the user's dossier:
 - **Overdue and not done → FAILED** (alert `rock_failed`, HIGH).
 - **Observed pace < 50% of required pace → AT_RISK** (alert `rock_at_risk`). Observed pace = (current − start_value) / weeks elapsed. Required pace = (target − current) / weeks left.
 - If there's no metric or target, the status is UNKNOWN, with reason "needs a measurable". Missing measurables are themselves a finding in EOS terms, so these get an `other` alert, LOW.

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
-import type { AgentDefinition, AgentReport, Attachment, Claim, ClaimKind, Confidence, Evidence, MissionReport, Task } from "@/lib/contracts";
-import { CLAIM, cx, hms } from "@/lib/ui";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { AgentDefinition, AgentReport, Attachment, Audit, AuditIssue, AuditVerdict, Claim, ClaimKind, Confidence, Evidence, MissionReport, Task } from "@/lib/contracts";
+import { CLAIM, cx, hms, human } from "@/lib/ui";
 import { FileLink } from "./Files";
 import { Empty, Panel } from "./primitives";
 
@@ -18,6 +18,7 @@ const EVIDENCE: Record<Evidence["kind"], { label: string; color: string }> = {
   approval: { label: "Approval", color: "#f59e0b" },
   email_read: { label: "Email", color: "#f0abfc" },
   draft_created: { label: "Draft", color: "#34d399" },
+  external_call: { label: "external call", color: "#fb923c" },
 };
 
 export function EvidenceIcon({ kind, color, size = 12 }: { kind: Evidence["kind"]; color: string; size?: number }) {
@@ -86,12 +87,21 @@ export function EvidenceIcon({ kind, color, size = 12 }: { kind: Evidence["kind"
           <path d="M5.75 8l1.6 1.6 3-3.2" />
         </svg>
       );
+    case "external_call":
+      return (
+        <svg {...p} aria-hidden>
+          <path d="M9.25 2.25h4.5v4.5M13.5 2.5L7.5 8.5" />
+          <path d="M11.75 9.5v4.25h-9.5v-9.5H6.5" />
+        </svg>
+      );
   }
 }
 
 /** Short, readable form of an evidence ref: a file's name, a URL's host + path, or an agent's name. */
 function shortRef(e: Evidence, agents: Map<string, AgentDefinition>): string {
   if (e.kind === "consult") return agents.get(e.ref)?.name ?? e.ref.toUpperCase();
+  // external_call: an agent id, or the endpoint/command it called
+  if (e.kind === "external_call" && agents.has(e.ref)) return agents.get(e.ref)!.name;
   if (e.kind === "approval") return e.ref.length > 14 ? `${e.ref.slice(0, 12)}…` : e.ref;
   if (e.kind === "web_search") return `“${e.ref}”`;
   // email_read / draft_created refs are subjects (or message ids), not paths.
@@ -113,6 +123,7 @@ function shortRef(e: Evidence, agents: Map<string, AgentDefinition>): string {
 
 function EvidenceList({ items, agents }: { items: Evidence[]; agents: Map<string, AgentDefinition> }) {
   const failed = items.filter((e) => !e.ok).length;
+  const wideLabel = items.some((e) => e.kind === "external_call");
   const color = "#2dd4bf";
   return (
     <section className="rounded-lg border bg-black/15 p-3" style={{ borderColor: items.length ? `${color}40` : "#1a2340" }}>
@@ -134,7 +145,11 @@ function EvidenceList({ items, agents }: { items: Evidence[]; agents: Map<string
               return (
                 <li
                   key={e.id}
-                  className={cx("grid grid-cols-[14px_52px_minmax(0,1fr)_auto] items-center gap-2 px-2 py-1.5", e.ok ? "bg-black/20" : "bg-red-500/[0.07]")}
+                  className={cx(
+                    "grid items-center gap-2 px-2 py-1.5",
+                    wideLabel ? "grid-cols-[14px_86px_minmax(0,1fr)_auto]" : "grid-cols-[14px_52px_minmax(0,1fr)_auto]",
+                    e.ok ? "bg-black/20" : "bg-red-500/[0.07]",
+                  )}
                   title={`${e.ref}${e.detail ? `\n${e.detail}` : ""}`}
                 >
                   <EvidenceIcon kind={e.kind} color={e.ok ? k.color : "#f87171"} />
@@ -362,6 +377,156 @@ function Block({
   );
 }
 
+/* ---------------------------------------------------------------- AUDITOR (docs/AUDITOR.md) */
+
+export const VERDICT: Record<AuditVerdict, { color: string; label: string; hint: string }> = {
+  PASS: { color: "#22c55e", label: "Pass", hint: "Holds up against the recorded evidence" },
+  ISSUES: { color: "#f59e0b", label: "Issues", hint: "Holds up, with issues to keep in mind" },
+  FAIL: { color: "#ef4444", label: "Fail", hint: "Does not hold up against the recorded evidence" },
+};
+
+const SEVERITY: Record<AuditIssue["severity"], string> = { HIGH: "#f87171", MEDIUM: "#fbbf24", LOW: "#94a3b8" };
+
+export function VerdictBadge({ verdict, small }: { verdict: AuditVerdict; small?: boolean }) {
+  const v = VERDICT[verdict] ?? VERDICT.ISSUES;
+  return (
+    <span
+      className={cx(
+        "inline-flex shrink-0 items-center gap-1.5 rounded border font-mono font-semibold uppercase tracking-[0.18em]",
+        small ? "px-1 py-0 text-[8.5px]" : "px-1.5 py-[2px] text-[9.5px]",
+      )}
+      style={{ color: v.color, borderColor: `${v.color}66`, background: `${v.color}16` }}
+      title={`AUDITOR: ${v.hint}`}
+    >
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: v.color }} />
+      {v.label}
+    </span>
+  );
+}
+
+function AuditIssueItem({ issue }: { issue: AuditIssue }) {
+  const c = SEVERITY[issue.severity] ?? SEVERITY.LOW;
+  return (
+    <li className="rounded-md border border-l-2 px-3 py-2" style={{ borderColor: `${c}33`, borderLeftColor: c, background: `${c}0a` }}>
+      <div className="flex flex-wrap items-center gap-2 font-mono text-[8.5px] uppercase tracking-[0.16em]">
+        <span className="font-semibold" style={{ color: c }}>
+          {issue.severity}
+        </span>
+        <span className="rounded border border-edge-2 px-1 text-dim">{issue.kind}</span>
+      </div>
+      <p className="mt-1 border-l border-edge-2 pl-2 text-[12px] leading-snug text-slate-400 italic">&ldquo;{issue.finding}&rdquo;</p>
+      <p className="mt-1 text-[12px] leading-snug text-slate-200">{issue.problem}</p>
+    </li>
+  );
+}
+
+function AuditCard({ audit, tasks, onOpenTask }: { audit: Audit; tasks: Map<string, Task>; onOpenTask?: (taskId: string) => void }) {
+  const v = VERDICT[audit.verdict] ?? VERDICT.ISSUES;
+  const revision = audit.revision_task_id ? tasks.get(audit.revision_task_id) : undefined;
+  return (
+    <section className="rounded-lg border bg-black/15 p-3" style={{ borderColor: `${v.color}45` }}>
+      <h4 className="flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color: "#a78bfa" }}>
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden>
+          <path d="M8 1.75l5.25 2v4c0 3.2-2.3 5.4-5.25 6.5C5.05 13.15 2.75 10.95 2.75 7.75v-4z" />
+          <circle cx="7.5" cy="7.5" r="2" />
+          <path d="M9 9l1.75 1.75" strokeLinecap="round" />
+        </svg>
+        Audit
+        <VerdictBadge verdict={audit.verdict} />
+        {audit.final && (
+          <span className="rounded border border-violet-400/40 px-1 text-[8.5px] tracking-[0.16em] text-violet-300/90" title="Audit of a revision — no further revision is opened">
+            final
+          </span>
+        )}
+        {audit.issues.length > 0 && (
+          <span className="normal-case tracking-normal text-mute">
+            · {audit.issues.length} issue{audit.issues.length === 1 ? "" : "s"}
+          </span>
+        )}
+        <span className="ml-auto normal-case tracking-normal text-mute">AUDITOR · {hms(audit.created_at)}</span>
+      </h4>
+      <p className="mt-2 text-[12.5px] leading-snug text-slate-200">{audit.summary}</p>
+      {audit.revision_task_id && (
+        <p className="mt-2 font-mono text-[10.5px] text-red-200/90">
+          Sent back · revised in{" "}
+          {revision && onOpenTask ? (
+            <button className="text-violet-300 underline decoration-violet-300/40 underline-offset-2 hover:text-violet-200" onClick={() => onOpenTask(revision.id)}>
+              &lsquo;{revision.title}&rsquo;
+            </button>
+          ) : (
+            <span className="text-violet-300">&lsquo;{revision?.title ?? audit.revision_task_id}&rsquo;</span>
+          )}
+          {revision && <span className="text-mute"> · {human(revision.status).toLowerCase()}</span>}
+        </p>
+      )}
+      {audit.issues.length > 0 && (
+        <ul className="mt-2.5 grid gap-1.5">
+          {audit.issues.map((i, n) => (
+            <AuditIssueItem key={n} issue={i} />
+          ))}
+        </ul>
+      )}
+      {audit.checks.length > 0 && (
+        <details className="group mt-2.5">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.18em] text-mute hover:text-slate-300">
+            <span className="transition group-open:rotate-90">▸</span>
+            System checks · {audit.checks.length}
+          </summary>
+          <ul className="mt-1.5 grid gap-1 pl-3.5">
+            {audit.checks.map((c, i) => (
+              <li key={i} className="flex gap-2 font-mono text-[10.5px] leading-snug text-dim">
+                <span className="text-emerald-400/70">✓</span>
+                {c}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
+function MissionAudit({ summary, audits }: { summary: string; audits: Audit[] }) {
+  if (!summary && !audits.length) return null;
+  const color = "#a78bfa";
+  const tally = (["PASS", "ISSUES", "FAIL"] as AuditVerdict[]).map((v) => [v, audits.filter((a) => a.verdict === v).length] as const).filter(([, n]) => n > 0);
+  return (
+    <section className="rounded-lg border bg-black/15 p-3" style={{ borderColor: `${color}40` }}>
+      <h4 className="mb-2 flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color }}>
+        <span className="text-[11px]">◈</span>
+        Audit
+        {tally.map(([v, n]) => (
+          <span key={v} className="normal-case tracking-normal" style={{ color: VERDICT[v].color }}>
+            {n} {VERDICT[v].label.toLowerCase()}
+          </span>
+        ))}
+      </h4>
+      {summary ? <p className="text-[12px] leading-snug text-slate-300">{summary}</p> : <p className="text-[11.5px] text-mute">No audit summary for this version.</p>}
+    </section>
+  );
+}
+
+function Untraced({ items }: { items: string[] }) {
+  if (!items.length) return null;
+  return (
+    <section className="rounded-lg border border-red-400/40 bg-red-500/[0.06] p-3">
+      <h4 className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-red-300">
+        <span className="text-[11px]">⚠</span>
+        Figures not traced to any agent report
+        <span className="text-mute">· {items.length}</span>
+      </h4>
+      <ul className="grid gap-1.5">
+        {items.map((t, i) => (
+          <li key={i} className="flex gap-2 text-[12px] leading-snug text-red-100" title="The system found this figure in no agent report and no recorded evidence — check it before relying on it.">
+            <span className="mt-[6px] h-1 w-1 shrink-0 rounded-full bg-red-400" />
+            {t}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 const OBJ: Record<MissionReport["objective_status"], { color: string; label: string }> = {
   ACHIEVED: { color: "#22c55e", label: "Objective achieved" },
   PARTIAL: { color: "#eab308", label: "Partially achieved" },
@@ -374,12 +539,15 @@ function MissionReportView({
   reports,
   versions,
   onVersion,
+  audits,
 }: {
   r: MissionReport;
   agents: Map<string, AgentDefinition>;
   reports: AgentReport[];
   versions: MissionReport[];
   onVersion: (id: string) => void;
+  /** the mission's audits up to this report version's round */
+  audits: Audit[];
 }) {
   const o = OBJ[r.objective_status] ?? OBJ.PARTIAL;
   const latest = versions[versions.length - 1];
@@ -445,6 +613,8 @@ function MissionReportView({
       </div>
       <div className="grid content-start gap-3">
         <Deliverables items={r.deliverables ?? []} title="Mission deliverables" />
+        <Untraced items={r.untraced ?? []} />
+        <MissionAudit summary={r.audit_summary ?? ""} audits={audits} />
         <Block
           title="Needs human attention"
           color="#f59e0b"
@@ -467,8 +637,27 @@ const unverifiedItems = (limitations: string[]) =>
     .map((l) => l.replace(/^unverified:\s*/i, "").replace(/\s*\(no system record\)\s*$/i, "").trim().toLowerCase())
     .filter(Boolean);
 
-function AgentReportView({ r, agent, task, agents }: { r: AgentReport; agent?: AgentDefinition; task?: Task; agents: Map<string, AgentDefinition> }) {
+function AgentReportView({
+  r,
+  agent,
+  task,
+  agents,
+  tasks,
+  audits,
+  onOpenTask,
+}: {
+  r: AgentReport;
+  agent?: AgentDefinition;
+  task?: Task;
+  agents: Map<string, AgentDefinition>;
+  tasks: Map<string, Task>;
+  /** AUDITOR's audits of this report, oldest first */
+  audits: Audit[];
+  onOpenTask: (taskId: string) => void;
+}) {
   const unverified = unverifiedItems(r.limitations);
+  const latestAudit = audits[audits.length - 1];
+  const revisionOf = task?.revision_of ? tasks.get(task.revision_of) : undefined;
   const flagged = unverified.length ? (t: string) => unverified.some((u) => t.toLowerCase().includes(u)) : undefined;
   return (
     <div className="grid gap-5 p-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
@@ -479,12 +668,26 @@ function AgentReportView({ r, agent, task, agents }: { r: AgentReport; agent?: A
           </span>
           <span className="label !text-[9px]">{agent?.title}</span>
           <ConfidenceMeter c={r.confidence} />
+          {latestAudit && <VerdictBadge verdict={latestAudit.verdict} small />}
           <span className="font-mono text-[10px] text-mute">{hms(r.created_at)}</span>
         </div>
         {task && (
           <p className="mt-1 font-mono text-[10.5px] text-dim">
             Task · {task.title}
             {(task.round ?? 1) > 1 && <span className="ml-2 text-violet-300/80">round {task.round}</span>}
+            {(task.retries ?? 0) > 0 && <span className="ml-2 text-amber-300/80">retried {task.retries}×</span>}
+            {task.revision_of && (
+              <span className="ml-2 text-violet-300/85">
+                revision of{" "}
+                <button
+                  className="underline decoration-violet-300/40 underline-offset-2 hover:text-violet-200"
+                  onClick={() => onOpenTask(task.revision_of!)}
+                  title="Open the report AUDITOR sent back"
+                >
+                  &lsquo;{revisionOf?.title ?? task.revision_of}&rsquo;
+                </button>
+              </span>
+            )}
           </p>
         )}
         <h3 className="label mt-4 !text-signal/70">Asked to</h3>
@@ -493,6 +696,13 @@ function AgentReportView({ r, agent, task, agents }: { r: AgentReport; agent?: A
         </p>
         <h3 className="label mt-5 mb-2 !text-signal/70">Findings</h3>
         <Findings claims={r.findings} />
+        {audits.length > 0 && (
+          <div className="mt-5 grid gap-3">
+            {audits.map((a) => (
+              <AuditCard key={a.id} audit={a} tasks={tasks} onOpenTask={onOpenTask} />
+            ))}
+          </div>
+        )}
         <div className="mt-5">
           <EvidenceList items={r.evidence ?? []} agents={agents} />
         </div>
@@ -515,6 +725,7 @@ export function Reports({
   agentReports,
   agents,
   tasks,
+  audits = [],
   missionActive,
   missionClosed,
   className,
@@ -524,6 +735,8 @@ export function Reports({
   agentReports: AgentReport[];
   agents: Map<string, AgentDefinition>;
   tasks: Map<string, Task>;
+  /** AUDITOR's audits for the selected mission */
+  audits?: Audit[];
   missionActive: boolean;
   missionClosed?: boolean;
   className?: string;
@@ -533,6 +746,16 @@ export function Reports({
     if (tab !== "atlas" && !agentReports.some((r) => r.id === tab)) setTab("atlas");
   }, [agentReports, tab]);
   const current = agentReports.find((r) => r.id === tab);
+  const auditsByReport = useMemo(() => {
+    const m = new Map<string, Audit[]>();
+    for (const a of [...audits].sort((x, y) => x.created_at.localeCompare(y.created_at))) m.set(a.agent_report_id, [...(m.get(a.agent_report_id) ?? []), a]);
+    return m;
+  }, [audits]);
+  // Jump to the (latest) report of a task — used by "revised in …" / "revision of …" links.
+  const openTask = (taskId: string) => {
+    const r = [...agentReports].reverse().find((x) => x.task_id === taskId);
+    if (r) setTab(r.id);
+  };
 
   // Versions oldest → newest; the latest is shown unless the user picks another.
   const versions = [...missionReports].sort((a, b) => (a.version ?? 1) - (b.version ?? 1) || a.created_at.localeCompare(b.created_at));
@@ -560,12 +783,19 @@ export function Reports({
         {agentReports.map((r) => {
           const a = agents.get(r.agent_id);
           const flagged = r.limitations.some(isUnverified) || (r.evidence ?? []).some((e) => !e.ok);
+          const ra = auditsByReport.get(r.id);
+          const verdict = ra?.[ra.length - 1]?.verdict;
           return (
             <TabButton key={r.id} active={tab === r.id} onClick={() => setTab(r.id)} color={a?.color ?? "#94a3b8"} ready>
               {a?.name ?? r.agent_id}
               {flagged && (
                 <span className="text-red-400" title="Unverified claims or failed actions">
                   !
+                </span>
+              )}
+              {verdict && (
+                <span className="text-[9px]" style={{ color: VERDICT[verdict].color }} title={`AUDITOR: ${VERDICT[verdict].label}`}>
+                  {verdict === "PASS" ? "✓" : verdict === "FAIL" ? "✕" : "◐"}
                 </span>
               )}
               {agentReports.filter((x) => x.agent_id === r.agent_id).length > 1 && tasks.get(r.task_id) ? (
@@ -579,7 +809,14 @@ export function Reports({
       </div>
       {tab === "atlas" ? (
         missionReport ? (
-          <MissionReportView r={missionReport} agents={agents} reports={agentReports} versions={versions} onVersion={setPickedVersion} />
+          <MissionReportView
+            r={missionReport}
+            agents={agents}
+            reports={agentReports}
+            versions={versions}
+            onVersion={setPickedVersion}
+            audits={audits.filter((a) => (a.round ?? 1) <= (missionReport.version ?? 1))}
+          />
         ) : (
           <Empty className="min-h-40">
             {missionClosed
@@ -590,7 +827,15 @@ export function Reports({
           </Empty>
         )
       ) : current ? (
-        <AgentReportView r={current} agent={agents.get(current.agent_id)} task={tasks.get(current.task_id)} agents={agents} />
+        <AgentReportView
+          r={current}
+          agent={agents.get(current.agent_id)}
+          task={tasks.get(current.task_id)}
+          agents={agents}
+          tasks={tasks}
+          audits={auditsByReport.get(current.id) ?? []}
+          onOpenTask={openTask}
+        />
       ) : null}
     </Panel>
   );

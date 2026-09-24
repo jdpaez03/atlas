@@ -14,13 +14,14 @@ const CONN: Record<ConnStatus, { label: string; color: string; pulse: boolean }>
   mock: { label: "Simulated", color: "#a78bfa", pulse: true },
 };
 
-export type View = "missions" | "followups" | "monitor";
+export type View = "missions" | "followups" | "monitor" | "usage";
 
 function ViewSwitch({ view, onView, counts, highAlerts }: { view: View; onView: (v: View) => void; counts: { open: number; overdue: number }; highAlerts: number }) {
   const tabs: { id: View; label: string; key: string }[] = [
     { id: "missions", label: "Missions", key: "1" },
     { id: "followups", label: "Follow-ups", key: "2" },
     { id: "monitor", label: "Monitor", key: "3" },
+    { id: "usage", label: "Usage", key: "4" },
   ];
   return (
     <div role="tablist" aria-label="View" className="flex shrink-0 items-center rounded-md border border-edge bg-black/30 p-0.5">

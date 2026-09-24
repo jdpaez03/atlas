@@ -6,7 +6,14 @@
                           (`${ENV}` and `~` expanded). Frontmatter `model: opus|sonnet|haiku|inherit`
                           maps to the configured models. A missing/unreadable file makes the agent
                           UNAVAILABLE: it is never planned, but GET /agents still lists it.
-    http / cli / mcp   -> unavailable in live mode (Phase 5)
+    adapter http       -> AVAILABLE when `adapter_config.url` expands (`${ENV}`) to an http(s):// URL. The task is
+                          POSTed there by atlas.live.external (contract atlas.external/1, docs/CONTRACTS.md).
+    adapter cli        -> AVAILABLE when `adapter_config.command` is set. The command gets the task JSON on
+                          stdin and prints the report JSON on stdout (atlas.live.external).
+    adapter mcp        -> UNAVAILABLE (not supported yet: use http or cli)
+
+External agents (http / cli) get the generic prompt as role prompt: it only describes them in the planner's
+roster, since they run outside ATLAS.
 """
 
 from __future__ import annotations
@@ -19,7 +26,7 @@ from typing import Any
 import yaml
 
 from ..core.models import AdapterType, AgentDefinition
-from ..core.registry import AgentRegistry, resolve_path
+from ..core.registry import AgentRegistry, expand_env, resolve_path
 
 log = logging.getLogger("atlas.live")
 
@@ -123,6 +130,19 @@ class AgentLoader:
             return ResolvedAgent(agent, True, generic_prompt(agent), model, "generic")
         if adapter == AdapterType.CLAUDE_MD:
             return self._claude_md(agent, fallback)
+        if adapter == AdapterType.HTTP:
+            url = expand_env(str(agent.adapter_config.get("url") or "")).strip()
+            if "${" in url:
+                return self._unavailable(agent, model, "http adapter: unresolved variable in url (set it in .env)")
+            if not url.lower().startswith(("http://", "https://")):
+                return self._unavailable(agent, model, "http adapter: adapter_config.url must start with http(s)://")
+            return ResolvedAgent(agent, True, generic_prompt(agent), model, "generic")
+        if adapter == AdapterType.CLI:
+            if not str(agent.adapter_config.get("command") or "").strip():
+                return self._unavailable(agent, model, "cli adapter: adapter_config.command is empty")
+            return ResolvedAgent(agent, True, generic_prompt(agent), model, "generic")
+        if adapter == AdapterType.MCP:
+            return self._unavailable(agent, model, "mcp adapter: not supported yet — use http or cli")
         return self._unavailable(agent, model, f"adapter '{adapter.value}' is not supported in live mode yet")
 
     def _claude_md(self, agent: AgentDefinition, fallback: str) -> ResolvedAgent:
@@ -159,7 +179,7 @@ class AgentLoader:
         """Specialists that may be planned for a mission in `node` (allowed there AND available)."""
         out = []
         for agent in self.registry.agents_for_node(node):
-            if agent.is_orchestrator:
+            if agent.is_orchestrator or not agent.plannable:
                 continue
             r = self.resolve(agent.id)
             if r.available:

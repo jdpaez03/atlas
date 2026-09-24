@@ -199,6 +199,7 @@ class AgentDefinition(AtlasModel):
     is_orchestrator: bool = False
     nodes: list[str] = Field(default_factory=lambda: ["*"], description="node ids, '*' = shared core agent")
     division: str | None = None
+    plannable: bool = Field(default=True, description="false = never assigned tasks by the planner (e.g. AUDITOR)")
 
 
 class AgentState(AtlasModel):
@@ -241,7 +242,7 @@ class Evidence(AtlasModel):
     agent_id: str
     kind: Literal[
         "file_listed", "file_read", "file_written", "web_search", "web_fetch", "consult", "approval",
-        "email_read", "draft_created",
+        "email_read", "draft_created", "external_call",
     ]
     ref: str = Field(description="path, URL, agent id or approval id")
     detail: str = ""
@@ -265,6 +266,8 @@ class Task(AtlasModel):
     parent_task_id: str | None = None
     result_report_id: str | None = None
     round: int = Field(default=1, description="1 = initial plan; 2+ = follow-up rounds from the mission thread")
+    retries: int = Field(default=0, description="automatic re-runs after a transient failure")
+    revision_of: str | None = Field(default=None, description="task id whose report AUDITOR sent back for revision")
     created_at: datetime = Field(default_factory=_now)
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -286,6 +289,7 @@ class Mission(AtlasModel):
     node: str = "corporate"
     mode: Literal["simulated", "live"] = "simulated"
     usage: Usage = Field(default_factory=Usage)
+    usage_by_agent: dict[str, Usage] = Field(default_factory=dict, description="agent id -> usage (same totals)")
     context: str | None = None
     phase: MissionPhase = MissionPhase.OBJECTIVE
     priority: Priority = Priority.MEDIUM
@@ -372,6 +376,46 @@ class MissionReport(AtlasModel):
     agent_report_ids: list[str] = Field(default_factory=list)
     version: int = Field(default=1, description="bumps with each follow-up round")
     deliverables: list[Attachment] = Field(default_factory=list)
+    audit_summary: str = Field(default="", description="what AUDITOR checked and what it found (system-written)")
+    untraced: list[str] = Field(
+        default_factory=list,
+        description="figures in this report that appear in no agent report or evidence (system check)")
+    created_at: datetime = Field(default_factory=_now)
+
+
+# ---------------------------------------------------------------------------
+# Audit (AUDITOR, docs/AUDITOR.md)
+# ---------------------------------------------------------------------------
+
+
+class AuditVerdict(str, Enum):
+    PASS = "PASS"  # the report holds up against its evidence
+    ISSUES = "ISSUES"  # usable, with the listed caveats
+    FAIL = "FAIL"  # key findings are unsupported or wrong: sent back for revision
+
+
+class AuditIssue(AtlasModel):
+    finding: str = Field(description="the finding or passage questioned, quoted")
+    problem: str
+    kind: Literal["unsupported", "mislabeled", "inconsistent", "calculation", "stale", "scope", "other"] = "other"
+    severity: Literal["LOW", "MEDIUM", "HIGH"] = "MEDIUM"
+
+
+class Audit(AtlasModel):
+    """AUDITOR's check of one agent report against the evidence the system recorded for its task."""
+
+    id: str = Field(default_factory=lambda: _id("aud"))
+    mission_id: str
+    round: int = 1
+    agent_report_id: str
+    task_id: str
+    agent_id: str
+    verdict: AuditVerdict
+    summary: str = ""
+    issues: list[AuditIssue] = Field(default_factory=list)
+    checks: list[str] = Field(default_factory=list, description="deterministic checks the system ran first")
+    revision_task_id: str | None = Field(default=None, description="the revision task opened for a FAIL")
+    final: bool = Field(default=False, description="audit of a revision: no further revision is opened")
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -569,6 +613,7 @@ class EventType(str, Enum):
     ALERT_UPSERTED = "alert.upserted"
     ROCK_UPDATED = "rock.updated"
     BRIEF_READY = "brief.ready"
+    AUDIT_RECORDED = "audit.recorded"
     LOG = "log"
 
 
@@ -609,4 +654,5 @@ class WorldState(AtlasModel):
     alerts: list[Alert] = Field(default_factory=list)
     rocks: list[RockStatus] = Field(default_factory=list)
     briefs: list[Brief] = Field(default_factory=list)
+    audits: list[Audit] = Field(default_factory=list)
     last_seq: int = 0

@@ -107,6 +107,11 @@
             }
           ],
           "default": null
+        },
+        "plannable": {
+          "default": true,
+          "description": "false = never assigned tasks by the planner (e.g. AUDITOR)",
+          "type": "boolean"
         }
       },
       "required": [
@@ -126,7 +131,8 @@
         "enabled",
         "is_orchestrator",
         "nodes",
-        "division"
+        "division",
+        "plannable"
       ],
       "title": "AgentDefinition",
       "type": "object"
@@ -839,6 +845,138 @@
       "title": "Attachment",
       "type": "object"
     },
+    "Audit": {
+      "description": "AUDITOR's check of one agent report against the evidence the system recorded for its task.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "mission_id": {
+          "type": "string"
+        },
+        "round": {
+          "default": 1,
+          "type": "integer"
+        },
+        "agent_report_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "verdict": {
+          "$ref": "#/$defs/AuditVerdict"
+        },
+        "summary": {
+          "default": "",
+          "type": "string"
+        },
+        "issues": {
+          "items": {
+            "$ref": "#/$defs/AuditIssue"
+          },
+          "type": "array"
+        },
+        "checks": {
+          "description": "deterministic checks the system ran first",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "revision_task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "the revision task opened for a FAIL"
+        },
+        "final": {
+          "default": false,
+          "description": "audit of a revision: no further revision is opened",
+          "type": "boolean"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "mission_id",
+        "round",
+        "agent_report_id",
+        "task_id",
+        "agent_id",
+        "verdict",
+        "summary",
+        "issues",
+        "checks",
+        "revision_task_id",
+        "final",
+        "created_at"
+      ],
+      "title": "Audit",
+      "type": "object"
+    },
+    "AuditIssue": {
+      "properties": {
+        "finding": {
+          "description": "the finding or passage questioned, quoted",
+          "type": "string"
+        },
+        "problem": {
+          "type": "string"
+        },
+        "kind": {
+          "default": "other",
+          "enum": [
+            "unsupported",
+            "mislabeled",
+            "inconsistent",
+            "calculation",
+            "stale",
+            "scope",
+            "other"
+          ],
+          "type": "string"
+        },
+        "severity": {
+          "default": "MEDIUM",
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "finding",
+        "problem",
+        "kind",
+        "severity"
+      ],
+      "title": "AuditIssue",
+      "type": "object"
+    },
+    "AuditVerdict": {
+      "enum": [
+        "PASS",
+        "ISSUES",
+        "FAIL"
+      ],
+      "title": "AuditVerdict",
+      "type": "string"
+    },
     "Brief": {
       "description": "The weekly L10 brief ARGOS prepares (a deliverable plus a structured summary).",
       "properties": {
@@ -1368,6 +1506,7 @@
         "alert.upserted",
         "rock.updated",
         "brief.ready",
+        "audit.recorded",
         "log"
       ],
       "title": "EventType",
@@ -1406,7 +1545,8 @@
             "consult",
             "approval",
             "email_read",
-            "draft_created"
+            "draft_created",
+            "external_call"
           ],
           "type": "string"
         },
@@ -1601,6 +1741,13 @@
         "usage": {
           "$ref": "#/$defs/Usage"
         },
+        "usage_by_agent": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Usage"
+          },
+          "description": "agent id -> usage (same totals)",
+          "type": "object"
+        },
         "context": {
           "anyOf": [
             {
@@ -1676,6 +1823,7 @@
         "node",
         "mode",
         "usage",
+        "usage_by_agent",
         "context",
         "phase",
         "priority",
@@ -1792,6 +1940,18 @@
           },
           "type": "array"
         },
+        "audit_summary": {
+          "default": "",
+          "description": "what AUDITOR checked and what it found (system-written)",
+          "type": "string"
+        },
+        "untraced": {
+          "description": "figures in this report that appear in no agent report or evidence (system check)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "created_at": {
           "format": "date-time",
           "type": "string"
@@ -1813,6 +1973,8 @@
         "agent_report_ids",
         "version",
         "deliverables",
+        "audit_summary",
+        "untraced",
         "created_at"
       ],
       "title": "MissionReport",
@@ -2108,6 +2270,23 @@
           "description": "1 = initial plan; 2+ = follow-up rounds from the mission thread",
           "type": "integer"
         },
+        "retries": {
+          "default": 0,
+          "description": "automatic re-runs after a transient failure",
+          "type": "integer"
+        },
+        "revision_of": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "task id whose report AUDITOR sent back for revision"
+        },
         "created_at": {
           "format": "date-time",
           "type": "string"
@@ -2153,6 +2332,8 @@
         "parent_task_id",
         "result_report_id",
         "round",
+        "retries",
+        "revision_of",
         "created_at",
         "started_at",
         "completed_at"
@@ -2313,6 +2494,12 @@
           },
           "type": "array"
         },
+        "audits": {
+          "items": {
+            "$ref": "#/$defs/Audit"
+          },
+          "type": "array"
+        },
         "last_seq": {
           "default": 0,
           "type": "integer"
@@ -2336,6 +2523,7 @@
         "alerts",
         "rocks",
         "briefs",
+        "audits",
         "last_seq"
       ],
       "title": "WorldState",
@@ -2398,6 +2586,9 @@
     },
     "Brief": {
       "$ref": "#/$defs/Brief"
+    },
+    "Audit": {
+      "$ref": "#/$defs/Audit"
     },
     "WorldState": {
       "$ref": "#/$defs/WorldState"

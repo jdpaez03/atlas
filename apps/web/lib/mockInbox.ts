@@ -348,6 +348,7 @@ export function mockInbox(emit: Emit, speed: number): MockInbox {
         round: 1,
         interrupted: false,
         usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, llm_calls: 0, est_cost_usd: 0 },
+        usage_by_agent: {},
         context: "Inbox",
         phase: "EXECUTION",
         priority: "MEDIUM",
@@ -386,6 +387,8 @@ export function mockInbox(emit: Emit, speed: number): MockInbox {
           agent_report_ids: [],
           version: 1,
           deliverables: [],
+          audit_summary: "",
+          untraced: [],
           created_at: iso(0),
         };
         emit("log", {}, summary, "hermes", id);

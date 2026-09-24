@@ -1,0 +1,24 @@
+# Example external agent on the `cli` adapter: examples/external-agents/echo_agent.py.
+# The leading underscore keeps it out of the registry. To try it, copy it to agents/echo.yaml and set
+# `enabled: true`; ATLAS can then plan tasks for ECHO in live missions.
+#
+# ${ATLAS_PYTHON} defaults to the Python running ATLAS and ${ATLAS_REPO_DIR} to this repo's checkout (both can
+# be overridden in the environment / .env). The command is split like a shell would (quotes work, paths with
+# spaces stay whole after expansion) but it never runs through a shell.
+# See docs/CONTRACTS.md -> "External agents".
+id: echo
+name: ECHO
+title: Word counter
+description: Example external agent. Counts the words of its task and of the reports it receives.
+color: "#a3e635"
+kind: external
+adapter: cli
+adapter_config:
+  command: ${ATLAS_PYTHON} ${ATLAS_REPO_DIR}/examples/external-agents/echo_agent.py
+  timeout_seconds: 30
+  # cwd: ${ATLAS_REPO_DIR}
+  # env: {MY_TOKEN: "${MY_TOKEN}"}   # values from the environment, never secrets in YAML
+  # inherit_env: false               # pass only PATH/HOME/TEMP-like variables plus `env`
+capabilities: [word_count]
+nodes: ["*"]
+enabled: false

@@ -24,6 +24,7 @@ const KIND: Record<EventType, { tag: string; color: string }> = {
   "alert.upserted": { tag: "ALR", color: "#f87171" },
   "rock.updated": { tag: "RCK", color: "#fbbf24" },
   "brief.ready": { tag: "BRF", color: "#fde68a" },
+  "audit.recorded": { tag: "AUDIT", color: "#f0abfc" },
   log: { tag: "LOG", color: "#64748b" },
 };
 
@@ -70,7 +71,7 @@ export function ActivityFeed({ events, agents, className }: { events: AtlasEvent
             const k = KIND[e.type] ?? KIND.log;
             const important = e.type === "approval.requested" || e.type === "mission.report_ready" || e.type.startsWith("mission.");
             return (
-              <li key={e.id} className="feed-in relative grid grid-cols-[56px_30px_minmax(0,1fr)] items-baseline gap-2 px-4 py-[5px]">
+              <li key={e.id} className="feed-in relative grid grid-cols-[56px_34px_minmax(0,1fr)] items-baseline gap-2 px-4 py-[5px]">
                 <span className="absolute top-1.5 bottom-1.5 left-0 w-[2px]" style={{ background: a?.color ?? "#26324f", opacity: 0.7 }} />
                 <span className="font-mono text-[10px] tabular-nums text-mute">{hms(e.ts)}</span>
                 <span className="font-mono text-[8.5px] tracking-[0.12em]" style={{ color: k.color }}>

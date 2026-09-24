@@ -454,7 +454,8 @@ class InboxEngine:
                 agents[aid] = r
         return MissionScope(
             store=self.store,
-            meter=_Meter(live.llm if backend == "api" else None, self.store, mission_id, live.prices),
+            meter=_Meter(live.llm if backend == "api" else None, self.store, mission_id, live.prices,
+                         default_agent="hermes"),
             config=live.config_for(backend),
             context=live.context,
             mission_id=mission_id,

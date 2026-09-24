@@ -111,7 +111,8 @@ and the mission continues. The mission report lists the failures.
 |---|---|
 | `claude` | the `system_prompt` in the agent's YAML |
 | `claude_md` | the body of the `.md` file at `adapter_config.path` (after `${ENV}` expansion). Its frontmatter `model: sonnet/opus/haiku/inherit` maps to the configured models. If the file is missing, the agent is **unavailable**: it's excluded from plans, and `GET /agents` still lists it. |
-| `http` / `cli` / `mcp` | Phase 5 |
+| `http` / `cli` | none: the agent runs outside ATLAS. Its task is sent as JSON (contract `atlas.external/1`, see [CONTRACTS.md](CONTRACTS.md#external-agents-bring-your-own)); the planner describes it from its title, description and capabilities. |
+| `mcp` | not supported yet: the agent is **unavailable** |
 
 ## Local context (never committed)
 

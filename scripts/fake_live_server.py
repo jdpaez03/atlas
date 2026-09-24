@@ -130,6 +130,23 @@ async def brain(**kw: Any) -> Any:
                            "priority": "HIGH", "description": "Run -15% price / +6 months absorption."}]})
         return tool_use("respond_to_followup", {
             "answer": "From round 1: base-case IRR is 15-18%; the main risk is the developer's absorption assumption."})
+    if "submit_audit" in tools:  # AUDITOR: ARGOS's report fails once (revision), SOFIA's has caveats, rest pass
+        entries = []
+        for ref, who in re.findall(r"=== (R\d+) ===\n## Report · .*? · by (\w+)", prompt):
+            if "## Report · Revise:" in prompt or who not in ("ARGOS", "SOFIA"):
+                entries.append({"report_ref": ref, "verdict": "PASS", "summary": "Holds up against its evidence.",
+                                "issues": []})
+            elif who == "ARGOS":
+                entries.append({"report_ref": ref, "verdict": "FAIL", "summary": "The key check cites no source.",
+                                "issues": [{"finding": "Consistency check passed", "kind": "unsupported",
+                                            "severity": "HIGH",
+                                            "problem": "No document was opened: read the data room file you checked "
+                                                       "and cite it."}]})
+            else:
+                entries.append({"report_ref": ref, "verdict": "ISSUES", "summary": "Usable; one estimate is labelled FACT.",
+                                "issues": [{"finding": "absorption ~1.4/month", "kind": "mislabeled", "severity": "MEDIUM",
+                                            "problem": "An average of comparables, not a measured fact: label it ASSUMPTION."}]})
+        return tool_use("submit_audit", {"audits": entries})
     if "create_plan" in tools:
         return tool_use("create_plan", {"rationale": "Research and verify in parallel, then analyze, then package.",
                                         "tasks": PLAN})

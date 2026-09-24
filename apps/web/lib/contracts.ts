@@ -90,9 +90,15 @@ export type EventType =
   | "alert.upserted"
   | "rock.updated"
   | "brief.ready"
+  | "audit.recorded"
   | "log";
 export type Priority2 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type Priority3 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "AuditVerdict".
+ */
+export type AuditVerdict = "PASS" | "ISSUES" | "FAIL";
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
  * via the `definition` "AdapterType".
@@ -172,6 +178,7 @@ export interface AtlasContracts {
   Alert?: Alert;
   RockStatus?: RockStatus;
   Brief?: Brief;
+  Audit?: Audit;
   WorldState?: WorldState;
 }
 /**
@@ -236,6 +243,10 @@ export interface AgentDefinition {
    */
   nodes: string[];
   division: string | null;
+  /**
+   * false = never assigned tasks by the planner (e.g. AUDITOR)
+   */
+  plannable: boolean;
 }
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
@@ -277,6 +288,12 @@ export interface Mission {
   node: string;
   mode: "simulated" | "live";
   usage: Usage;
+  /**
+   * agent id -> usage (same totals)
+   */
+  usage_by_agent: {
+    [k: string]: Usage;
+  };
   context: string | null;
   phase: MissionPhase;
   priority: Priority;
@@ -352,6 +369,14 @@ export interface Task {
    * 1 = initial plan; 2+ = follow-up rounds from the mission thread
    */
   round: number;
+  /**
+   * automatic re-runs after a transient failure
+   */
+  retries: number;
+  /**
+   * task id whose report AUDITOR sent back for revision
+   */
+  revision_of: string | null;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -439,7 +464,8 @@ export interface Evidence {
     | "consult"
     | "approval"
     | "email_read"
-    | "draft_created";
+    | "draft_created"
+    | "external_call";
   /**
    * path, URL, agent id or approval id
    */
@@ -473,6 +499,14 @@ export interface MissionReport {
    */
   version: number;
   deliverables: Attachment[];
+  /**
+   * what AUDITOR checked and what it found (system-written)
+   */
+  audit_summary: string;
+  /**
+   * figures in this report that appear in no agent report or evidence (system check)
+   */
+  untraced: string[];
   created_at: string;
 }
 /**
@@ -744,6 +778,49 @@ export interface Brief {
   created_at: string;
 }
 /**
+ * AUDITOR's check of one agent report against the evidence the system recorded for its task.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "Audit".
+ */
+export interface Audit {
+  id: string;
+  mission_id: string;
+  round: number;
+  agent_report_id: string;
+  task_id: string;
+  agent_id: string;
+  verdict: AuditVerdict;
+  summary: string;
+  issues: AuditIssue[];
+  /**
+   * deterministic checks the system ran first
+   */
+  checks: string[];
+  /**
+   * the revision task opened for a FAIL
+   */
+  revision_task_id: string | null;
+  /**
+   * audit of a revision: no further revision is opened
+   */
+  final: boolean;
+  created_at: string;
+}
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "AuditIssue".
+ */
+export interface AuditIssue {
+  /**
+   * the finding or passage questioned, quoted
+   */
+  finding: string;
+  problem: string;
+  kind: "unsupported" | "mislabeled" | "inconsistent" | "calculation" | "stale" | "scope" | "other";
+  severity: "LOW" | "MEDIUM" | "HIGH";
+}
+/**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
  * via the `definition` "WorldState".
  */
@@ -765,5 +842,6 @@ export interface WorldState {
   alerts: Alert[];
   rocks: RockStatus[];
   briefs: Brief[];
+  audits: Audit[];
   last_seq: number;
 }

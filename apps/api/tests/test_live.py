@@ -79,7 +79,7 @@ def mission_report(summary: str = "All good.", status: str = "ACHIEVED"):
 
 def make_live(registry: AgentRegistry, llm: FakeLLM, local: Path | None = None, **cfg) -> tuple[WorldStore, LiveEngine]:
     store = WorldStore(registry, EventBus())
-    config = LiveConfig(models=MODELS, **({"max_turns": 5} | cfg))
+    config = LiveConfig(models=MODELS, **({"max_turns": 5, "audit": False, "task_retries": 0} | cfg))
     engine = LiveEngine(
         store,
         loader=AgentLoader(registry, MODELS),

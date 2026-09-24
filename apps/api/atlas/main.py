@@ -22,6 +22,7 @@
                                     /followups/{id}[/draft], /drafts, /drafts/{id}/decision, /drafts/{id}/eml
   ARGOS (docs/ARGOS.md, routes/argos.py): /argos/status, /argos/run, /argos/brief, /alerts, /alerts/{id},
                                     /rocks, /rocks/reload, /rocks/{id}, /briefs, /briefs/{id}[/file]
+  Phase 5: POST /missions/{id}/resume, GET /usage?days=&node= (routes/usage.py)
   WS   /ws?since=<seq>              replay events with seq > since, then live
 
 Run: `uv run python -m atlas` (required on Windows for the subscription backend, see atlas/__main__.py).
@@ -53,7 +54,7 @@ from .inbox.engine import InboxEngine
 from .inbox.scheduler import InboxScheduler
 from .inbox.sources import make_source
 from .live.orchestrator import LiveEngine
-from .routes import approvals, argos, inbox, live, missions, stream, world
+from .routes import approvals, argos, inbox, live, missions, stream, usage, world
 from .sim.runner import ScenarioLibrary, Simulator
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -164,4 +165,5 @@ app.include_router(live.router)
 app.include_router(approvals.router)
 app.include_router(inbox.router)
 app.include_router(argos.router)
+app.include_router(usage.router)
 app.include_router(stream.router)

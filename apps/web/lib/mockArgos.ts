@@ -360,6 +360,7 @@ export function mockArgos(emit: Emit, speed: number, hooks: MockArgosHooks): Moc
     node: NODE,
     mode: "simulated",
     usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, llm_calls: 0, est_cost_usd: 0 },
+    usage_by_agent: {},
     context: "ARGOS",
     phase: "EXECUTION",
     priority: "MEDIUM",
