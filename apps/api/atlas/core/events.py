@@ -24,6 +24,11 @@ class EventBus:
             queue.put_nowait(event)
         return event
 
+    @property
+    def last_seq(self) -> int:
+        """Sequence number of the most recently published event (0 if none)."""
+        return self._seq
+
     def subscribe(self) -> asyncio.Queue[AtlasEvent]:
         queue: asyncio.Queue[AtlasEvent] = asyncio.Queue()
         self._subscribers.add(queue)

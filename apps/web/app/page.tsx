@@ -1,51 +1,171 @@
-import { getAgents } from "@/lib/api";
-import type { AgentDefinition } from "@/lib/contracts";
+"use client";
 
-export const dynamic = "force-dynamic";
+import { useEffect, useMemo, useState } from "react";
+import { ActivityFeed } from "@/components/ActivityFeed";
+import { AgentBoard, type DivisionGroup } from "@/components/AgentBoard";
+import { ApprovalQueue } from "@/components/ApprovalQueue";
+import { CollabGraph } from "@/components/CollabGraph";
+import { Header } from "@/components/Header";
+import { MissionPanel } from "@/components/MissionPanel";
+import { Emblem } from "@/components/primitives";
+import { Reports } from "@/components/Reports";
+import { TaskBoard } from "@/components/TaskBoard";
+import { API_URL } from "@/lib/api";
+import type { AgentDefinition, Task } from "@/lib/contracts";
+import { useAtlas } from "@/lib/store";
+import { STATUS } from "@/lib/ui";
 
-export default async function CommandCenter() {
-  let agents: AgentDefinition[] = [];
-  let error: string | null = null;
-  try {
-    agents = await getAgents();
-  } catch (e) {
-    error = e instanceof Error ? e.message : "API unreachable";
-  }
+export default function CommandCenter() {
+  const atlas = useAtlas();
+  const { world, feed, conn, loaded } = atlas;
+
+  /* ---- node selection */
+  const [nodeId, setNodeId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!nodeId && world.nodes.length) setNodeId((world.nodes.find((n) => n.enabled) ?? world.nodes[0]).id);
+  }, [world.nodes, nodeId]);
+  const node = world.nodes.find((n) => n.id === nodeId) ?? null;
+
+  /* ---- organization for this node */
+  const org = useMemo(() => {
+    const inNode = (a: AgentDefinition) => a.enabled !== false && (a.nodes?.includes("*") || (nodeId !== null && a.nodes?.includes(nodeId)));
+    const visible = world.agents.filter(inNode);
+    const divs = world.divisions.filter((d) => d.node === nodeId);
+    const divisions: DivisionGroup[] = divs
+      .map((division) => ({ division, members: visible.filter((a) => a.division === division.id) }))
+      .filter((g) => g.members.length > 0);
+    const divIds = new Set(divisions.map((g) => g.division.id));
+    return {
+      visible,
+      orchestrator: visible.find((a) => a.is_orchestrator),
+      core: visible.filter((a) => !a.is_orchestrator && !(a.division && divIds.has(a.division))),
+      divisions,
+    };
+  }, [world.agents, world.divisions, nodeId]);
+
+  const agents = useMemo(() => new Map(world.agents.map((a) => [a.id, a])), [world.agents]);
+  const states = useMemo(() => new Map(world.agent_states.map((s) => [s.agent_id, s])), [world.agent_states]);
+  const tasksById = useMemo(() => new Map(world.tasks.map((t) => [t.id, t])), [world.tasks]);
+
+  /* ---- mission selection (follows the latest unless the user picks one) */
+  const nodeMissions = useMemo(
+    () => world.missions.filter((m) => m.node === nodeId).sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    [world.missions, nodeId],
+  );
+  const [picked, setPicked] = useState<string | null>(null);
+  const mission = nodeMissions.find((m) => m.id === picked) ?? nodeMissions[0] ?? null;
+  const mid = mission?.id ?? null;
+
+  const tasks = useMemo(() => {
+    if (!mission) return [] as Task[];
+    const order = new Map(mission.task_ids.map((id, i) => [id, i]));
+    return world.tasks
+      .filter((t) => t.mission_id === mission.id)
+      .sort((a, b) => (order.get(a.id) ?? 1e9) - (order.get(b.id) ?? 1e9) || a.created_at.localeCompare(b.created_at));
+  }, [world.tasks, mission]);
+  const messages = useMemo(() => world.messages.filter((m) => m.mission_id === mid), [world.messages, mid]);
+  const agentReports = useMemo(() => world.agent_reports.filter((r) => r.mission_id === mid), [world.agent_reports, mid]);
+  const missionReport = world.mission_reports.find((r) => r.mission_id === mid || (mission?.final_report_id && r.id === mission.final_report_id));
+
+  const nodeMissionIds = useMemo(() => new Set(nodeMissions.map((m) => m.id)), [nodeMissions]);
+  const approvals = useMemo(
+    () => world.approvals.filter((a) => (a.state === "PENDING" ? nodeMissionIds.has(a.mission_id) : a.mission_id === mid)),
+    [world.approvals, nodeMissionIds, mid],
+  );
+  const pendingCount = approvals.filter((a) => a.state === "PENDING").length;
+  const events = useMemo(() => feed.filter((e) => !e.mission_id || nodeMissionIds.has(e.mission_id)), [feed, nodeMissionIds]);
+
+  const activeAgents = org.visible.filter((a) => STATUS[states.get(a.id)?.status ?? "IDLE"].active).length;
+
+  if (!loaded) return <Boot conn={conn} />;
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-10 font-mono">
-      <header className="mb-10 flex items-end justify-between border-b border-edge pb-4">
-        <div>
-          <p className="text-xs tracking-[0.4em] text-signal/70">MULTI-AGENT COMMAND CENTER</p>
-          <h1 className="text-4xl font-semibold tracking-[0.3em] text-slate-100">ATLAS</h1>
-        </div>
-        <p className="text-xs text-slate-500">One Intelligence. Many Agents. · Phase 0</p>
-      </header>
+    <div className="min-h-screen">
+      <Header nodes={world.nodes} node={nodeId} onNode={(id) => { setNodeId(id); setPicked(null); }} conn={conn} />
+      <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
+        <MissionPanel
+          mission={mission}
+          missions={nodeMissions}
+          node={node}
+          tasks={tasks}
+          activeAgents={activeAgents}
+          totalAgents={org.visible.length}
+          pendingApprovals={pendingCount}
+          onSelectMission={setPicked}
+          loadScenarios={atlas.scenarios}
+          launch={atlas.launch}
+          onLaunched={(m) => setPicked(m.id)}
+        />
 
-      <section>
-        <h2 className="mb-4 text-xs tracking-[0.3em] text-slate-500">AGENT BOARD</h2>
-        {error ? (
-          <p className="rounded border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-300">
-            ATLAS API offline ({error}). Start it with <code>uv run uvicorn atlas.main:app</code> in apps/api.
-          </p>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {agents.map((a) => (
-              <article key={a.id} className="rounded-lg border border-edge bg-panel/80 p-5"
-                style={{ boxShadow: `inset 0 1px 0 ${a.color}33` }}>
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg tracking-[0.2em]" style={{ color: a.color }}>{a.name}</h3>
-                  <span className="flex items-center gap-2 text-[10px] tracking-widest text-slate-400">
-                    <span className="h-2 w-2 rounded-full bg-slate-400" /> IDLE
-                  </span>
-                </div>
-                <p className="mt-1 text-xs uppercase tracking-widest text-slate-500">{a.title}</p>
-                <p className="mt-3 text-sm leading-relaxed text-slate-300">{a.description}</p>
-              </article>
-            ))}
+        {/* Three independent columns: each stretches to the tallest; the feed fills what's left. */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-[minmax(340px,380px)_minmax(0,1fr)_minmax(310px,350px)]">
+          <div className="flex min-w-0 flex-col">
+            <AgentBoard
+              className="flex-1"
+              orchestrator={org.orchestrator}
+              core={org.core}
+              divisions={org.divisions}
+              states={states}
+              tasks={tasksById}
+              agents={agents}
+            />
           </div>
+          <div className="flex min-w-0 flex-col gap-4">
+            <CollabGraph
+              orchestrator={org.orchestrator}
+              core={org.core}
+              divisions={org.divisions}
+              states={states}
+              messages={messages}
+              agents={agents}
+            />
+            <TaskBoard className="flex-1" tasks={tasks} agents={agents} />
+          </div>
+          <div className={`flex min-w-0 flex-col gap-4 lg:col-span-2 xl:order-none xl:col-span-1 ${pendingCount > 0 ? "order-first" : ""}`}>
+            <ApprovalQueue approvals={approvals} agents={agents} decide={atlas.decide} />
+            {/* absolutely positioned so the (long) feed never drives the row height */}
+            <div className="relative h-[420px] xl:h-auto xl:min-h-[280px] xl:flex-1">
+              <div className="absolute inset-0 flex flex-col">
+                <ActivityFeed events={events} agents={agents} className="min-h-0 flex-1" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <Reports missionReport={missionReport} agentReports={agentReports} agents={agents} tasks={tasksById} missionActive={!!mission} />
+
+        <footer className="flex items-center justify-between py-2 font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
+          <span>ATLAS · Task → Delegate → Collaborate → Review → Report</span>
+          <span>
+            {atlas.mode === "mock" ? "Simulated stream" : API_URL} · seq {world.last_seq}
+          </span>
+        </footer>
+      </main>
+    </div>
+  );
+}
+
+function Boot({ conn }: { conn: string }) {
+  const offline = conn === "offline";
+  return (
+    <div className="flex min-h-screen items-center justify-center p-6">
+      <div className="panel w-full max-w-md p-8 text-center">
+        <div className="flex justify-center">
+          <Emblem size={56} color={offline ? "#ef4444" : "#7dd3fc"} />
+        </div>
+        <p className="mt-5 font-mono text-[18px] font-semibold tracking-[0.42em] text-ink">ATLAS</p>
+        <p className="label mt-2">{offline ? "Uplink offline — retrying" : "Establishing uplink"}</p>
+        {offline && (
+          <p className="mt-4 text-[12px] leading-relaxed text-slate-400">
+            Can't reach the ATLAS API at <code className="text-signal">{API_URL}</code>. Start it with{" "}
+            <code className="text-slate-200">uv run uvicorn atlas.main:app</code> in <code>apps/api</code>, or open{" "}
+            <a href="?mock=1" className="text-signal underline decoration-signal/40 underline-offset-2">
+              simulated mode
+            </a>
+            .
+          </p>
         )}
-      </section>
-    </main>
+      </div>
+    </div>
   );
 }

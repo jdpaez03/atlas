@@ -1,0 +1,370 @@
+id: eos-quarterly-diagnosis
+node: corporate
+title: EOS quarterly Rocks diagnosis
+objective: Diagnose why this quarter's Rocks are at risk and what the leadership team should fix.
+# Generic company. Q3: 7 company Rocks, 3 off-track at week 9 of 13.
+steps:
+  - { wait: 1.0, do: phase, phase: DECOMPOSITION }
+  - { wait: 0.5, do: agent, agent: atlas, status: WORKING, activity: "Reading Q3 Rock sheet, Scorecard and Issues List exports" }
+  - { wait: 2.0, do: log, agent: atlas, text: "Week 9 of 13: 3 of 7 company Rocks marked off-track. Routing diagnosis to the EOS division." }
+  - { wait: 1.2, do: agent, agent: atlas, status: WORKING, activity: "Decomposing the objective across EOS components" }
+
+  - wait: 1.0
+    do: task
+    ref: rocks
+    title: Rock status & SMART quality
+    description: "Classify each Q3 Rock by status and trend, and check whether at-risk Rocks were SMART with a single owner and milestones."
+    assigned_to: eos-traction
+    priority: HIGH
+  - wait: 0.4
+    do: task
+    ref: issues
+    title: Issues List trace (symptom vs root cause)
+    description: "For each at-risk Rock, trace whether it maps to recurring issues on the leadership Issues List and whether IDS reached root cause."
+    assigned_to: eos-issues
+    priority: HIGH
+    depends_on: [rocks]
+  - wait: 0.4
+    do: task
+    ref: scorecard
+    title: Scorecard blind-spot check
+    description: "Determine why the weekly Scorecard did not turn red before the Rocks slipped: missing measurables, wrong thresholds or data gaps."
+    assigned_to: eos-data
+    priority: HIGH
+    depends_on: [rocks]
+  - wait: 0.4
+    do: task
+    ref: seats
+    title: Seat accountability review
+    description: "Check the Accountability Chart: does every at-risk Rock and related measurable sit in one seat with clear GWC?"
+    assigned_to: eos-people
+    priority: MEDIUM
+    depends_on: [rocks]
+  - wait: 0.4
+    do: task
+    ref: process
+    title: Core process check
+    description: "Check whether the core processes behind the at-risk Rocks are documented and followed by all."
+    assigned_to: eos-process
+    priority: LOW
+    depends_on: [rocks]
+  - wait: 0.4
+    do: task
+    ref: vision
+    title: V/TO alignment check
+    description: "Check that the at-risk Rocks connect to the 1-Year Plan and that the leadership team shares the same priorities."
+    assigned_to: eos-vision
+    priority: LOW
+    depends_on: [rocks]
+  - wait: 0.4
+    do: task
+    ref: synthesis
+    title: Root-cause synthesis
+    description: "Synthesize the specialists' findings into a ranked set of root causes and fixes, separating facts from assumptions."
+    assigned_to: oracle
+    priority: CRITICAL
+    depends_on: [issues, scorecard, seats, process, vision]
+  - wait: 0.4
+    do: task
+    ref: agenda
+    title: Level 10 agenda for leadership
+    description: "Draft the next Level 10 meeting agenda with the prioritized issues to IDS and proposed Rock changes; circulate after approval."
+    assigned_to: alfred
+    priority: HIGH
+    depends_on: [synthesis]
+    requires_approval: true
+    approval_reason: CONSEQUENTIAL_DECISION
+
+  - { wait: 1.0, do: phase, phase: DELEGATION }
+  - { wait: 0.5, do: log, agent: atlas, text: "EOS·TRACTION goes first; the other five specialists start from its at-risk list." }
+  - { wait: 0.4, do: task_update, ref: rocks, status: IN_PROGRESS, progress: 0.1 }
+  - { wait: 0.3, do: agent, agent: eos-traction, status: WORKING, activity: "Reviewing 7 Q3 Rocks and 9 weeks of Level 10 notes", task: rocks }
+  - { wait: 0.4, do: agent, agent: eos-issues, status: WAITING, activity: "Waiting for at-risk Rock list", task: issues }
+  - { wait: 0.3, do: agent, agent: eos-data, status: WAITING, activity: "Waiting for at-risk Rock list", task: scorecard }
+  - { wait: 0.3, do: agent, agent: eos-people, status: WAITING, activity: "Waiting for at-risk Rock list", task: seats }
+  - { wait: 0.3, do: agent, agent: oracle, status: WAITING, activity: "Waiting for EOS specialists", task: synthesis }
+  - { wait: 0.4, do: agent, agent: atlas, status: REVIEWING, activity: "Supervising EOS division" }
+
+  - { wait: 1.0, do: phase, phase: EXECUTION }
+  - { wait: 2.5, do: task_update, ref: rocks, progress: 0.6 }
+  - { wait: 1.5, do: agent, agent: eos-traction, status: WORKING, activity: "Checking SMART quality and milestones of off-track Rocks", task: rocks }
+  - { wait: 2.2, do: task_update, ref: rocks, status: COMPLETED, progress: 1.0 }
+  - wait: 0.5
+    do: report
+    agent: eos-traction
+    task: rocks
+    asked_to: Classify Q3 Rocks and check SMART quality of the at-risk ones.
+    actions_taken: ["Reviewed 7 company Rocks", "Read 9 weeks of Level 10 Rock review notes", "Scored each Rock against SMART criteria"]
+    inputs_used: ["Q3 Rock sheet", "Level 10 meeting notes, weeks 1-9"]
+    findings:
+      - { kind: FACT, statement: "3 of 7 Rocks off-track: 'Launch customer onboarding v2', 'Reduce DSO from 58 to 45 days', 'Hire and ramp 2 account managers'.", confidence: HIGH, sources: ["Q3 Rock sheet"] }
+      - { kind: FACT, statement: "All 3 were reported 'on-track' through week 6, then flipped to off-track in weeks 7-8 with no intermediate warning.", confidence: HIGH, sources: ["Level 10 meeting notes, weeks 1-9"] }
+      - { kind: FACT, statement: "'Launch customer onboarding v2' lists two owners (Sales and Operations) and has no milestones.", confidence: HIGH, sources: ["Q3 Rock sheet"] }
+      - { kind: ASSUMPTION, statement: "'On-track' in Rock review was reported by feel, not against milestones.", confidence: MEDIUM }
+    confidence: HIGH
+    limitations: ["Department-level Rocks not reviewed"]
+  - { wait: 0.4, do: agent, agent: eos-traction, status: COMPLETED, activity: "At-risk Rocks identified: 3 of 7", task: rocks }
+
+  - { wait: 0.6, do: task_update, ref: issues, status: IN_PROGRESS, progress: 0.1 }
+  - { wait: 0.3, do: agent, agent: eos-issues, status: WORKING, activity: "Tracing at-risk Rocks to the leadership Issues List", task: issues }
+  - { wait: 0.3, do: task_update, ref: scorecard, status: IN_PROGRESS, progress: 0.1 }
+  - { wait: 0.3, do: agent, agent: eos-data, status: WORKING, activity: "Replaying 13 weeks of Scorecard against the Rocks", task: scorecard }
+  - { wait: 0.3, do: task_update, ref: seats, status: IN_PROGRESS, progress: 0.1 }
+  - { wait: 0.3, do: agent, agent: eos-people, status: WORKING, activity: "Mapping at-risk Rocks to Accountability Chart seats", task: seats }
+  - { wait: 0.3, do: task_update, ref: process, status: IN_PROGRESS, progress: 0.2 }
+  - { wait: 0.3, do: agent, agent: eos-process, status: WORKING, activity: "Looking for documented onboarding and collections processes", task: process }
+  - { wait: 0.3, do: task_update, ref: vision, status: IN_PROGRESS, progress: 0.2 }
+  - { wait: 0.3, do: agent, agent: eos-vision, status: WORKING, activity: "Checking Rocks against the 1-Year Plan", task: vision }
+  - { wait: 2.5, do: task_update, ref: issues, progress: 0.45 }
+
+  - { wait: 1.0, do: phase, phase: COLLABORATION }
+  - wait: 0.8
+    do: message
+    from: eos-issues
+    to: eos-traction
+    type: QUESTION
+    subject: "Did 'sales-to-ops handoff' ever get tied to a Rock?"
+    body: "The issue 'Handoff from sales to operations drops customer info' has been on the Issues List for 9 weeks and was 'solved' 4 times in IDS. Was it ever linked to the onboarding v2 Rock in Rock review?"
+    task: issues
+    confidence: MEDIUM
+    requires_response: true
+  - { wait: 0.3, do: agent, agent: eos-issues, status: COLLABORATING, activity: "Cross-checking recurring issue with EOS·TRACTION", task: issues, with: [eos-traction] }
+  - { wait: 0.3, do: agent, agent: eos-traction, status: COLLABORATING, activity: "Answering EOS·ISSUES on Rock linkage", task: issues, with: [eos-issues] }
+  - wait: 2.2
+    do: message
+    from: eos-traction
+    to: eos-issues
+    type: ANSWER
+    subject: "No — discussed separately every week"
+    body: "Never linked. The handoff issue was IDS'd in the issues section while onboarding v2 was reviewed as 'on-track' in the Rock section of the same meeting. The same two seats own both."
+    task: issues
+    confidence: HIGH
+  - { wait: 0.4, do: agent, agent: eos-traction, status: COMPLETED, activity: "At-risk Rocks identified: 3 of 7", task: rocks }
+  - wait: 1.0
+    do: message
+    from: eos-data
+    to: eos-issues
+    type: REQUEST
+    subject: "Which measurable should have caught the handoff issue?"
+    body: "The Scorecard has 14 measurables; none tracks onboarding. DSO is tracked but its red threshold is 60 days, above the 58-day starting point. Send me the issues you traced so I can propose measurables that would have turned red earlier."
+    task: scorecard
+    confidence: MEDIUM
+    requires_response: true
+  - { wait: 0.3, do: agent, agent: eos-data, status: COLLABORATING, activity: "Designing leading measurables with EOS·ISSUES", task: scorecard, with: [eos-issues] }
+  - { wait: 0.3, do: agent, agent: eos-issues, status: COLLABORATING, activity: "Sharing traced issues with EOS·DATA", task: issues, with: [eos-data] }
+  - wait: 2.4
+    do: message
+    from: eos-issues
+    to: eos-data
+    type: ANSWER
+    subject: "Two recurring issues map to all 3 Rocks"
+    body: "(1) Sales-to-ops handoff drops customer info (9 weeks, 4 IDS 'solutions', all symptom-level: 'remind the team'). (2) Invoices issued late because onboarding is not closed (6 weeks). Issue 2 drives DSO. Neither reached root cause: nobody owns the handoff."
+    task: issues
+    confidence: HIGH
+  - { wait: 0.4, do: agent, agent: eos-people, status: COLLABORATING, activity: "Checking with EOS·PROCESS who owns the handoff step", task: seats, with: [eos-process] }
+  - { wait: 0.3, do: agent, agent: eos-process, status: COLLABORATING, activity: "Confirming handoff step is undocumented", task: process, with: [eos-people] }
+  - wait: 1.8
+    do: message
+    from: eos-people
+    to: eos-process
+    type: QUESTION
+    subject: "Is the handoff step in any documented process?"
+    body: "The Accountability Chart has no seat owning customer onboarding end-to-end: Sales owns the close, Operations owns delivery. Is the handoff written down anywhere?"
+    task: seats
+    requires_response: true
+  - wait: 1.6
+    do: message
+    from: eos-process
+    to: eos-people
+    type: ANSWER
+    subject: "Not documented"
+    body: "The Customer Onboarding core process is not documented. The handoff lives in the heads of two senior team members; each team follows a different checklist."
+    task: process
+    confidence: HIGH
+
+  - { wait: 0.8, do: task_update, ref: process, status: COMPLETED, progress: 1.0 }
+  - wait: 0.4
+    do: report
+    agent: eos-process
+    task: process
+    asked_to: Check the core processes behind the at-risk Rocks.
+    actions_taken: ["Searched the process library", "Compared Sales and Operations checklists"]
+    inputs_used: ["Process library", "Team checklists"]
+    findings:
+      - { kind: FACT, statement: "Customer Onboarding is not documented as a core process; Sales and Operations use two different checklists.", confidence: HIGH, sources: ["Process library", "Team checklists"] }
+      - { kind: RECOMMENDATION, statement: "Document the onboarding core process (20/80 level) and have it followed by all before re-planning the Rock.", confidence: MEDIUM }
+    confidence: HIGH
+  - { wait: 0.3, do: agent, agent: eos-process, status: COMPLETED, activity: "Process check delivered", task: process }
+  - { wait: 0.5, do: task_update, ref: vision, status: COMPLETED, progress: 1.0 }
+  - wait: 0.4
+    do: report
+    agent: eos-vision
+    task: vision
+    asked_to: Check Rock alignment with the V/TO.
+    actions_taken: ["Compared Q3 Rocks with the 1-Year Plan goals"]
+    inputs_used: ["V/TO", "Q3 Rock sheet"]
+    findings:
+      - { kind: FACT, statement: "All 3 at-risk Rocks map to 1-Year Plan goals (customer retention and cash conversion); the Rocks are the right ones.", confidence: HIGH, sources: ["V/TO"] }
+      - { kind: ASSUMPTION, statement: "The problem is execution and accountability, not direction.", confidence: MEDIUM }
+    confidence: HIGH
+  - { wait: 0.3, do: agent, agent: eos-vision, status: COMPLETED, activity: "Vision is clear: no change needed", task: vision }
+
+  - { wait: 1.2, do: task_update, ref: issues, status: COMPLETED, progress: 1.0 }
+  - wait: 0.4
+    do: report
+    agent: eos-issues
+    task: issues
+    asked_to: Trace at-risk Rocks to recurring issues and judge IDS depth.
+    actions_taken: ["Reviewed 9 weeks of Issues List history", "Classified each IDS outcome as symptom or root cause", "Cross-checked with EOS·TRACTION and EOS·DATA"]
+    inputs_used: ["Leadership Issues List history", "Level 10 notes"]
+    findings:
+      - { kind: FACT, statement: "'Sales-to-ops handoff drops customer info' has been open 9 weeks and was marked solved 4 times; it reappeared each time.", confidence: HIGH, sources: ["Leadership Issues List history"] }
+      - { kind: FACT, statement: "'Invoices issued late because onboarding is not closed' has been open 6 weeks and drives the DSO Rock.", confidence: HIGH, sources: ["Leadership Issues List history"] }
+      - { kind: ASSUMPTION, statement: "Both issues share one root cause: no single seat owns onboarding end-to-end.", confidence: MEDIUM }
+    confidence: HIGH
+  - { wait: 0.3, do: agent, agent: eos-issues, status: COMPLETED, activity: "2 recurring issues traced to all 3 Rocks", task: issues }
+  - { wait: 1.2, do: task_update, ref: scorecard, status: COMPLETED, progress: 1.0 }
+  - wait: 0.4
+    do: report
+    agent: eos-data
+    task: scorecard
+    asked_to: Explain why the Scorecard did not flag the at-risk Rocks.
+    actions_taken: ["Replayed weekly Scorecard, weeks 1-9", "Checked each measurable's owner and threshold"]
+    inputs_used: ["Weekly Scorecard", "Issues traced by EOS·ISSUES"]
+    findings:
+      - { kind: FACT, statement: "No measurable tracks onboarding (e.g. days from signed deal to kickoff).", confidence: HIGH, sources: ["Weekly Scorecard"] }
+      - { kind: FACT, statement: "DSO red threshold is 60 days while the Rock starts at 58; the measurable could never turn red during the quarter.", confidence: HIGH, sources: ["Weekly Scorecard"] }
+      - { kind: RECOMMENDATION, statement: "Add 'days signed-to-kickoff' (red above 10) and 'invoices issued within 2 days of kickoff' (red below 90%); set DSO red at the weekly Rock milestone.", confidence: MEDIUM }
+    confidence: HIGH
+  - { wait: 0.3, do: agent, agent: eos-data, status: COMPLETED, activity: "Scorecard blind spots delivered", task: scorecard }
+  - { wait: 1.0, do: task_update, ref: seats, status: COMPLETED, progress: 1.0 }
+  - wait: 0.4
+    do: report
+    agent: eos-people
+    task: seats
+    asked_to: Check seat accountability for at-risk Rocks.
+    actions_taken: ["Mapped Rocks and measurables to Accountability Chart seats", "Reviewed GWC notes for affected seats"]
+    inputs_used: ["Accountability Chart", "Q3 Rock sheet"]
+    findings:
+      - { kind: FACT, statement: "Customer onboarding has no owning seat; the onboarding Rock is co-owned by the Sales and Operations seats.", confidence: HIGH, sources: ["Accountability Chart", "Q3 Rock sheet"] }
+      - { kind: FACT, statement: "The account-manager hiring Rock sits with the Integrator seat, which also carries 4 other Rocks.", confidence: HIGH, sources: ["Q3 Rock sheet"] }
+      - { kind: RECOMMENDATION, statement: "Assign onboarding to a single seat (Operations) and move the hiring Rock to the Sales seat.", confidence: MEDIUM }
+    confidence: HIGH
+  - { wait: 0.3, do: agent, agent: eos-people, status: COMPLETED, activity: "Accountability gap identified", task: seats }
+
+  - { wait: 1.0, do: phase, phase: VALIDATION }
+  - { wait: 0.4, do: task_update, ref: synthesis, status: IN_PROGRESS, progress: 0.2 }
+  - { wait: 0.3, do: agent, agent: oracle, status: WORKING, activity: "Synthesizing 6 EOS reports into root causes", task: synthesis }
+  - { wait: 2.6, do: task_update, ref: synthesis, progress: 0.6 }
+  - wait: 1.2
+    do: message
+    from: oracle
+    to: eos-traction
+    type: REQUEST
+    subject: "Can the 3 Rocks still be saved in 4 weeks?"
+    body: "Before I recommend re-scoping, I need your read: with an owner fix this week, which of the 3 at-risk Rocks can realistically close by week 13?"
+    task: synthesis
+    confidence: MEDIUM
+    requires_response: true
+  - { wait: 0.3, do: agent, agent: oracle, status: COLLABORATING, activity: "Checking Rock recoverability with EOS·TRACTION", task: synthesis, with: [eos-traction] }
+  - { wait: 0.3, do: agent, agent: eos-traction, status: COLLABORATING, activity: "Estimating recoverability per Rock", task: synthesis, with: [oracle] }
+  - wait: 2.0
+    do: message
+    from: eos-traction
+    to: oracle
+    type: ANSWER
+    subject: "DSO recoverable; onboarding partial; hiring not"
+    body: "DSO: recoverable to ~48 days if late invoicing is fixed now. Onboarding v2: only the documented process and pilot can land; full launch slips. Hiring 2 AMs: one offer is out; the second hire and ramp will not land this quarter."
+    task: synthesis
+    confidence: MEDIUM
+  - { wait: 0.3, do: agent, agent: eos-traction, status: COMPLETED, activity: "Recoverability estimate shared", task: rocks }
+  - { wait: 0.3, do: agent, agent: oracle, status: WORKING, activity: "Finalizing ranked root causes", task: synthesis }
+  - { wait: 1.8, do: task_update, ref: synthesis, status: IN_REVIEW, progress: 0.9 }
+  - { wait: 0.3, do: agent, agent: atlas, status: REVIEWING, activity: "Reviewing ORACLE's synthesis", task: synthesis }
+  - wait: 2.0
+    do: message
+    from: atlas
+    to: oracle
+    type: REVIEW
+    subject: "Review: approved"
+    body: "Root causes are consistent across all six specialist reports. Keep the single-owner fix as recommendation #1; label recoverability as a scenario."
+    task: synthesis
+    confidence: HIGH
+  - { wait: 0.6, do: task_update, ref: synthesis, status: COMPLETED, progress: 1.0 }
+  - wait: 0.4
+    do: report
+    agent: oracle
+    task: synthesis
+    asked_to: Synthesize EOS findings into ranked root causes and fixes.
+    actions_taken: ["Merged 6 specialist reports", "Separated symptoms from root causes", "Checked recoverability with EOS·TRACTION"]
+    inputs_used: ["EOS·TRACTION", "EOS·ISSUES", "EOS·DATA", "EOS·PEOPLE", "EOS·PROCESS", "EOS·VISION reports"]
+    findings:
+      - { kind: FACT, statement: "All 3 at-risk Rocks trace to 2 recurring issues that were IDS'd at symptom level for 6-9 weeks.", confidence: HIGH, sources: ["EOS·ISSUES report"] }
+      - { kind: FACT, statement: "The Scorecard had no onboarding measurable and a DSO threshold that could not trigger.", confidence: HIGH, sources: ["EOS·DATA report"] }
+      - { kind: ASSUMPTION, statement: "Root cause: no single seat owns customer onboarding end-to-end, and the process is undocumented.", confidence: MEDIUM, sources: ["EOS·PEOPLE report", "EOS·PROCESS report"] }
+      - { kind: SCENARIO, statement: "With an owner assigned this week: DSO reaches ~48 days (Rock partially met), onboarding pilot lands, hiring Rock misses.", confidence: MEDIUM }
+      - { kind: RECOMMENDATION, statement: "1) Assign onboarding to the Operations seat. 2) Add 2 leading measurables and fix the DSO threshold. 3) IDS the handoff issue to root cause at the next L10. 4) Re-scope onboarding v2 and carry hiring into Q4.", confidence: MEDIUM }
+    confidence: MEDIUM
+    limitations: ["Based on documents only; no interviews with the leadership team"]
+  - { wait: 0.3, do: agent, agent: oracle, status: COMPLETED, activity: "Synthesis delivered", task: synthesis }
+
+  - { wait: 1.0, do: phase, phase: CONSOLIDATION }
+  - { wait: 0.4, do: task_update, ref: agenda, status: IN_PROGRESS, progress: 0.2 }
+  - { wait: 0.3, do: agent, agent: alfred, status: WORKING, activity: "Drafting Level 10 agenda (90 min)", task: agenda }
+  - { wait: 2.5, do: task_update, ref: agenda, progress: 0.7 }
+  - { wait: 1.0, do: agent, agent: alfred, status: REVIEWING, activity: "Checking agenda against ORACLE's recommendations", task: agenda }
+  - { wait: 1.4, do: task_update, ref: agenda, status: AWAITING_APPROVAL, progress: 0.9 }
+  - { wait: 0.3, do: agent, agent: alfred, status: WAITING, activity: "Awaiting approval to circulate agenda", task: agenda }
+  - wait: 0.5
+    do: approval
+    ref: circulate-agenda
+    requested_by: alfred
+    reason: CONSEQUENTIAL_DECISION
+    title: "Circulate Level 10 agenda with Rock re-scoping"
+    detail: "Agenda proposes: IDS the sales-to-ops handoff to root cause; assign onboarding to the Operations seat; add 2 Scorecard measurables and reset the DSO threshold; re-scope onboarding v2 and drop the hiring Rock to Q4. These change seat accountability and Rock commitments."
+    proposed_action: "Send the agenda to the leadership team ahead of the next Level 10 meeting."
+    task: agenda
+    on_reject:
+      - { wait: 0.5, do: log, agent: atlas, text: "Agenda not circulated. Findings kept as input for the Integrator to present personally." }
+      - { wait: 0.4, do: task_update, ref: agenda, status: BLOCKED, progress: 0.9 }
+  - { wait: 0.5, do: task_update, ref: agenda, status: COMPLETED, progress: 1.0 }
+  - wait: 0.4
+    do: report
+    agent: alfred
+    task: agenda
+    asked_to: Draft and circulate the next Level 10 agenda.
+    actions_taken: ["Drafted 90-minute L10 agenda", "Pre-loaded top 3 issues for IDS", "Requested approval before circulating"]
+    inputs_used: ["ORACLE synthesis"]
+    findings:
+      - { kind: FACT, statement: "Agenda prepared with 3 prioritized issues and 2 proposed Rock changes; circulation gated by approval.", confidence: HIGH }
+    confidence: HIGH
+  - { wait: 0.3, do: agent, agent: alfred, status: COMPLETED, activity: "L10 agenda done", task: agenda }
+
+  - { wait: 1.0, do: phase, phase: REPORTING }
+  - { wait: 0.4, do: agent, agent: atlas, status: WORKING, activity: "Writing executive report" }
+  - wait: 1.8
+    do: mission_report
+    executive_summary: "The Rocks are at risk not because they are the wrong Rocks but because nobody owns customer onboarding end-to-end. Two recurring issues were solved at symptom level for 6-9 weeks, and the Scorecard had no measurable that could turn red. Fix the seat, the measurables and the IDS depth; re-scope onboarding v2 and move hiring to Q4."
+    objective_status: ACHIEVED
+    key_findings:
+      - { kind: FACT, statement: "3 of 7 Rocks off-track; all trace to 2 recurring, symptom-level issues.", confidence: HIGH, sources: ["EOS·TRACTION", "EOS·ISSUES"] }
+      - { kind: FACT, statement: "Scorecard blind spot: no onboarding measurable; DSO threshold above the starting value.", confidence: HIGH, sources: ["EOS·DATA"] }
+      - { kind: ASSUMPTION, statement: "Root cause is an accountability gap plus an undocumented onboarding process.", confidence: MEDIUM, sources: ["EOS·PEOPLE", "EOS·PROCESS"] }
+      - { kind: RECOMMENDATION, statement: "Single owner for onboarding, 2 new measurables, IDS to root cause, re-scope 2 Rocks.", confidence: MEDIUM, sources: ["ORACLE"] }
+    conflicts:
+      - "Rock review reported 'on-track' for 6 weeks while the linked issues were open on the Issues List."
+    assumptions:
+      - "'On-track' was reported by feel, not against milestones."
+      - "Assigning a single owner this week is enough to recover the DSO Rock partially."
+    needs_human_attention:
+      - "Leadership must agree on moving onboarding accountability to the Operations seat."
+      - "Integrator's Rock load (5 Rocks) should be rebalanced."
+    next_actions:
+      - "Hold the Level 10 with the approved agenda."
+      - "EOS·DATA: add the 2 measurables to next week's Scorecard."
+      - "EOS·PROCESS: document the onboarding core process within 2 weeks."
+      - "EOS·TRACTION: re-check Rock milestones weekly until week 13."
+  - { wait: 1.0, do: phase, phase: FOLLOW_UP }
+  - { wait: 0.5, do: log, agent: atlas, text: "Follow-ups scheduled: Scorecard update, process documentation, weekly Rock milestone check." }
+  - { wait: 0.6, do: agent, agent: atlas, status: COMPLETED, activity: "Mission report delivered" }
+  - { wait: 0.8, do: phase, phase: CLOSED }

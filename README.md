@@ -19,7 +19,12 @@ agents you already run** (via http, cli or mcp adapters). See [docs/CONTRACTS.md
 
 ## Status
 
-Phase 0 (contracts) is done. See the [roadmap](docs/ROADMAP.md).
+**Phase 1 is done**: the full Command Center runs on simulated missions. Two scenarios are included:
+a real-estate investment analysis, and an EOS quarterly Rocks diagnosis run by the EOS division.
+See the [roadmap](docs/ROADMAP.md).
+
+Agents are grouped into **nodes** (Corporate, Personal…), which are isolated contexts. Node-bound agents
+never leave their node. Shared agents can serve every node but never carry context between them.
 
 ## Run locally
 
@@ -36,6 +41,11 @@ cd apps/web
 npm install
 npm run dev
 ```
+
+Open http://localhost:3000, click **New mission**, pick a scenario and watch the team work.
+Approve or reject when ALFRED asks. `ATLAS_SIM_SPEED=3` plays missions 3× faster.
+
+**UI without the backend:** open http://localhost:3000/?mock=1 (add `&speed=3` to speed it up).
 
 Copy `.env.example` to `.env` when Phase 2 needs an Anthropic API key.
 

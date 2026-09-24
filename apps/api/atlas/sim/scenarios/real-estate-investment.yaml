@@ -1,0 +1,314 @@
+id: real-estate-investment
+node: corporate
+title: Real-estate investment analysis
+objective: Analyze whether this real-estate investment opportunity makes sense.
+# Setting: a 120-unit condo tower in the Valle Oriente submarket of metro Monterrey, Mexico.
+# Figures are illustrative and kept internally consistent:
+#   mix 40 x 60 m2 (1-bed) + 60 x 88 m2 (2-bed) + 20 x 126 m2 (3-bed) = 10,200 m2 saleable
+#   list price MXN 62,000/m2 -> GDV ~ MXN 632M; total cost ~ MXN 462M (land 92 + hard 307 + soft/fin 63)
+#   developer absorption 8 units/month (15-month sell-out) vs market 3.8 units/month (~32 months)
+steps:
+  - { wait: 1.0, do: phase, phase: DECOMPOSITION }
+  - { wait: 0.6, do: agent, agent: atlas, status: WORKING, activity: "Reading the developer's teaser and pro-forma" }
+  - { wait: 2.2, do: log, agent: atlas, text: "Opportunity: LP equity ticket of MXN 140M in a 120-unit condo tower, Valle Oriente, metro Monterrey." }
+  - { wait: 1.6, do: agent, agent: atlas, status: WORKING, activity: "Decomposing the objective into 6 tasks" }
+
+  - wait: 1.2
+    do: task
+    ref: research
+    title: Market comparables & absorption
+    description: "Survey active condo projects in Valle Oriente / San Pedro corridor: price per m2 by typology, monthly absorption, pre-sale terms and mortgage conditions."
+    assigned_to: sofia
+    priority: HIGH
+  - wait: 0.4
+    do: task
+    ref: permits
+    title: Permits & regulatory status
+    description: "Verify land-use permit, construction license and environmental filing status for the site; flag anything that could delay start of works."
+    assigned_to: sofia
+    priority: MEDIUM
+  - wait: 0.5
+    do: task
+    ref: dataroom
+    title: Normalize developer data room
+    description: "Extract the developer's pro-forma, cost breakdown, unit mix, pre-sales log and capital structure into a normalized model input sheet."
+    assigned_to: alfred
+    priority: HIGH
+  - wait: 0.5
+    do: task
+    ref: consistency
+    title: Consistency check of developer assumptions
+    description: "Cross-check every key assumption in the developer pro-forma (prices, absorption, costs, pre-sales) against the data room and against market evidence."
+    assigned_to: argos
+    priority: HIGH
+    depends_on: [dataroom]
+  - wait: 0.5
+    do: task
+    ref: analysis
+    title: Returns & scenario analysis
+    description: "Build developer, base and downside cases; estimate project margin and LP IRR ranges against the partners' 18% hurdle."
+    assigned_to: oracle
+    priority: CRITICAL
+    depends_on: [research, dataroom]
+  - wait: 0.5
+    do: task
+    ref: package
+    title: Investment memo for partners
+    description: "Consolidate findings into a 4-page investment memo with recommendation and conditions, and send it to the investment partners."
+    assigned_to: alfred
+    priority: HIGH
+    depends_on: [analysis, consistency, permits]
+    requires_approval: true
+    approval_reason: EXTERNAL_COMMUNICATION
+
+  - { wait: 1.0, do: phase, phase: DELEGATION }
+  - { wait: 0.6, do: log, agent: atlas, text: "Research and data-room work run in parallel; ARGOS checks consistency as soon as the data room is normalized." }
+  - { wait: 0.5, do: task_update, ref: research, status: IN_PROGRESS, progress: 0.05 }
+  - { wait: 0.3, do: agent, agent: sofia, status: WORKING, activity: "Pulling listings for 7 active condo projects in Valle Oriente", task: research }
+  - { wait: 0.4, do: task_update, ref: dataroom, status: IN_PROGRESS, progress: 0.05 }
+  - { wait: 0.3, do: agent, agent: alfred, status: WORKING, activity: "Parsing developer pro-forma (XLSX, 14 tabs)", task: dataroom }
+  - { wait: 0.4, do: task_update, ref: permits, status: IN_PROGRESS, progress: 0.0 }
+  - { wait: 0.3, do: agent, agent: argos, status: WAITING, activity: "Waiting for normalized data room", task: consistency }
+  - { wait: 0.4, do: agent, agent: oracle, status: WAITING, activity: "Waiting for market research and data room", task: analysis }
+  - { wait: 0.5, do: agent, agent: atlas, status: REVIEWING, activity: "Supervising 6 tasks" }
+
+  - { wait: 1.0, do: phase, phase: EXECUTION }
+  - { wait: 2.4, do: task_update, ref: research, progress: 0.35 }
+  - { wait: 1.2, do: agent, agent: sofia, status: WORKING, activity: "Computing absorption per project from 18 months of sales logs", task: research }
+  - { wait: 2.0, do: task_update, ref: dataroom, progress: 0.6 }
+  - { wait: 1.5, do: agent, agent: alfred, status: WORKING, activity: "Reconciling pre-sales log against signed contracts", task: dataroom }
+  - { wait: 2.2, do: task_update, ref: dataroom, status: COMPLETED, progress: 1.0 }
+  - wait: 0.6
+    do: report
+    agent: alfred
+    task: dataroom
+    asked_to: Normalize the developer data room into model inputs.
+    actions_taken:
+      - "Parsed 14-tab pro-forma and cost breakdown"
+      - "Rebuilt unit mix and saleable area from architectural schedule"
+      - "Reconciled pre-sales log with contract folder"
+    inputs_used: ["Developer pro-forma v3", "Architectural area schedule", "Pre-sales log", "Contract folder (PDF)"]
+    findings:
+      - { kind: FACT, statement: "Unit mix: 40 one-bed (~60 m2), 60 two-bed (~88 m2), 20 three-bed (~126 m2) = 10,200 m2 saleable; 14,300 m2 gross built area.", confidence: HIGH, sources: ["Architectural area schedule"] }
+      - { kind: FACT, statement: "Developer budget: land MXN 92M, hard cost MXN 307M (MXN 21,500/m2 GBA), soft + financing MXN 63M; total MXN 462M.", confidence: HIGH, sources: ["Developer pro-forma v3"] }
+      - { kind: FACT, statement: "Pro-forma assumes list price MXN 62,000/m2 (GDV ~MXN 632M) and 8 units sold per month.", confidence: HIGH, sources: ["Developer pro-forma v3"] }
+      - { kind: FACT, statement: "Pre-sales log shows 36 reservations; only 14 have signed contracts with deposit.", confidence: HIGH, sources: ["Pre-sales log", "Contract folder (PDF)"] }
+    unresolved: ["No bank term sheet for the construction loan in the data room"]
+    confidence: HIGH
+    limitations: ["Data room is as provided by the developer; no third-party cost review yet"]
+  - { wait: 0.5, do: agent, agent: alfred, status: COMPLETED, activity: "Data room normalized", task: dataroom }
+  - { wait: 0.6, do: task_update, ref: consistency, status: IN_PROGRESS, progress: 0.1 }
+  - { wait: 0.3, do: agent, agent: argos, status: WORKING, activity: "Cross-checking pro-forma assumptions against data room and market", task: consistency }
+  - { wait: 0.4, do: agent, agent: sofia, status: WORKING, activity: "Checking permit status with municipal registry", task: permits }
+  - { wait: 1.8, do: task_update, ref: permits, progress: 0.5 }
+  - { wait: 2.0, do: task_update, ref: research, progress: 0.8 }
+
+  - wait: 1.4
+    do: message
+    from: argos
+    to: atlas
+    type: ALERT
+    subject: "Absorption assumption is 2.1x the market average"
+    body: "Developer pro-forma assumes 8 units/month (sell-out in 15 months). SOFIA's preliminary comps show 3.8 units/month on average across 7 active projects (range 2.5-5.5). At market pace sell-out takes ~32 months, which moves the equity exit by more than a year. Also: pre-sales deck claims '30% pre-sold' (36 units) but only 14 contracts are signed with deposit (11.7%)."
+    task: consistency
+    confidence: HIGH
+    requires_response: false
+  - { wait: 0.6, do: agent, agent: atlas, status: WORKING, activity: "Routing ARGOS alert to ORACLE's analysis" }
+  - { wait: 1.0, do: task_update, ref: research, status: COMPLETED, progress: 1.0 }
+  - wait: 0.5
+    do: report
+    agent: sofia
+    task: research
+    asked_to: Survey comparables and absorption for Valle Oriente condo projects.
+    actions_taken:
+      - "Collected list prices for 7 active condo projects"
+      - "Derived monthly absorption from 18 months of broker sales logs"
+      - "Checked mortgage offers for the MXN 4-8M ticket segment"
+    inputs_used: ["Broker listing survey (7 projects)", "Broker sales logs, Mar 2025 - Aug 2026", "Bank mortgage rate sheets, Sep 2026"]
+    findings:
+      - { kind: FACT, statement: "Comparable list prices range MXN 55,000-68,000/m2; weighted median MXN 60,500/m2. The subject's MXN 62,000/m2 is ~2.5% above median.", confidence: HIGH, sources: ["Broker listing survey (7 projects)"] }
+      - { kind: FACT, statement: "Average absorption is 3.8 units/month per project (range 2.5-5.5); only 1 of 7 projects exceeded 5 units/month for more than 6 months.", confidence: MEDIUM, sources: ["Broker sales logs, Mar 2025 - Aug 2026"] }
+      - { kind: FACT, statement: "Mortgage rates for this segment are quoted at 10.5-11.5% fixed.", confidence: MEDIUM, sources: ["Bank mortgage rate sheets, Sep 2026"] }
+      - { kind: ASSUMPTION, statement: "Sales logs are representative of closed sales, not only reservations.", confidence: MEDIUM }
+    unresolved: ["Absorption by typology not yet split out"]
+    confidence: MEDIUM
+    limitations: ["Two projects did not disclose sales data; absorption estimated from listing changes"]
+  - { wait: 0.4, do: agent, agent: sofia, status: WORKING, activity: "Finishing permits check", task: permits }
+
+  - { wait: 1.0, do: phase, phase: COLLABORATION }
+  - { wait: 0.4, do: task_update, ref: analysis, status: IN_PROGRESS, progress: 0.1 }
+  - { wait: 0.3, do: agent, agent: oracle, status: WORKING, activity: "Building developer / base / downside cases", task: analysis }
+  - { wait: 2.2, do: task_update, ref: analysis, progress: 0.3 }
+  - wait: 1.0
+    do: message
+    from: oracle
+    to: sofia
+    type: REQUEST
+    subject: "Need absorption split by typology"
+    body: "The unit mix is 40 one-bed / 60 two-bed / 20 three-bed. A blended 3.8 units/month hides mix risk. Can you split comparable absorption by typology and give me the typical deposit schedule (enganche) during construction?"
+    task: analysis
+    confidence: MEDIUM
+    requires_response: true
+  - { wait: 0.4, do: agent, agent: oracle, status: COLLABORATING, activity: "Waiting on typology absorption from SOFIA", task: analysis, with: [sofia] }
+  - { wait: 0.3, do: agent, agent: sofia, status: COLLABORATING, activity: "Splitting comps absorption by typology for ORACLE", task: analysis, with: [oracle] }
+  - { wait: 3.2, do: task_update, ref: permits, progress: 0.8 }
+  - wait: 1.2
+    do: message
+    from: sofia
+    to: oracle
+    type: ANSWER
+    subject: "Absorption by typology + deposit schedule"
+    body: "Across comps: one-bed ~2.0 units/month, two-bed ~1.4, three-bed ~0.4 (sums to 3.8). Typical terms: 10% at signing, 20% in monthly installments during construction, 70% at delivery via mortgage. Three-bed units are the slowest; expect the last 20 to take 40+ months at market pace."
+    task: analysis
+    confidence: MEDIUM
+  - { wait: 0.4, do: agent, agent: sofia, status: WORKING, activity: "Closing permits check", task: permits }
+  - { wait: 0.3, do: agent, agent: oracle, status: WORKING, activity: "Re-running cases with typology absorption and 30% construction-period collections", task: analysis }
+  - { wait: 1.8, do: task_update, ref: permits, status: COMPLETED, progress: 1.0 }
+  - wait: 0.5
+    do: report
+    agent: sofia
+    task: permits
+    asked_to: Verify permits and regulatory status for the site.
+    actions_taken: ["Checked municipal land-use and construction license registry", "Reviewed environmental filing receipt in the data room"]
+    inputs_used: ["Municipal permits registry", "Developer data room"]
+    findings:
+      - { kind: FACT, statement: "Land-use permit (uso de suelo) for mixed-use high-density is granted.", confidence: HIGH, sources: ["Municipal permits registry"] }
+      - { kind: FACT, statement: "Construction license is filed but not yet issued; filing date June 2026.", confidence: HIGH, sources: ["Municipal permits registry"] }
+      - { kind: ASSUMPTION, statement: "At current municipal processing times the license could take a further 2-4 months.", confidence: LOW }
+    unresolved: ["Environmental impact resolution not found in public registry"]
+    confidence: MEDIUM
+    limitations: ["Registry may lag actual resolutions by several weeks"]
+  - { wait: 0.4, do: agent, agent: sofia, status: COMPLETED, activity: "Research and permits delivered", task: permits }
+  - { wait: 1.2, do: task_update, ref: consistency, progress: 0.9 }
+  - { wait: 1.6, do: task_update, ref: consistency, status: COMPLETED, progress: 1.0 }
+  - wait: 0.5
+    do: report
+    agent: argos
+    task: consistency
+    asked_to: Cross-check the developer's assumptions against the data room and market evidence.
+    actions_taken: ["Compared 22 pro-forma inputs with data room and SOFIA's comps", "Flagged deviations above 15%"]
+    inputs_used: ["Normalized data room (ALFRED)", "Comparables report (SOFIA)"]
+    findings:
+      - { kind: FACT, statement: "Absorption: 8 units/month assumed vs 3.8 market average (2.1x). Largest single deviation in the model.", confidence: HIGH, sources: ["Developer pro-forma v3", "Broker sales logs"] }
+      - { kind: FACT, statement: "Pre-sales: '30% pre-sold' in the deck vs 14 signed contracts (11.7%); 22 are non-binding reservations.", confidence: HIGH, sources: ["Pre-sales log", "Contract folder (PDF)"] }
+      - { kind: FACT, statement: "Hard cost MXN 21,500/m2 GBA sits within the 19,000-24,000 range seen for comparable towers; no inconsistency.", confidence: MEDIUM, sources: ["Developer pro-forma v3"] }
+      - { kind: FACT, statement: "Price MXN 62,000/m2 is within the comparable range; no inconsistency.", confidence: HIGH, sources: ["Comparables report (SOFIA)"] }
+    unresolved: ["Construction-loan terms cannot be checked: no term sheet"]
+    confidence: HIGH
+    limitations: ["Cost benchmark is desk-based, not a quantity surveyor review"]
+  - { wait: 0.4, do: agent, agent: argos, status: COMPLETED, activity: "Consistency check delivered: 2 material deviations", task: consistency }
+
+  - { wait: 1.0, do: phase, phase: VALIDATION }
+  - { wait: 2.2, do: task_update, ref: analysis, progress: 0.75 }
+  - wait: 1.4
+    do: message
+    from: oracle
+    to: atlas
+    type: RESULT
+    subject: "Draft returns analysis ready for review"
+    body: "Three cases built. Developer case clears the 18% hurdle; base case is borderline; downside does not. Recommendation is conditional. Sending for review before I finalize."
+    task: analysis
+    confidence: MEDIUM
+    requires_response: true
+  - { wait: 0.4, do: task_update, ref: analysis, status: IN_REVIEW, progress: 0.9 }
+  - { wait: 0.3, do: agent, agent: atlas, status: REVIEWING, activity: "Reviewing ORACLE's cases against ARGOS' findings", task: analysis }
+  - { wait: 0.3, do: agent, agent: oracle, status: WAITING, activity: "Awaiting ATLAS review", task: analysis }
+  - wait: 2.6
+    do: message
+    from: atlas
+    to: oracle
+    type: REVIEW
+    subject: "Review: approve with two changes"
+    body: "Cases are consistent with SOFIA's comps and ARGOS' checks. Two changes: (1) base case must use only the 14 signed contracts as pre-sales, not 36 reservations; (2) state explicitly that IRR ranges are scenarios, not forecasts. Then finalize."
+    task: analysis
+    confidence: HIGH
+  - { wait: 0.4, do: agent, agent: oracle, status: WORKING, activity: "Applying review changes: pre-sales = 14 signed contracts", task: analysis }
+  - { wait: 2.0, do: task_update, ref: analysis, status: COMPLETED, progress: 1.0 }
+  - wait: 0.5
+    do: report
+    agent: oracle
+    task: analysis
+    asked_to: Estimate project margin and LP IRR ranges against the partners' 18% hurdle.
+    actions_taken:
+      - "Built developer, base and downside cash-flow cases"
+      - "Applied typology absorption and 10/20/70 collection schedule"
+      - "Counted only signed contracts as pre-sales (per ATLAS review)"
+    inputs_used: ["Normalized data room (ALFRED)", "Comparables and typology absorption (SOFIA)", "Consistency check (ARGOS)", "Permits status (SOFIA)"]
+    findings:
+      - { kind: FACT, statement: "At the developer's own budget and prices, project margin on GDV is ~27% (MXN 632M GDV vs MXN 462M cost).", confidence: HIGH, sources: ["Developer pro-forma v3"] }
+      - { kind: FACT, statement: "The partners' investment mandate sets an 18% LP IRR hurdle.", confidence: HIGH, sources: ["Partners' investment mandate"] }
+      - { kind: ASSUMPTION, statement: "Construction takes 30 months from license; license issued within 3 months.", confidence: MEDIUM }
+      - { kind: SCENARIO, statement: "Developer case (8 units/month, MXN 62,000/m2): LP IRR 25-28%.", confidence: LOW }
+      - { kind: SCENARIO, statement: "Base case (3.8 units/month, MXN 61,000/m2, 14 signed pre-sales): LP IRR 15-18% — at or below hurdle.", confidence: MEDIUM }
+      - { kind: SCENARIO, statement: "Downside (3.0 units/month, price -6% to ~MXN 58,300/m2, 4-month license delay): LP IRR 7-10%.", confidence: MEDIUM }
+      - { kind: RECOMMENDATION, statement: "Do not commit at current terms. Proceed only with a preferred return of 12% for LPs, capital released in tranches tied to reaching 40 signed contracts, and an issued construction license.", confidence: MEDIUM }
+    unresolved: ["Construction-loan terms unknown; leverage could move IRR by +/- 3 points"]
+    needs_agents: []
+    confidence: MEDIUM
+    limitations: ["IRR ranges are scenario outputs, not forecasts", "No independent cost review"]
+  - { wait: 0.4, do: agent, agent: oracle, status: COMPLETED, activity: "Scenario analysis delivered", task: analysis }
+
+  - { wait: 1.0, do: phase, phase: CONSOLIDATION }
+  - { wait: 0.4, do: task_update, ref: package, status: IN_PROGRESS, progress: 0.1 }
+  - { wait: 0.3, do: agent, agent: alfred, status: WORKING, activity: "Drafting 4-page investment memo", task: package }
+  - { wait: 0.4, do: agent, agent: atlas, status: WORKING, activity: "Consolidating 5 agent reports" }
+  - { wait: 3.0, do: task_update, ref: package, progress: 0.7 }
+  - { wait: 1.5, do: agent, agent: alfred, status: REVIEWING, activity: "Checking memo figures against ORACLE's report", task: package }
+  - { wait: 1.6, do: task_update, ref: package, status: AWAITING_APPROVAL, progress: 0.9 }
+  - { wait: 0.3, do: agent, agent: alfred, status: WAITING, activity: "Awaiting human approval to send memo", task: package }
+  - wait: 0.5
+    do: approval
+    ref: send-memo
+    requested_by: alfred
+    reason: EXTERNAL_COMMUNICATION
+    title: "Send investment memo to the partners"
+    detail: "4-page memo: conditional NO at current terms. Base case LP IRR 15-18% vs 18% hurdle; developer absorption assumption is 2.1x market; only 14 of 36 claimed pre-sales are signed. Proposes preferred return + tranche conditions."
+    proposed_action: "Email the memo (PDF) and model summary to the 4 investment partners."
+    task: package
+    on_reject:
+      - { wait: 0.5, do: log, agent: atlas, text: "Memo held for revision; nothing was sent to the partners." }
+      - { wait: 0.4, do: agent, agent: alfred, status: WORKING, activity: "Filing memo as internal draft for revision", task: package }
+      - { wait: 1.0, do: task_update, ref: package, status: BLOCKED, progress: 0.9 }
+  - { wait: 0.6, do: task_update, ref: package, status: COMPLETED, progress: 1.0 }
+  - wait: 0.4
+    do: report
+    agent: alfred
+    task: package
+    asked_to: Prepare and send the investment memo to the partners.
+    actions_taken: ["Drafted 4-page memo with recommendation and conditions", "Attached model summary", "Requested human approval before sending"]
+    inputs_used: ["All agent reports"]
+    findings:
+      - { kind: FACT, statement: "Memo and model summary prepared; delivery gated by human approval.", confidence: HIGH }
+    confidence: HIGH
+  - { wait: 0.4, do: agent, agent: alfred, status: COMPLETED, activity: "Memo package done", task: package }
+
+  - { wait: 1.0, do: phase, phase: REPORTING }
+  - { wait: 0.4, do: agent, agent: atlas, status: WORKING, activity: "Writing executive report" }
+  - wait: 2.0
+    do: mission_report
+    executive_summary: "The Valle Oriente condo tower is a sound product at a market-consistent price (MXN 62,000/m2 vs 60,500 median), but the developer's returns rest on an absorption rate 2.1x the market and on pre-sales overstated by 22 units. At market pace the base case LP IRR is 15-18%, at or below the 18% hurdle. Recommendation: do not commit at current terms; re-negotiate for a preferred return and tranche-based funding."
+    objective_status: PARTIAL
+    key_findings:
+      - { kind: FACT, statement: "Price per m2 is within the comparable range (MXN 55,000-68,000).", confidence: HIGH, sources: ["SOFIA comparables report"] }
+      - { kind: FACT, statement: "Developer assumes 8 units/month vs 3.8 market average; only 14 of 36 claimed pre-sales are signed.", confidence: HIGH, sources: ["ARGOS consistency check"] }
+      - { kind: SCENARIO, statement: "LP IRR ranges: developer case 25-28%, base 15-18%, downside 7-10%.", confidence: MEDIUM, sources: ["ORACLE scenario analysis"] }
+      - { kind: RECOMMENDATION, statement: "Invest only with a 12% preferred return, tranches tied to 40 signed contracts, and an issued construction license.", confidence: MEDIUM, sources: ["ORACLE scenario analysis"] }
+    conflicts:
+      - "Developer deck claims 30% pre-sold; contract folder supports 11.7%."
+      - "Developer sell-out of 15 months vs ~32 months implied by market absorption."
+    assumptions:
+      - "30-month construction from license issuance."
+      - "Construction license issued within 3 months."
+      - "Broker sales logs reflect closed sales rather than reservations."
+    needs_human_attention:
+      - "Decide whether to open negotiation on preferred return and tranche conditions."
+      - "Request the construction-loan term sheet from the developer."
+    next_actions:
+      - "ALFRED: request loan term sheet and environmental resolution from the developer."
+      - "ARGOS: monitor the municipal registry for the construction license."
+      - "SOFIA: refresh absorption data in 60 days."
+  - { wait: 1.0, do: phase, phase: FOLLOW_UP }
+  - { wait: 0.5, do: agent, agent: argos, status: MONITORING, activity: "Watching municipal registry for construction license" }
+  - { wait: 1.5, do: log, agent: atlas, text: "Follow-ups registered: loan term sheet request, license monitoring, 60-day absorption refresh." }
+  - { wait: 0.6, do: agent, agent: atlas, status: COMPLETED, activity: "Mission report delivered" }
+  - { wait: 0.8, do: phase, phase: CLOSED }
