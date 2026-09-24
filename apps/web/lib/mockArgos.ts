@@ -1,11 +1,13 @@
 /**
  * Mock ARGOS (docs/ARGOS.md): seeded alerts, Rocks and one L10 brief, plus "Run checks now" and "Build now"
  * that play out through events like the real engine. URL switches for demos:
- *   ?suite=none   → the PAGA Suite isn't configured (the L10 check is "not configured", no L10 alerts)
+ *   ?suite=none    → the PAGA Suite isn't configured (the L10 check is "not configured", no L10 alerts)
+ *   ?suite=consent → configured but not signed in: the L10 chip offers Connect (device code, connected after ~6 s),
+ *                    then an L10-only run adds the 2 L10 alerts
  *   ?argos=failed → the dashboards check failed on its last run
  *   ?argos=none   → the backend has no ARGOS module (GET /argos/status → 404)
  */
-import type { AlertStatus, ArgosApi, ArgosCheckStatus, ArgosStatus } from "./api";
+import type { AlertStatus, ArgosApi, ArgosCheckStatus, ArgosStatus, InboxConnectStart, InboxConnectState } from "./api";
 import type { AgentState, AgentStatus, Alert, AlertEvidence, Attachment, Brief, EventType, Mission, RockStatus } from "./contracts";
 
 type Emit = (type: EventType, payload: Record<string, unknown>, summary: string, agent: string | null, missionId?: string | null) => void;
@@ -295,9 +297,13 @@ export interface MockArgos {
 }
 
 export function mockArgos(emit: Emit, speed: number, hooks: MockArgosHooks): MockArgos {
-  const suite = param("suite") !== "none";
+  const suiteParam = param("suite");
+  const consent = suiteParam === "consent";
+  let suite = suiteParam !== "none" && !consent;
   const mode = param("argos");
   const alerts = new Map(seedAlerts(suite).map((a) => [a.id, a]));
+  let l10Seeded = suite;
+  let suiteConnectStarted = 0;
   const rockSeeds = new Map(seedRocks().map((r) => [r.id, r]));
   const rocks = new Map([...rockSeeds.values()].map((r) => [r.id, evaluateRock(r)]));
   const briefs: Brief[] = [makeBrief(hooks, isoWeek(), iso(-2 * DAY - 3 * HOUR), suite)];
@@ -309,7 +315,25 @@ export function mockArgos(emit: Emit, speed: number, hooks: MockArgosHooks): Moc
       : { name: "dashboards", enabled: true, last_run: lastRun, last_ok: true, note: "3 projects · 5 dashboards read" },
     suite
       ? { name: "l10", enabled: true, last_run: lastRun, last_ok: true, note: "PAGA Suite · 14 to-dos, 6 issues" }
-      : { name: "l10", enabled: false, last_run: null, last_ok: null, note: "PAGA Suite not configured: set ATLAS_SUITE_URL and ATLAS_SUITE_TOKEN" },
+      : consent
+        ? {
+            name: "l10",
+            enabled: false,
+            state: "not configured",
+            last_run: null,
+            last_ok: null,
+            hint: "Connect PAGA Suite: sign in with your Microsoft account so ATLAS can read the L10 (read-only).",
+            note: "Connect PAGA Suite: sign in with your Microsoft account so ATLAS can read the L10 (read-only).",
+          }
+        : {
+            name: "l10",
+            enabled: false,
+            state: "not configured",
+            last_run: null,
+            last_ok: null,
+            hint: "Set ATLAS_SUITE_URL and ATLAS_SUITE_SCOPE to read the L10 from PAGA Suite.",
+            note: "Set ATLAS_SUITE_URL and ATLAS_SUITE_SCOPE to read the L10 from PAGA Suite.",
+          },
     { name: "rocks", enabled: true, last_run: lastRun, last_ok: true, note: "5 Rocks from rocks.yaml" },
   ];
   let status: ArgosStatus = { checks, next_run: nextRun(), next_brief: nextBrief(), running: false, mission_id: null };
@@ -357,19 +381,22 @@ export function mockArgos(emit: Emit, speed: number, hooks: MockArgosHooks): Moc
     async run(only?: string[]) {
       if (mode === "none") throw new Error("ATLAS API 404: Not Found");
       if (status.running) throw new Error('ATLAS API 409: {"detail":"An ARGOS run is already in progress."}');
-      const wanted = only?.length ? only : checks.filter((c) => c.enabled).map((c) => c.name);
-      const off = checks.find((c) => wanted.includes(c.name) && !c.enabled);
+      const wanted = only?.length ? only : status.checks.filter((c) => c.enabled).map((c) => c.name);
+      const off = status.checks.find((c) => wanted.includes(c.name) && !c.enabled);
       if (off) throw new Error(`ATLAS API 409: ${JSON.stringify({ detail: off.note })}`);
       const m = newMission(`ARGOS watch · ${wanted.join(", ")} · ${hhmm(iso(0))}`);
       hooks.putMission(m, "mission.created", `ARGOS watch started: ${wanted.join(", ")}`);
       status = { ...status, running: true, mission_id: m.id };
-      setArgos("WORKING", "Reading this week's dashboards from email", m.id);
-      const first = !ran;
-      ran = true;
+      const dash = wanted.includes("dashboards");
+      setArgos("WORKING", dash ? "Reading this week's dashboards from email" : `Running ${wanted.join(", ")}`, m.id);
+      const first = dash && !ran;
+      if (dash) ran = true;
+      const addL10 = suite && wanted.includes("l10") && !l10Seeded;
+      if (addL10) l10Seeded = true;
       const pp = `Dashboard Plaza Poniente S${weekNo()}.pdf`;
       const ppPrev = `Dashboard Plaza Poniente S${weekNo(-1)}.pdf`;
       later(1300, () => {
-        setArgos("WORKING", `Comparing ${pp} with last week`, m.id);
+        if (dash) setArgos("WORKING", `Comparing ${pp} with last week`, m.id);
         if (first) {
           putAlert(
             alert({
@@ -395,13 +422,24 @@ export function mockArgos(emit: Emit, speed: number, hooks: MockArgosHooks): Moc
         if (first && missing && missing.status === "OPEN") {
           putAlert({ ...missing, status: "RESOLVED", last_seen: iso(0), mission_id: m.id }, `Resolved · ${missing.title} (no longer detected)`, m.id);
         }
-        for (const id of ["alr_tn_entrega", "alr_tn_escrituradas"]) {
-          const a = alerts.get(id);
-          if (a && a.status !== "RESOLVED") putAlert({ ...a, last_seen: iso(0) }, `Still detected · ${a.title}`, m.id);
+        if (dash) {
+          for (const id of ["alr_tn_entrega", "alr_tn_escrituradas"]) {
+            const a = alerts.get(id);
+            if (a && a.status !== "RESOLVED") putAlert({ ...a, last_seen: iso(0) }, `Still detected · ${a.title}`, m.id);
+          }
         }
-        if (suite && wanted.includes("l10")) setArgos("WORKING", "Reading L10 to-dos and issues from PAGA Suite", m.id);
+        if (suite && wanted.includes("l10")) {
+          setArgos("WORKING", "Reading L10 to-dos and issues from PAGA Suite", m.id);
+          if (addL10) {
+            for (const a of seedAlerts(true).filter((x) => x.check === "l10")) {
+              const sev = a.severity;
+              putAlert({ ...a, first_seen: iso(0), last_seen: iso(0), mission_id: m.id }, `ARGOS raised ${sev} · ${a.project ?? "L10"}: ${a.title}`, m.id);
+            }
+          }
+        }
       });
       later(3400, () => {
+        if (!wanted.includes("rocks")) return;
         setArgos("WORKING", "Recomputing Rock statuses", m.id);
         for (const seed of rockSeeds.values()) {
           const r = evaluateRock(seed);
@@ -415,9 +453,13 @@ export function mockArgos(emit: Emit, speed: number, hooks: MockArgosHooks): Moc
           running: false,
           mission_id: null,
           next_run: nextRun(),
-          checks: status.checks.map((c) => (c.enabled && wanted.includes(c.name) ? { ...c, last_run: at, last_ok: true, note: c.name === "dashboards" ? "3 projects · 6 dashboards read" : c.note } : c)),
+          checks: status.checks.map((c) =>
+            c.enabled && wanted.includes(c.name)
+              ? { ...c, state: "ok", last_run: at, last_ok: true, note: c.name === "dashboards" ? "3 projects · 6 dashboards read" : c.name === "l10" ? "PAGA Suite · 14 to-dos, 6 issues" : c.note }
+              : c,
+          ),
         };
-        close(m, first ? "ARGOS watch done · 1 new, 1 resolved" : "ARGOS watch done · no changes");
+        close(m, first ? "ARGOS watch done · 1 new, 1 resolved" : addL10 ? "ARGOS watch done · 2 new" : "ARGOS watch done · no changes");
         setArgos("MONITORING", idleActivity(), m.id);
       });
       return m;
@@ -461,6 +503,31 @@ export function mockArgos(emit: Emit, speed: number, hooks: MockArgosHooks): Moc
       return [...briefs];
     },
     briefFileUrl: (b) => b.deliverable?.download_url ?? undefined,
+    async suiteConnect(): Promise<InboxConnectStart> {
+      if (!consent) throw new Error('ATLAS API 409: {"detail":"ATLAS_SUITE_SCOPE is not set. Add the PAGA Suite API scope to .env first."}');
+      suiteConnectStarted = Date.now();
+      return {
+        user_code: "PG4-7KXM",
+        verification_uri: "https://microsoft.com/devicelogin",
+        expires_in: 900,
+        message: "To sign in, open https://microsoft.com/devicelogin and enter the code PG4-7KXM to authenticate.",
+      };
+    },
+    async suiteConnectStatus(): Promise<InboxConnectState> {
+      const hold = param("hold") === "1";
+      if (suite) return { state: "connected", account: "usuario@empresa.example.mx", error: null };
+      if (!hold && suiteConnectStarted && Date.now() - suiteConnectStarted > 6000 / speed) {
+        suite = true;
+        status = {
+          ...status,
+          checks: status.checks.map((c) =>
+            c.name === "l10" ? { ...c, enabled: true, state: "never run", hint: null, note: "PAGA Suite · signed in as usuario@empresa.example.mx" } : c,
+          ),
+        };
+        return { state: "connected", account: "usuario@empresa.example.mx", error: null };
+      }
+      return { state: "pending", account: null, error: null };
+    },
   };
 
   return {

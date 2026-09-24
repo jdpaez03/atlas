@@ -5,7 +5,17 @@ import { apiErrorText, type ArgosApi, type ArgosCheckStatus, type ArgosStatus } 
 import type { Alert, AlertEvidence, Brief, Mission, RockStatus } from "@/lib/contracts";
 import { dayDiff, parseDue } from "@/lib/followups";
 import { cx, useNow } from "@/lib/ui";
+import { createPortal } from "react-dom";
+import { DeviceCodeModal, type DeviceCodeCopy } from "./DeviceCodeModal";
 import { Empty, Panel, Tag } from "./primitives";
+
+const SUITE_CONNECT_COPY: DeviceCodeCopy = {
+  eyebrow: "Connect PAGA Suite",
+  title: "Sign in to PAGA Suite with Microsoft",
+  account: "the work account you use for PAGA Suite",
+  connected: "ARGOS will read the L10 now.",
+  footer: "ATLAS signs in as you with read access to the L10 (to-dos, issues, weekly summaries). It never writes to the Suite.",
+};
 
 /* ------------------------------------------------------------------------------------------------ vocabulary */
 
@@ -113,7 +123,10 @@ export function useArgosStatus(argos: ArgosApi, ready: boolean, refreshKey: stri
   return { status, refresh };
 }
 
-function CheckChip({ c, now }: { c: ArgosCheckStatus; now: number }) {
+/** The backend's hint for a Suite that's configured but not signed in yet. */
+const needsSuiteConnect = (c: ArgosCheckStatus) => c.name === "l10" && /connect paga suite/i.test(c.hint ?? c.note ?? "");
+
+function CheckChip({ c, now, onConnect }: { c: ArgosCheckStatus; now: number; onConnect?: () => void }) {
   // the backend's `state` is authoritative: "not configured" is a setup step, not a failure
   const raw = c.state;
   const state = !c.enabled ? "off"
@@ -161,6 +174,11 @@ function CheckChip({ c, now }: { c: ArgosCheckStatus; now: number }) {
           </div>
         </>
       )}
+      {onConnect && state === "off" && needsSuiteConnect(c) && (
+        <button onClick={onConnect} className={cx(BTN, "h-6 border-signal/50 bg-signal/10 px-2 text-[9px] text-signal hover:bg-signal/20")} title="Sign in to PAGA Suite with Microsoft">
+          Connect
+        </button>
+      )}
     </div>
   );
 }
@@ -169,12 +187,14 @@ function StatusStrip({
   status,
   running,
   onRun,
+  onConnectSuite,
   error,
   now,
 }: {
   status: ArgosStatus | null | undefined;
   running: boolean;
   onRun: () => void;
+  onConnectSuite?: () => void;
   error: string | null;
   now: number;
 }) {
@@ -197,7 +217,7 @@ function StatusStrip({
         ) : (
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
             {checks.map((c) => (
-              <CheckChip key={c.name} c={c} now={now} />
+              <CheckChip key={c.name} c={c} now={now} onConnect={onConnectSuite} />
             ))}
           </div>
         )}
@@ -931,11 +951,11 @@ export function MonitorView({
     if (briefId && isClosed(briefId)) setBriefId(null);
   }); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const run = () => {
+  const run = (checks?: string[]) => {
     setStarting(true);
     setRunError(null);
     argos
-      .run()
+      .run(checks)
       .then((m) => {
         setRunId(m.id);
         refresh();
@@ -954,13 +974,26 @@ export function MonitorView({
   };
   const running = starting || !!runId || !!status?.running;
 
+  /* PAGA Suite sign-in (device code); on success run just the L10 check */
+  const [suiteConnecting, setSuiteConnecting] = useState(false);
+  const closeSuite = useCallback(() => setSuiteConnecting(false), []);
+  const onSuiteConnected = useCallback(() => {
+    refresh();
+    run(["l10"]);
+  }, [refresh]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const colorOf = useMemo(() => projectPalette([...alerts.map((a) => a.project), ...rocks.map((r) => r.project)]), [alerts, rocks]);
   const patchAlert = useCallback((id: string, s: Alert["status"]) => argos.patchAlert(id, s), [argos]);
   const patchRock = useCallback((id: string, current: number) => argos.patchRock(id, current), [argos]);
 
   return (
     <div className="flex flex-col gap-4">
-      <StatusStrip status={status} running={running} onRun={run} error={runError} now={now} />
+      <StatusStrip status={status} running={running} onRun={() => run()} onConnectSuite={() => setSuiteConnecting(true)} error={runError} now={now} />
+      {suiteConnecting &&
+        createPortal(
+          <DeviceCodeModal start={argos.suiteConnect} poll={argos.suiteConnectStatus} copy={SUITE_CONNECT_COPY} onClose={closeSuite} onConnected={onSuiteConnected} closeOnConnected />,
+          document.body,
+        )}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px]">
         <AlertsPanel alerts={alerts} patch={patchAlert} now={now} colorOf={colorOf} className="min-h-[420px]" />
         <div className="flex min-w-0 flex-col gap-4 xl:self-start">

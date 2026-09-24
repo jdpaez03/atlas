@@ -243,7 +243,7 @@ export function apiErrorText(x: unknown, fallback = "Request failed"): string {
 export const DRAFT_EML_URL = (id: string) => `${API_URL}/drafts/${encodeURIComponent(id)}/eml`;
 export const INBOX_SETUP_DOC = "https://github.com/jdpaez03/atlas/blob/main/docs/INBOX_SETUP.md";
 
-function normalizeConnectState(body: unknown): InboxConnectState {
+export function normalizeConnectState(body: unknown): InboxConnectState {
   const b = (body ?? {}) as Record<string, unknown>;
   const raw = String(b.state ?? b.status ?? "").toLowerCase();
   const err = (b.hint ?? b.error ?? b.detail ?? null) as string | null; // hint is the plain-language one
@@ -322,6 +322,10 @@ export interface ArgosApi {
   briefs(): Promise<Brief[]>;
   /** where "Download .docx" points */
   briefFileUrl(brief: Brief): string | undefined;
+  /** PAGA Suite sign-in (Microsoft Entra device code): POST /argos/suite/connect */
+  suiteConnect(): Promise<InboxConnectStart>;
+  /** GET /argos/suite/connect/status → {state: idle|pending|connected|failed, account?, error?, hint?} */
+  suiteConnectStatus(): Promise<InboxConnectState>;
 }
 
 function normalizeArgosStatus(body: unknown): ArgosStatus {
@@ -367,4 +371,7 @@ export const argosApi: ArgosApi = {
     return Array.isArray(list) ? (list as Brief[]) : [];
   },
   briefFileUrl: (b) => `${API_URL}/briefs/${encodeURIComponent(b.id)}/file`,
+  suiteConnect: () => post("/argos/suite/connect").then((r) => json<InboxConnectStart>(r)),
+  suiteConnectStatus: () =>
+    fetch(`${API_URL}/argos/suite/connect/status`, { cache: "no-store" }).then((r) => json<unknown>(r)).then(normalizeConnectState),
 };

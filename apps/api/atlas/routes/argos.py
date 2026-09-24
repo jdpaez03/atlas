@@ -250,3 +250,31 @@ def download_brief(brief_id: str, request: Request) -> FileResponse:
         raise HTTPException(404, "this brief has no file on disk")
     media = DOCX if path.suffix.lower() == ".docx" else "application/octet-stream"
     return FileResponse(path, media_type=media, filename=brief.deliverable.name if brief.deliverable else path.name)
+
+
+# ---------------------------------------------------------------------------
+# PAGA Suite sign-in (Entra): one-time consent for the Suite API scope (argos/suite_auth.py)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/argos/suite/connect")
+async def suite_connect() -> dict[str, Any]:
+    """Start the device-code sign-in for the Suite scope → {user_code, verification_uri, expires_in, message}."""
+    from ..argos.suite_auth import SuiteAuthError, configured_scope, get_auth
+
+    if not configured_scope():
+        raise HTTPException(409, "ATLAS_SUITE_SCOPE is not set — add the Suite API's Entra scope to .env")
+    try:
+        return await get_auth().start()
+    except SuiteAuthError as exc:
+        raise HTTPException(409, f"{exc} — {exc.hint}" if exc.hint else str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Could not start the Microsoft sign-in: {exc}") from exc
+
+
+@router.get("/argos/suite/connect/status")
+async def suite_connect_status() -> dict[str, Any]:
+    """{state: idle|pending|connected|failed, account?, flow?, error?, hint?}"""
+    from ..argos.suite_auth import get_auth
+
+    return get_auth().poll()

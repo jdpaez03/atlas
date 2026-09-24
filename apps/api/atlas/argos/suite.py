@@ -1,7 +1,9 @@
 """PAGA Suite client (docs/ARGOS.md § L10): read-only access to the L10 module.
 
     ATLAS_SUITE_URL          e.g. https://pagasuite.com/api
-    ATLAS_SUITE_TOKEN        an API token (sent as `Bearer <token>` in Authorization)
+    ATLAS_SUITE_SCOPE        preferred: the Suite API's Entra scope (e.g. api://<suite-app-id>/access_as_user);
+                             ATLAS signs in as the user through its Microsoft sign-in (suite_auth.py)
+    ATLAS_SUITE_TOKEN        fallback: a static API token (sent as `Bearer <token>` in Authorization)
     ATLAS_SUITE_AUTH_HEADER  optional header name (default Authorization; any other header gets the raw token)
     ATLAS_SUITE_TIMEOUT      optional seconds per request (default 20)
 
@@ -27,7 +29,8 @@ from .checks import CheckNotConfigured
 
 log = logging.getLogger("atlas.argos.suite")
 
-NOT_CONFIGURED_HINT = "Set ATLAS_SUITE_URL and ATLAS_SUITE_TOKEN in .env (a PAGA Suite API token)"
+NOT_CONFIGURED_HINT = ("Set ATLAS_SUITE_URL and ATLAS_SUITE_SCOPE in .env (the Suite API's Entra scope), "
+                       "then Connect PAGA Suite in Monitor")
 DEFAULT_TIMEOUT = 20.0
 
 # -- aliases (normalized: lowercase, no accents, '_' separators) -----------------------------------------------
@@ -272,10 +275,12 @@ def envelope_week(payload: Any) -> str:
 
 
 class SuiteClient:
-    def __init__(self, base_url: str, token: str, *, auth_header: str = "Authorization",
-                 timeout: float = DEFAULT_TIMEOUT, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(self, base_url: str, token: str = "", *, auth_header: str = "Authorization",
+                 timeout: float = DEFAULT_TIMEOUT, transport: httpx.AsyncBaseTransport | None = None,
+                 auth: Any = None):
         self.base_url = base_url.rstrip("/")
         self.token = token
+        self.auth = auth  # a SuiteAuth (Entra sign-in); used instead of `token` when set
         self.auth_header = auth_header or "Authorization"
         self.timeout = timeout
         self._transport = transport
@@ -283,20 +288,34 @@ class SuiteClient:
 
     @classmethod
     def from_env(cls, transport: httpx.AsyncBaseTransport | None = None) -> SuiteClient:
+        from .suite_auth import configured_scope, get_auth
+
         url = os.getenv("ATLAS_SUITE_URL", "").strip()
         token = os.getenv("ATLAS_SUITE_TOKEN", "").strip()
-        if not url or not token:
-            missing = " and ".join(n for n, v in (("ATLAS_SUITE_URL", url), ("ATLAS_SUITE_TOKEN", token)) if not v)
+        scope = configured_scope()
+        if not url or not (token or scope):
+            missing = " and ".join(n for n, v in (("ATLAS_SUITE_URL", url),
+                                                   ("ATLAS_SUITE_SCOPE (or ATLAS_SUITE_TOKEN)", token or scope)) if not v)
             raise CheckNotConfigured(f"PAGA Suite not configured ({missing} missing)", NOT_CONFIGURED_HINT)
         try:
             timeout = float(os.getenv("ATLAS_SUITE_TIMEOUT", "") or DEFAULT_TIMEOUT)
         except ValueError:
             timeout = DEFAULT_TIMEOUT
         return cls(url, token, auth_header=os.getenv("ATLAS_SUITE_AUTH_HEADER", "").strip() or "Authorization",
-                   timeout=timeout, transport=transport)
+                   timeout=timeout, transport=transport, auth=get_auth() if scope else None)
 
-    def _headers(self) -> dict[str, str]:
-        value = self.token
+    async def _bearer(self) -> str:
+        if self.auth is None:
+            return self.token
+        from .suite_auth import SuiteAuthError
+
+        try:
+            return await self.auth.token()
+        except SuiteAuthError as exc:  # not signed in / no consent yet → a setup step, not a failure
+            raise CheckNotConfigured(f"PAGA Suite: {exc}", exc.hint or NOT_CONFIGURED_HINT) from exc
+
+    def _headers(self, value: str | None = None) -> dict[str, str]:
+        value = self.token if value is None else value
         if self.auth_header.lower() == "authorization" and not value.lower().startswith(("bearer ", "token ")):
             value = f"Bearer {value}"
         return {self.auth_header: value, "Accept": "application/json"}
@@ -305,14 +324,19 @@ class SuiteClient:
         url = f"{self.base_url}/{path.lstrip('/')}"
         where = f"PAGA Suite GET /{path.lstrip('/')}"
         try:
+            headers = self._headers(await self._bearer())
             async with httpx.AsyncClient(timeout=self.timeout, transport=self._transport,
-                                         headers=self._headers(), follow_redirects=True) as client:
+                                         headers=headers, follow_redirects=True) as client:
                 resp = await client.get(url)
         except httpx.TimeoutException as exc:
             raise SuiteError(f"{where} timed out after {self.timeout:g}s") from exc
         except httpx.HTTPError as exc:
             raise SuiteError(f"{where} failed: {type(exc).__name__}: {exc}") from exc
         if resp.status_code in (401, 403):
+            if self.auth is not None:
+                raise SuiteError(f"{where} was refused (HTTP {resp.status_code}): the Suite rejected ATLAS's "
+                                 "Microsoft token — check that its backend accepts tokens for ATLAS_SUITE_SCOPE "
+                                 "(audience = the Suite API) and that your user can access /l10")
             raise SuiteError(f"{where} was refused (HTTP {resp.status_code}): check ATLAS_SUITE_TOKEN"
                              + ("" if self.auth_header.lower() == "authorization"
                                 else f" and ATLAS_SUITE_AUTH_HEADER ({self.auth_header})"))

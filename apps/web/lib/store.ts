@@ -375,6 +375,8 @@ export function useAtlas() {
       buildBrief: () => t().buildBrief(),
       briefs: () => t().briefs(),
       briefFileUrl: (b) => transportRef.current?.argos.briefFileUrl(b),
+      suiteConnect: () => t().suiteConnect(),
+      suiteConnectStatus: () => t().suiteConnectStatus(),
     };
   }, []);
 
