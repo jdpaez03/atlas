@@ -284,6 +284,53 @@ def _text(path: Path, sheet: str | None) -> tuple[str, str]:
 
 
 def _pdf(path: Path, sheet: str | None) -> tuple[str, str]:
+    """PDF text with tables kept as rows: `a | b | c` per row (pdfplumber), prose outside tables as text.
+
+    pypdf is the fallback (e.g. for PDFs pdfplumber can't parse). Measured on sample files: pypdf put
+    every table cell on its own line (columns lost); pdfplumber keeps columns at similar token cost."""
+    try:
+        import pdfplumber
+    except ImportError:  # pragma: no cover
+        return _pdf_pypdf(path)
+    try:
+        pdf = pdfplumber.open(str(path))
+    except Exception as exc:
+        if "password" in str(exc).lower() or "encrypt" in type(exc).__name__.lower():
+            raise FileAccessError(f"'{path.name}' is password-protected") from exc
+        return _pdf_pypdf(path)
+    sink = _Sink()
+    with pdf:
+        n = len(pdf.pages)
+        for i, page in enumerate(pdf.pages, 1):
+            if not sink.add(f"--- Page {i} ---"):
+                break
+            try:
+                tables = page.find_tables()
+            except Exception:  # noqa: BLE001 — a bad table layout must not block the page text
+                tables = []
+            boxes = [t.bbox for t in tables]
+
+            def outside(obj: dict[str, Any], boxes: list[Any] = boxes) -> bool:
+                x, top = obj.get("x0", 0), obj.get("top", 0)
+                return not any(b[0] <= x <= b[2] and b[1] <= top <= b[3] for b in boxes)
+
+            prose = (page.filter(outside) if boxes else page).extract_text() or ""
+            if not sink.add(prose.strip()):
+                break
+            for t in tables:
+                rows = [
+                    " | ".join(re.sub(r"\s+", " ", c or "").strip() for c in row)
+                    for row in t.extract() if any((c or "").strip() for c in row)
+                ]
+                if rows and not sink.add("[table]\n" + "\n".join(rows)):
+                    break
+    text = sink.text()
+    if not re.sub(r"--- Page \d+ ---|\[table\]|\s", "", text):
+        text += "\n[no extractable text: the PDF may be scanned images]"
+    return text, f"pdf, {n} pages"
+
+
+def _pdf_pypdf(path: Path) -> tuple[str, str]:
     from pypdf import PdfReader
 
     reader = PdfReader(str(path))
