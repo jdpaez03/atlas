@@ -86,8 +86,10 @@ export type EventType =
   | "evidence.recorded"
   | "followup.upserted"
   | "draft.upserted"
+  | "digest.ready"
   | "log";
 export type Priority2 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type Priority3 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
  * via the `definition` "AdapterType".
@@ -132,7 +134,7 @@ export type MissionPhase1 =
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
  * via the `definition` "Priority".
  */
-export type Priority3 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type Priority4 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
  * via the `definition` "TaskStatus".
@@ -163,6 +165,7 @@ export interface AtlasContracts {
   Evidence?: Evidence;
   FollowUp?: FollowUp;
   EmailDraft?: EmailDraft;
+  Digest?: Digest;
   WorldState?: WorldState;
 }
 /**
@@ -572,6 +575,60 @@ export interface EmailDraft {
   updated_at: string;
 }
 /**
+ * A CC briefing produced by an inbox scan (docs/INBOX.md §4).
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "Digest".
+ */
+export interface Digest {
+  id: string;
+  node: string;
+  mission_id: string | null;
+  window_start: string | null;
+  window_end: string | null;
+  /**
+   * ≤ 3 lines: what matters most
+   */
+  headline: string[];
+  threads: DigestThread[];
+  /**
+   * CC emails excluded by rules or as automated
+   */
+  skipped: number;
+  created_at: string;
+}
+/**
+ * One conversation where the user is only in CC, summarized.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "DigestThread".
+ */
+export interface DigestThread {
+  conversation_id: string;
+  subject: string;
+  /**
+   * from the user's local project keywords
+   */
+  project: string | null;
+  participants: string[];
+  /**
+   * 3-5 bullets: what happened
+   */
+  summary: string[];
+  decisions: string[];
+  /**
+   * key numbers with their context
+   */
+  figures: string[];
+  /**
+   * what someone asked the user, if anything
+   */
+  asks_me: string | null;
+  importance: Priority3;
+  messages: EmailRef[];
+  followup_id: string | null;
+}
+/**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
  * via the `definition` "WorldState".
  */
@@ -589,5 +646,6 @@ export interface WorldState {
   evidence: Evidence[];
   followups: FollowUp[];
   drafts: EmailDraft[];
+  digests: Digest[];
   last_seq: number;
 }

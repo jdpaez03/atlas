@@ -426,6 +426,36 @@ class EmailDraft(AtlasModel):
     updated_at: datetime = Field(default_factory=_now)
 
 
+class DigestThread(AtlasModel):
+    """One conversation where the user is only in CC, summarized."""
+
+    conversation_id: str
+    subject: str
+    project: str | None = Field(default=None, description="from the user's local project keywords")
+    participants: list[str] = Field(default_factory=list)
+    summary: list[str] = Field(default_factory=list, description="3-5 bullets: what happened")
+    decisions: list[str] = Field(default_factory=list)
+    figures: list[str] = Field(default_factory=list, description="key numbers with their context")
+    asks_me: str | None = Field(default=None, description="what someone asked the user, if anything")
+    importance: Priority = Priority.MEDIUM
+    messages: list[EmailRef] = Field(default_factory=list)
+    followup_id: str | None = None
+
+
+class Digest(AtlasModel):
+    """A CC briefing produced by an inbox scan (docs/INBOX.md §4)."""
+
+    id: str = Field(default_factory=lambda: _id("dig"))
+    node: str = "corporate"
+    mission_id: str | None = None
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+    headline: list[str] = Field(default_factory=list, description="≤ 3 lines: what matters most")
+    threads: list[DigestThread] = Field(default_factory=list)
+    skipped: int = Field(default=0, description="CC emails excluded by rules or as automated")
+    created_at: datetime = Field(default_factory=_now)
+
+
 # ---------------------------------------------------------------------------
 # Human in the loop
 # ---------------------------------------------------------------------------
@@ -468,6 +498,7 @@ class EventType(str, Enum):
     EVIDENCE_RECORDED = "evidence.recorded"
     FOLLOWUP_UPSERTED = "followup.upserted"
     DRAFT_UPSERTED = "draft.upserted"
+    DIGEST_READY = "digest.ready"
     LOG = "log"
 
 
@@ -504,4 +535,5 @@ class WorldState(AtlasModel):
     evidence: list[Evidence] = Field(default_factory=list)
     followups: list[FollowUp] = Field(default_factory=list)
     drafts: list[EmailDraft] = Field(default_factory=list)
+    digests: list[Digest] = Field(default_factory=list)
     last_seq: int = 0

@@ -743,6 +743,185 @@
       "title": "Confidence",
       "type": "string"
     },
+    "Digest": {
+      "description": "A CC briefing produced by an inbox scan (docs/INBOX.md \u00a74).",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "node": {
+          "default": "corporate",
+          "type": "string"
+        },
+        "mission_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "window_start": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "window_end": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "headline": {
+          "description": "\u2264 3 lines: what matters most",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "threads": {
+          "items": {
+            "$ref": "#/$defs/DigestThread"
+          },
+          "type": "array"
+        },
+        "skipped": {
+          "default": 0,
+          "description": "CC emails excluded by rules or as automated",
+          "type": "integer"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "node",
+        "mission_id",
+        "window_start",
+        "window_end",
+        "headline",
+        "threads",
+        "skipped",
+        "created_at"
+      ],
+      "title": "Digest",
+      "type": "object"
+    },
+    "DigestThread": {
+      "description": "One conversation where the user is only in CC, summarized.",
+      "properties": {
+        "conversation_id": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "project": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "from the user's local project keywords"
+        },
+        "participants": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "description": "3-5 bullets: what happened",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "decisions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "figures": {
+          "description": "key numbers with their context",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "asks_me": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "what someone asked the user, if anything"
+        },
+        "importance": {
+          "$ref": "#/$defs/Priority",
+          "default": "MEDIUM"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/EmailRef"
+          },
+          "type": "array"
+        },
+        "followup_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "conversation_id",
+        "subject",
+        "project",
+        "participants",
+        "summary",
+        "decisions",
+        "figures",
+        "asks_me",
+        "importance",
+        "messages",
+        "followup_id"
+      ],
+      "title": "DigestThread",
+      "type": "object"
+    },
     "DivisionDefinition": {
       "description": "A team of specialist agents shown as one expandable unit (e.g. the EOS division).",
       "properties": {
@@ -972,6 +1151,7 @@
         "evidence.recorded",
         "followup.upserted",
         "draft.upserted",
+        "digest.ready",
         "log"
       ],
       "title": "EventType",
@@ -1740,6 +1920,12 @@
           },
           "type": "array"
         },
+        "digests": {
+          "items": {
+            "$ref": "#/$defs/Digest"
+          },
+          "type": "array"
+        },
         "last_seq": {
           "default": 0,
           "type": "integer"
@@ -1759,6 +1945,7 @@
         "evidence",
         "followups",
         "drafts",
+        "digests",
         "last_seq"
       ],
       "title": "WorldState",
@@ -1809,6 +1996,9 @@
     },
     "EmailDraft": {
       "$ref": "#/$defs/EmailDraft"
+    },
+    "Digest": {
+      "$ref": "#/$defs/Digest"
     },
     "WorldState": {
       "$ref": "#/$defs/WorldState"

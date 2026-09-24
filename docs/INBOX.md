@@ -70,3 +70,32 @@ A **Follow-ups** panel (new; a tab or panel in the Command Center):
 - A **Draft review** drawer/modal shows the editable to/cc/subject/body, with Approve and Discard. After approval it shows "Open in Outlook" (outlook_drafts) or "Download .eml" (eml).
 - An **Inbox status** chip in the header shows: not connected (click → connect flow with the device code shown large, plus the link to microsoft.com/devicelogin), connected as …, last scan, next scan, and a "Scan now" button.
 - The activity feed shows `followup.upserted` / `draft.upserted` tagged `FUP` / `DRF`.
+
+## 4. CC digest
+
+A briefing on the emails where the user is **in CC but not in To** (and isn't the sender), produced with every scan.
+Contracts: `Digest`, `DigestThread` (`core/models.py`), event `digest.ready` (`{digest}`), `WorldState.digests`.
+
+**Selection** (engine): the candidates are the scan's new messages where one of the user's addresses (`ATLAS_MAIL_ME` + the
+signed-in account) is in `cc` and none is in `to`/sender. Automated mail is dropped (`noreply`, `no-reply`,
+`notifications`, `List-Unsubscribe`-style senders, calendar notices). Then the optional **local rules file**
+`<ATLAS_LOCAL_DIR>/inbox/digest_rules.yaml` applies (private, never in the repo; an example is written on
+first run if the file is missing):
+```yaml
+include_to_from: []          # also digest emails *to* me from these senders (e.g. a board member's weekly update)
+exclude_senders: []          # address or domain substrings
+include_keywords: []         # if set, keep only CC emails whose subject/body contains one
+exclude_keywords: []
+projects:                    # tag threads by keyword (subject/body, case-insensitive)
+  Example: [keyword1, keyword2]
+max_threads: 25
+```
+**Summaries**: the messages are grouped by `conversation_id` (falling back to normalized subject). HERMES then calls
+`summarize_threads {headline[≤3], threads:[{conversation_id, summary[3-5], decisions[], figures[], asks_me?,
+importance}]}` per ≤ 8 threads. Figures must appear verbatim in the emails, and `asks_me` is set only for an explicit
+request to the user. A thread with `asks_me` also creates or updates a REQUEST_TO_ME follow-up (and gets its
+`followup_id`). A scan with no candidates emits no digest. The mission report adds "CC digest: N threads".
+**API**: `GET /digests?limit=` (newest first) and `GET /digests/{id}`. The privacy rule is unchanged: bodies are never
+persisted; only the summaries and the `EmailRef`s are.
+
+**UI**: a **Digest** tab in the Follow-ups view. It shows the latest digest first: the headline, then threads grouped by project (untagged last), each with an importance chip, "asks you" badge (links to its follow-up), bullets, decisions, figures, and the source emails (sender · date, excerpt on hover, Open in Outlook). A picker lists earlier digests. The activity feed tags `digest.ready` as `DIG`.

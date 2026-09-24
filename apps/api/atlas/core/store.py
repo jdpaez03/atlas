@@ -49,6 +49,7 @@ from .models import (
     Attachment,
     Claim,
     Confidence,
+    Digest,
     EmailDraft,
     EventType,
     Evidence,
@@ -101,6 +102,7 @@ _COLLECTIONS: dict[str, tuple[str, type[BaseModel], str]] = {
     "evidence": ("evidence", Evidence, "id"),
     "followup": ("followups", FollowUp, "id"),
     "draft": ("drafts", EmailDraft, "id"),
+    "digest": ("digests", Digest, "id"),
 }
 
 
