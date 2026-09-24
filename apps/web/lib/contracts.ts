@@ -258,6 +258,8 @@ export interface Mission {
   id: string;
   objective: string;
   node: string;
+  mode: "simulated" | "live";
+  usage: Usage;
   context: string | null;
   phase: MissionPhase;
   priority: Priority;
@@ -265,6 +267,19 @@ export interface Mission {
   final_report_id: string | null;
   created_at: string;
   closed_at: string | null;
+}
+/**
+ * Token usage and estimated cost (USD) for a mission or agent.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "Usage".
+ */
+export interface Usage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  llm_calls: number;
+  est_cost_usd: number;
 }
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema

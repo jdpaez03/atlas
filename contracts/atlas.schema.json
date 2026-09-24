@@ -790,6 +790,17 @@
           "default": "corporate",
           "type": "string"
         },
+        "mode": {
+          "default": "simulated",
+          "enum": [
+            "simulated",
+            "live"
+          ],
+          "type": "string"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        },
         "context": {
           "anyOf": [
             {
@@ -847,6 +858,8 @@
         "id",
         "objective",
         "node",
+        "mode",
+        "usage",
         "context",
         "phase",
         "priority",
@@ -1170,6 +1183,40 @@
       ],
       "title": "TaskStatus",
       "type": "string"
+    },
+    "Usage": {
+      "description": "Token usage and estimated cost (USD) for a mission or agent.",
+      "properties": {
+        "input_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "cache_read_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "llm_calls": {
+          "default": 0,
+          "type": "integer"
+        },
+        "est_cost_usd": {
+          "default": 0.0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "llm_calls",
+        "est_cost_usd"
+      ],
+      "title": "Usage",
+      "type": "object"
     },
     "WorldState": {
       "properties": {

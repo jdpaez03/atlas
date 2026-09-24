@@ -245,10 +245,22 @@ class Task(AtlasModel):
     completed_at: datetime | None = None
 
 
+class Usage(AtlasModel):
+    """Token usage and estimated cost (USD) for a mission or agent."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    llm_calls: int = 0
+    est_cost_usd: float = 0.0
+
+
 class Mission(AtlasModel):
     id: str = Field(default_factory=lambda: _id("msn"))
     objective: str
     node: str = "corporate"
+    mode: Literal["simulated", "live"] = "simulated"
+    usage: Usage = Field(default_factory=Usage)
     context: str | None = None
     phase: MissionPhase = MissionPhase.OBJECTIVE
     priority: Priority = Priority.MEDIUM

@@ -575,6 +575,8 @@ export function mockTransport({ speed = 1 }: { speed?: number } = {}): Transport
         id: rid("msn"),
         objective: body.objective?.trim() || scenario.objective,
         node: body.node,
+        mode: "simulated",
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, llm_calls: 0, est_cost_usd: 0 },
         context: scenario.title,
         phase: "OBJECTIVE",
         priority: "HIGH",
