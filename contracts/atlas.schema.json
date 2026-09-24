@@ -437,6 +437,150 @@
       "title": "AgentStatus",
       "type": "string"
     },
+    "Alert": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "node": {
+          "default": "corporate",
+          "type": "string"
+        },
+        "check": {
+          "description": "which check raised it: dashboards | l10 | rocks | \u2026",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "missing_report",
+            "identical_report",
+            "moved_date",
+            "removed_row",
+            "kpi_mismatch",
+            "value_change",
+            "overdue_todo",
+            "unreported_todo",
+            "stale_issue",
+            "rock_failed",
+            "rock_at_risk",
+            "other"
+          ],
+          "type": "string"
+        },
+        "severity": {
+          "default": "MEDIUM",
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH"
+          ],
+          "type": "string"
+        },
+        "project": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "title": {
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/AlertEvidence"
+          },
+          "type": "array"
+        },
+        "fingerprint": {
+          "description": "stable key so the same finding updates instead of duplicating",
+          "type": "string"
+        },
+        "status": {
+          "default": "OPEN",
+          "enum": [
+            "OPEN",
+            "ACKNOWLEDGED",
+            "RESOLVED"
+          ],
+          "type": "string"
+        },
+        "first_seen": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "last_seen": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "mission_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "node",
+        "check",
+        "kind",
+        "severity",
+        "project",
+        "title",
+        "detail",
+        "evidence",
+        "fingerprint",
+        "status",
+        "first_seen",
+        "last_seen",
+        "mission_id"
+      ],
+      "title": "Alert",
+      "type": "object"
+    },
+    "AlertEvidence": {
+      "description": "A verbatim line from a source, so every alert can be checked.",
+      "properties": {
+        "source": {
+          "description": "file name, API resource or email subject",
+          "type": "string"
+        },
+        "version": {
+          "default": "single",
+          "enum": [
+            "previous",
+            "current",
+            "single"
+          ],
+          "type": "string"
+        },
+        "quote": {
+          "description": "verbatim text (\u2264 300 chars)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "version",
+        "quote"
+      ],
+      "title": "AlertEvidence",
+      "type": "object"
+    },
     "ApprovalReason": {
       "description": "Why a human must intervene (spec section 11).",
       "enum": [
@@ -693,6 +837,75 @@
         "download_url"
       ],
       "title": "Attachment",
+      "type": "object"
+    },
+    "Brief": {
+      "description": "The weekly L10 brief ARGOS prepares (a deliverable plus a structured summary).",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "node": {
+          "default": "corporate",
+          "type": "string"
+        },
+        "week": {
+          "description": "ISO week, e.g. 2026-W40",
+          "type": "string"
+        },
+        "headline": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sections": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
+        "deliverable": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Attachment"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mission_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "node",
+        "week",
+        "headline",
+        "sections",
+        "deliverable",
+        "mission_id",
+        "created_at"
+      ],
+      "title": "Brief",
       "type": "object"
     },
     "Claim": {
@@ -1152,6 +1365,9 @@
         "followup.upserted",
         "draft.upserted",
         "digest.ready",
+        "alert.upserted",
+        "rock.updated",
+        "brief.ready",
         "log"
       ],
       "title": "EventType",
@@ -1646,6 +1862,159 @@
       "title": "Priority",
       "type": "string"
     },
+    "RockStatus": {
+      "description": "A Rock tracked by ARGOS from the user's private rocks file.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "project": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quarter": {
+          "type": "string"
+        },
+        "due": {
+          "format": "date",
+          "type": "string"
+        },
+        "metric": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "e.g. 'unidades escrituradas'"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "current": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "start_date": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "default": "UNKNOWN",
+          "enum": [
+            "ON_TRACK",
+            "AT_RISK",
+            "OFF_TRACK",
+            "DONE",
+            "FAILED",
+            "UNKNOWN"
+          ],
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "type": "string"
+        },
+        "required_pace": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "units per week needed from today"
+        },
+        "observed_pace": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "units per week so far"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "owner",
+        "project",
+        "quarter",
+        "due",
+        "metric",
+        "target",
+        "current",
+        "start_value",
+        "start_date",
+        "status",
+        "reason",
+        "required_pace",
+        "observed_pace",
+        "updated_at"
+      ],
+      "title": "RockStatus",
+      "type": "object"
+    },
     "Task": {
       "properties": {
         "id": {
@@ -1926,6 +2295,24 @@
           },
           "type": "array"
         },
+        "alerts": {
+          "items": {
+            "$ref": "#/$defs/Alert"
+          },
+          "type": "array"
+        },
+        "rocks": {
+          "items": {
+            "$ref": "#/$defs/RockStatus"
+          },
+          "type": "array"
+        },
+        "briefs": {
+          "items": {
+            "$ref": "#/$defs/Brief"
+          },
+          "type": "array"
+        },
         "last_seq": {
           "default": 0,
           "type": "integer"
@@ -1946,6 +2333,9 @@
         "followups",
         "drafts",
         "digests",
+        "alerts",
+        "rocks",
+        "briefs",
         "last_seq"
       ],
       "title": "WorldState",
@@ -1999,6 +2389,15 @@
     },
     "Digest": {
       "$ref": "#/$defs/Digest"
+    },
+    "Alert": {
+      "$ref": "#/$defs/Alert"
+    },
+    "RockStatus": {
+      "$ref": "#/$defs/RockStatus"
+    },
+    "Brief": {
+      "$ref": "#/$defs/Brief"
     },
     "WorldState": {
       "$ref": "#/$defs/WorldState"

@@ -87,6 +87,9 @@ export type EventType =
   | "followup.upserted"
   | "draft.upserted"
   | "digest.ready"
+  | "alert.upserted"
+  | "rock.updated"
+  | "brief.ready"
   | "log";
 export type Priority2 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type Priority3 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
@@ -166,6 +169,9 @@ export interface AtlasContracts {
   FollowUp?: FollowUp;
   EmailDraft?: EmailDraft;
   Digest?: Digest;
+  Alert?: Alert;
+  RockStatus?: RockStatus;
+  Brief?: Brief;
   WorldState?: WorldState;
 }
 /**
@@ -630,6 +636,115 @@ export interface DigestThread {
 }
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "Alert".
+ */
+export interface Alert {
+  id: string;
+  node: string;
+  /**
+   * which check raised it: dashboards | l10 | rocks | …
+   */
+  check: string;
+  kind:
+    | "missing_report"
+    | "identical_report"
+    | "moved_date"
+    | "removed_row"
+    | "kpi_mismatch"
+    | "value_change"
+    | "overdue_todo"
+    | "unreported_todo"
+    | "stale_issue"
+    | "rock_failed"
+    | "rock_at_risk"
+    | "other";
+  severity: "LOW" | "MEDIUM" | "HIGH";
+  project: string | null;
+  title: string;
+  detail: string;
+  evidence: AlertEvidence[];
+  /**
+   * stable key so the same finding updates instead of duplicating
+   */
+  fingerprint: string;
+  status: "OPEN" | "ACKNOWLEDGED" | "RESOLVED";
+  first_seen: string;
+  last_seen: string;
+  mission_id: string | null;
+}
+/**
+ * A verbatim line from a source, so every alert can be checked.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "AlertEvidence".
+ */
+export interface AlertEvidence {
+  /**
+   * file name, API resource or email subject
+   */
+  source: string;
+  version: "previous" | "current" | "single";
+  /**
+   * verbatim text (≤ 300 chars)
+   */
+  quote: string;
+}
+/**
+ * A Rock tracked by ARGOS from the user's private rocks file.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "RockStatus".
+ */
+export interface RockStatus {
+  id: string;
+  title: string;
+  owner: string;
+  project: string | null;
+  quarter: string;
+  due: string;
+  /**
+   * e.g. 'unidades escrituradas'
+   */
+  metric: string | null;
+  target: number | null;
+  current: number | null;
+  start_value: number | null;
+  start_date: string | null;
+  status: "ON_TRACK" | "AT_RISK" | "OFF_TRACK" | "DONE" | "FAILED" | "UNKNOWN";
+  reason: string;
+  /**
+   * units per week needed from today
+   */
+  required_pace: number | null;
+  /**
+   * units per week so far
+   */
+  observed_pace: number | null;
+  updated_at: string;
+}
+/**
+ * The weekly L10 brief ARGOS prepares (a deliverable plus a structured summary).
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "Brief".
+ */
+export interface Brief {
+  id: string;
+  node: string;
+  /**
+   * ISO week, e.g. 2026-W40
+   */
+  week: string;
+  headline: string[];
+  sections: {
+    [k: string]: string[];
+  };
+  deliverable: Attachment | null;
+  mission_id: string | null;
+  created_at: string;
+}
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
  * via the `definition` "WorldState".
  */
 export interface WorldState {
@@ -647,5 +762,8 @@ export interface WorldState {
   followups: FollowUp[];
   drafts: EmailDraft[];
   digests: Digest[];
+  alerts: Alert[];
+  rocks: RockStatus[];
+  briefs: Brief[];
   last_seq: number;
 }

@@ -457,6 +457,73 @@ class Digest(AtlasModel):
 
 
 # ---------------------------------------------------------------------------
+# Monitoring (ARGOS): alerts, Rocks, weekly brief (docs/ARGOS.md)
+# ---------------------------------------------------------------------------
+
+
+class AlertEvidence(AtlasModel):
+    """A verbatim line from a source, so every alert can be checked."""
+
+    source: str = Field(description="file name, API resource or email subject")
+    version: Literal["previous", "current", "single"] = "single"
+    quote: str = Field(description="verbatim text (≤ 300 chars)")
+
+
+class Alert(AtlasModel):
+    id: str = Field(default_factory=lambda: _id("alr"))
+    node: str = "corporate"
+    check: str = Field(description="which check raised it: dashboards | l10 | rocks | …")
+    kind: Literal[
+        "missing_report", "identical_report", "moved_date", "removed_row", "kpi_mismatch", "value_change",
+        "overdue_todo", "unreported_todo", "stale_issue", "rock_failed", "rock_at_risk", "other",
+    ]
+    severity: Literal["LOW", "MEDIUM", "HIGH"] = "MEDIUM"
+    project: str | None = None
+    title: str
+    detail: str = ""
+    evidence: list[AlertEvidence] = Field(default_factory=list)
+    fingerprint: str = Field(description="stable key so the same finding updates instead of duplicating")
+    status: Literal["OPEN", "ACKNOWLEDGED", "RESOLVED"] = "OPEN"
+    first_seen: datetime = Field(default_factory=_now)
+    last_seen: datetime = Field(default_factory=_now)
+    mission_id: str | None = None
+
+
+class RockStatus(AtlasModel):
+    """A Rock tracked by ARGOS from the user's private rocks file."""
+
+    id: str
+    title: str
+    owner: str
+    project: str | None = None
+    quarter: str
+    due: date
+    metric: str | None = Field(default=None, description="e.g. 'unidades escrituradas'")
+    target: float | None = None
+    current: float | None = None
+    start_value: float | None = None
+    start_date: date | None = None
+    status: Literal["ON_TRACK", "AT_RISK", "OFF_TRACK", "DONE", "FAILED", "UNKNOWN"] = "UNKNOWN"
+    reason: str = ""
+    required_pace: float | None = Field(default=None, description="units per week needed from today")
+    observed_pace: float | None = Field(default=None, description="units per week so far")
+    updated_at: datetime = Field(default_factory=_now)
+
+
+class Brief(AtlasModel):
+    """The weekly L10 brief ARGOS prepares (a deliverable plus a structured summary)."""
+
+    id: str = Field(default_factory=lambda: _id("brf"))
+    node: str = "corporate"
+    week: str = Field(description="ISO week, e.g. 2026-W40")
+    headline: list[str] = Field(default_factory=list)
+    sections: dict[str, list[str]] = Field(default_factory=dict)
+    deliverable: Attachment | None = None
+    mission_id: str | None = None
+    created_at: datetime = Field(default_factory=_now)
+
+
+# ---------------------------------------------------------------------------
 # Human in the loop
 # ---------------------------------------------------------------------------
 
@@ -499,6 +566,9 @@ class EventType(str, Enum):
     FOLLOWUP_UPSERTED = "followup.upserted"
     DRAFT_UPSERTED = "draft.upserted"
     DIGEST_READY = "digest.ready"
+    ALERT_UPSERTED = "alert.upserted"
+    ROCK_UPDATED = "rock.updated"
+    BRIEF_READY = "brief.ready"
     LOG = "log"
 
 
@@ -536,4 +606,7 @@ class WorldState(AtlasModel):
     followups: list[FollowUp] = Field(default_factory=list)
     drafts: list[EmailDraft] = Field(default_factory=list)
     digests: list[Digest] = Field(default_factory=list)
+    alerts: list[Alert] = Field(default_factory=list)
+    rocks: list[RockStatus] = Field(default_factory=list)
+    briefs: list[Brief] = Field(default_factory=list)
     last_seq: int = 0

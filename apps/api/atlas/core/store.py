@@ -43,11 +43,13 @@ from .models import (
     AgentReport,
     AgentState,
     AgentStatus,
+    Alert,
     ApprovalReason,
     ApprovalRequest,
     ApprovalState,
     AtlasEvent,
     Attachment,
+    Brief,
     Claim,
     Confidence,
     Digest,
@@ -60,6 +62,7 @@ from .models import (
     MissionPhase,
     MissionReport,
     Priority,
+    RockStatus,
     Task,
     TaskStatus,
     Usage,
@@ -104,6 +107,9 @@ _COLLECTIONS: dict[str, tuple[str, type[BaseModel], str]] = {
     "followup": ("followups", FollowUp, "id"),
     "draft": ("drafts", EmailDraft, "id"),
     "digest": ("digests", Digest, "id"),
+    "alert": ("alerts", Alert, "id"),
+    "rock": ("rocks", RockStatus, "id"),
+    "brief": ("briefs", Brief, "id"),
 }
 
 
