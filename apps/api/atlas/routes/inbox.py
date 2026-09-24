@@ -13,6 +13,8 @@
   GET   /drafts?status=&followup_id=     EmailDraft[] (newest first)
   POST  /drafts/{id}/decision            {decision: APPROVED|DISCARDED, subject?, body?, to?, cc?} -> EmailDraft
   GET   /drafts/{id}/eml                 the exported .eml (message/rfc822)
+  GET   /digests?limit=                  Digest[] (CC digests, newest first; default limit 20)
+  GET   /digests/{id}                    Digest
 """
 
 from __future__ import annotations
@@ -20,11 +22,11 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from ..core.models import EmailDraft, FollowUp, Mission, Priority
+from ..core.models import Digest, EmailDraft, FollowUp, Mission, Priority
 from ..core.store import StoreError
 from ..inbox.drafts import download_name, eml_path
 from ..inbox.engine import (
@@ -203,3 +205,21 @@ def download_eml(draft_id: str, request: Request) -> FileResponse:
     if draft.export != "eml" or not path.is_file():
         raise HTTPException(404, "this draft has no .eml export (approve it first)")
     return FileResponse(path, media_type="message/rfc822", filename=download_name(draft))
+
+
+# ---------------------------------------------------------------------------
+# CC digests (docs/INBOX.md §4)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/digests", response_model=list[Digest])
+def list_digests(request: Request, limit: int = Query(default=20, ge=1, le=200)) -> list[Digest]:
+    return get_inbox(request).store.digests(limit=limit)
+
+
+@router.get("/digests/{digest_id}", response_model=Digest)
+def get_digest(digest_id: str, request: Request) -> Digest:
+    try:
+        return get_inbox(request).store.digest(digest_id)
+    except StoreError as exc:
+        raise http_error(exc) from exc

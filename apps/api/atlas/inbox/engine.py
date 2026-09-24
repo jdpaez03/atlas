@@ -189,6 +189,9 @@ class ScanCounts:
     unreadable: list[str] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
     new_titles: list[str] = field(default_factory=list)
+    processed_now: list[MailMessage] = field(default_factory=list)  # new messages analyzed in this scan
+    digest_threads: int = 0
+    digest_skipped: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +427,10 @@ class InboxEngine:
                 await self._phase(mission_id, MissionPhase.DELEGATION)
                 await self._extract_all(scope, src, new, counts)
             self.state.save()
+            if counts.processed_now:
+                from .digest import run_digest  # docs/INBOX.md §4
+
+                await run_digest(self, scope, src, counts, window_start=since, window_end=started)
 
             await self._phase(mission_id, MissionPhase.VALIDATION)
             await scope.set_agent(atlas, AgentStatus.REVIEWING, activity="Checking which follow-ups are overdue")
@@ -541,6 +548,7 @@ class InboxEngine:
                     await self._apply_item(mid, item, m, body, counts)
                 for m, _ in readable:
                     self.state.mark_processed(m)
+                    counts.processed_now.append(m)
                 self.state.save()
             readable.clear()
             await s.update_task(task.id, progress=round(0.05 + 0.9 * (i + 1) / len(batches), 2))
@@ -616,7 +624,7 @@ class InboxEngine:
         return m.sender or None
 
     async def _apply_item(self, mission_id: str, item: dict[str, Any], m: MailMessage, body: str,
-                          counts: ScanCounts) -> None:
+                          counts: ScanCounts) -> FollowUp:
         kind = str(item["kind"]).upper()
         title = _short(str(item.get("title") or ""), 200)
         detail = str(item.get("detail") or "").strip()[:1000]
@@ -650,18 +658,19 @@ class InboxEngine:
             if newer and match.status == "WAITING" and kind == "THEIR_COMMITMENT" and due and due >= self.today():
                 changes["status"] = "OPEN"  # a new promised date: no longer overdue
             merged = match.model_copy(update=changes)
-            await self.store.upsert_followup(
+            merged = await self.store.upsert_followup(
                 merged, mission_id=mission_id, agent_id=HERMES,
                 summary=f"Follow-up updated · '{_short(merged.title)}' · newer email from {_person(m.sender)}",
             )
             counts.updated += 1
-            return
+            return merged
         f = FollowUp(node=NODE, kind=kind, title=title, detail=detail, counterpart=counterpart, due=due,
                      priority=priority, source=ref, mission_id=mission_id)
-        await self.store.upsert_followup(f, mission_id=mission_id, agent_id=HERMES)
+        f = await self.store.upsert_followup(f, mission_id=mission_id, agent_id=HERMES)
         counts.created += 1
         who = f" ({_person(counterpart)})" if counterpart else ""
         counts.new_titles.append(f"{f.kind}: {title}{who}" + (f" · due {due.isoformat()}" if due else ""))
+        return f
 
     def _match(self, kind: str, counterpart: str | None, title: str, m: MailMessage) -> FollowUp | None:
         """An open follow-up this item updates: same kind and (same conversation from another message, or a
@@ -829,6 +838,8 @@ class InboxEngine:
         )
         if c.unreadable:
             summary += f" · {len(c.unreadable)} unreadable"
+        if c.digest_threads:
+            summary += f"\nCC digest: {c.digest_threads} threads"
         attention = [f"Unreadable email: {u}" for u in c.unreadable] + list(c.failures)
         if c.drafts:
             attention.append(f"{c.drafts} follow-up draft(s) to review and approve (nothing was sent)")

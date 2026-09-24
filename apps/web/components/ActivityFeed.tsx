@@ -20,6 +20,7 @@ const KIND: Record<EventType, { tag: string; color: string }> = {
   "evidence.recorded": { tag: "EVD", color: "#2dd4bf" },
   "followup.upserted": { tag: "FUP", color: "#f0abfc" },
   "draft.upserted": { tag: "DRF", color: "#34d399" },
+  "digest.ready": { tag: "DIG", color: "#c4b5fd" },
   log: { tag: "LOG", color: "#64748b" },
 };
 

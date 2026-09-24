@@ -8,6 +8,7 @@ import type {
   AgentState,
   ApprovalRequest,
   AtlasEvent,
+  Digest,
   EmailDraft,
   Evidence,
   FollowUp,
@@ -37,6 +38,7 @@ export function emptyWorld(): WorldState {
     evidence: [],
     followups: [],
     drafts: [],
+    digests: [],
     last_seq: 0,
   };
 }
@@ -72,6 +74,7 @@ export function applyEvent(s: WorldState, e: AtlasEvent): WorldState {
   if (p.state) next.agent_states = upsertBy(s.agent_states, p.state as AgentState, (x) => x.agent_id);
   if (p.evidence) next.evidence = upsertBy(s.evidence ?? [], p.evidence as Evidence, byId);
   if (p.followup) next.followups = upsertBy(s.followups ?? [], p.followup as FollowUp, byId);
+  if (p.digest) next.digests = upsertBy(s.digests ?? [], p.digest as Digest, byId);
   if (p.draft) next.drafts = upsertBy(s.drafts ?? [], p.draft as EmailDraft, byId);
   if (p.approval) next.approvals = upsertBy(s.approvals, p.approval as ApprovalRequest, byId);
   if (p.message) {
@@ -230,7 +233,7 @@ function storeReducer(s: StoreState, a: Action): StoreState {
   switch (a.type) {
     case "snapshot":
       // Tolerate a pre-Phase-3 snapshot without `evidence`.
-      return { ...s, world: { ...a.world, evidence: a.world.evidence ?? [], followups: a.world.followups ?? [], drafts: a.world.drafts ?? [] }, loaded: true };
+      return { ...s, world: { ...a.world, evidence: a.world.evidence ?? [], followups: a.world.followups ?? [], drafts: a.world.drafts ?? [], digests: a.world.digests ?? [] }, loaded: true };
     case "event":
       return { ...s, world: applyEvent(s.world, a.event), feed: mergeFeed(s.feed, [a.event]) };
     case "backfill":

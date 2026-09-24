@@ -111,7 +111,19 @@ function SnoozeMenu({ current, onPick, onClose }: { current: string | null; onPi
 
 /* ------------------------------------------------------------------------------------------------ card */
 
-function FollowUpCard({ f, draft, now, actions }: { f: FollowUp; draft: EmailDraft | undefined; now: number; actions: FollowUpActions }) {
+function FollowUpCard({
+  f,
+  draft,
+  now,
+  actions,
+  highlight,
+}: {
+  f: FollowUp;
+  draft: EmailDraft | undefined;
+  now: number;
+  actions: FollowUpActions;
+  highlight?: boolean;
+}) {
   const [busy, setBusy] = useState<Busy>(null);
   const [err, setErr] = useState<string | null>(null);
   const [snooze, setSnooze] = useState(false);
@@ -144,8 +156,10 @@ function FollowUpCard({ f, draft, now, actions }: { f: FollowUp; draft: EmailDra
 
   return (
     <article
+      id={`fup-${f.id}`}
       className={cx(
-        "group/card @container relative rounded-lg border bg-black/20 p-3 transition",
+        "group/card @container relative scroll-mt-24 rounded-lg border bg-black/20 p-3 transition",
+        highlight && "ring-2 ring-amber-300/70 ring-offset-2 ring-offset-[#0a0f1c]",
         !open ? "border-edge/50 opacity-55" : overdue ? "border-red-500/40 bg-red-500/[0.04]" : "border-edge/80 hover:border-edge-2",
       )}
     >
@@ -308,16 +322,29 @@ export function FollowUpsBoard({
   drafts,
   actions,
   inboxAvailable,
+  switcher,
+  highlight,
   className,
 }: {
   followups: FollowUp[];
   drafts: EmailDraft[];
   actions: FollowUpActions;
   inboxAvailable: boolean;
+  /** the Board | Digest sub-switch */
+  switcher?: ReactNode;
+  /** a follow-up to scroll to and flash (from the Digest's "asks you") */
+  highlight?: string | null;
   className?: string;
 }) {
   const now = useNow(60_000);
   const [showClosed, setShowClosed] = useState(false);
+  useEffect(() => {
+    if (!highlight) return;
+    const f = followups.find((x) => x.id === highlight);
+    if (f && !isOpen(f)) setShowClosed(true);
+    const t = setTimeout(() => document.getElementById(`fup-${highlight}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 60);
+    return () => clearTimeout(t);
+  }, [highlight, followups]);
   const draftsById = new Map(drafts.map((d) => [d.id, d]));
   const counts = followupCounts(followups, now);
   const closed = followups.filter((f) => !isOpen(f)).length;
@@ -326,12 +353,15 @@ export function FollowUpsBoard({
   return (
     <section className={cx("panel flex min-w-0 flex-col", className)}>
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-edge/80 px-4 py-2.5">
+        <div className="flex items-center gap-3">
         <h2 className="label flex items-center gap-2 !text-slate-300">
           <span className="text-signal/60">10</span>
           <span className="text-signal/30">//</span>
           Follow-ups
-          <span className="normal-case tracking-normal text-mute">· from your work email</span>
+          <span className="hidden normal-case tracking-normal text-mute 2xl:inline">· from your work email</span>
         </h2>
+        {switcher}
+        </div>
         <div className="flex items-center gap-3 font-mono text-[10.5px] text-dim">
           <span>
             <span className="text-slate-200">{counts.open}</span> open
@@ -387,7 +417,7 @@ export function FollowUpsBoard({
                   {items.length === 0 ? (
                     <p className="px-2 py-6 text-center font-mono text-[10.5px] tracking-wide text-mute">Nothing here.</p>
                   ) : (
-                    items.map((f) => <FollowUpCard key={f.id} f={f} draft={f.draft_id ? draftsById.get(f.draft_id) : undefined} now={now} actions={actions} />)
+                    items.map((f) => <FollowUpCard key={f.id} f={f} draft={f.draft_id ? draftsById.get(f.draft_id) : undefined} now={now} actions={actions} highlight={highlight === f.id} />)
                   )}
                 </div>
               </div>

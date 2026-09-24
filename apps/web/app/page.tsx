@@ -5,6 +5,7 @@ import { ActivityFeed } from "@/components/ActivityFeed";
 import { AgentBoard, type DivisionGroup } from "@/components/AgentBoard";
 import { ApprovalQueue } from "@/components/ApprovalQueue";
 import { CollabGraph } from "@/components/CollabGraph";
+import { DigestView, FollowUpsTabs, type FollowUpsTab } from "@/components/Digest";
 import { DraftDrawer } from "@/components/DraftDrawer";
 import { FollowUpsBoard, type FollowUpActions } from "@/components/FollowUps";
 import { Header, type View } from "@/components/Header";
@@ -21,7 +22,8 @@ import { followupCounts, proposedDrafts } from "@/lib/followups";
 import { useAtlas } from "@/lib/store";
 import { STATUS, msgFrom, msgTo, useNow } from "@/lib/ui";
 
-const INBOX_EVENTS = new Set(["followup.upserted", "draft.upserted"]);
+const DIGEST_SEEN_KEY = "atlas.digest.lastSeen";
+const INBOX_EVENTS = new Set(["followup.upserted", "draft.upserted", "digest.ready"]);
 
 function initialView(): View {
   if (typeof window === "undefined") return "missions";
@@ -143,6 +145,46 @@ export default function CommandCenter() {
   }, []);
   const followups = useMemo(() => (world.followups ?? []).filter((f) => !nodeId || f.node === nodeId), [world.followups, nodeId]);
   const drafts = useMemo(() => (world.drafts ?? []).filter((d) => !nodeId || d.node === nodeId), [world.drafts, nodeId]);
+  /* ---- CC digest (docs/INBOX.md §4): Board | Digest, with an unread dot for a newer digest */
+  const digests = useMemo(
+    () => (world.digests ?? []).filter((d) => !nodeId || d.node === nodeId).sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    [world.digests, nodeId],
+  );
+  const [fuTab, setFuTab] = useState<FollowUpsTab>("board");
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("fu") === "digest") setFuTab("digest");
+  }, []);
+  const [digestSeen, setDigestSeen] = useState<string>("");
+  useEffect(() => {
+    try {
+      setDigestSeen(localStorage.getItem(DIGEST_SEEN_KEY) ?? "");
+    } catch {
+      /* storage blocked */
+    }
+  }, []);
+  const latestDigestAt = digests[0]?.created_at ?? "";
+  const digestUnread = !!latestDigestAt && latestDigestAt > digestSeen;
+  useEffect(() => {
+    if (view !== "followups" || fuTab !== "digest" || !latestDigestAt || latestDigestAt <= digestSeen) return;
+    setDigestSeen(latestDigestAt);
+    try {
+      localStorage.setItem(DIGEST_SEEN_KEY, latestDigestAt);
+    } catch {
+      /* storage blocked */
+    }
+  }, [view, fuTab, latestDigestAt, digestSeen]);
+  const [highlightFu, setHighlightFu] = useState<string | null>(null);
+  useEffect(() => {
+    if (!highlightFu) return;
+    const t = setTimeout(() => setHighlightFu(null), 2600);
+    return () => clearTimeout(t);
+  }, [highlightFu]);
+  const showFollowup = useCallback((id: string) => {
+    setFuTab("board");
+    setHighlightFu(id);
+  }, []);
+  const fuSwitch = <FollowUpsTabs tab={fuTab} onTab={setFuTab} unread={digestUnread} />;
+
   const toReview = useMemo(() => proposedDrafts(drafts).sort((a, b) => b.created_at.localeCompare(a.created_at)), [drafts]);
   const fuNow = useNow(60_000);
   const fuCounts = useMemo(() => followupCounts(followups, fuNow), [followups, fuNow]);
@@ -197,7 +239,19 @@ export default function CommandCenter() {
       {view === "followups" ? (
         <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_340px]">
-            <FollowUpsBoard followups={followups} drafts={drafts} actions={fuActions} inboxAvailable className="min-h-[560px]" />
+            {fuTab === "digest" ? (
+              <DigestView digests={digests} followups={followups} onAsk={showFollowup} switcher={fuSwitch} className="min-h-[560px]" />
+            ) : (
+              <FollowUpsBoard
+                followups={followups}
+                drafts={drafts}
+                actions={fuActions}
+                inboxAvailable
+                switcher={fuSwitch}
+                highlight={highlightFu}
+                className="min-h-[560px]"
+              />
+            )}
             <div className="flex min-w-0 flex-col gap-4">
               <ApprovalQueue approvals={approvals} agents={agents} decide={atlas.decide} drafts={toReview} onOpenDraft={setDraftId} />
               <ActivityFeed events={inboxEvents} agents={agents} className="h-[420px] xl:h-auto xl:min-h-[360px] xl:flex-1" />

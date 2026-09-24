@@ -24,7 +24,7 @@ export function Panel({
   return (
     <section className={cx("panel flex min-w-0 flex-col", className)} style={style}>
       <header className="flex items-center justify-between gap-3 border-b border-edge/80 px-4 py-2.5">
-        <h2 className="label flex items-center gap-2 !text-slate-300">
+        <h2 className="label flex items-center gap-2 whitespace-nowrap !text-slate-300">
           {code && <span className="text-signal/60">{code}</span>}
           <span className="text-signal/30">//</span>
           {title}

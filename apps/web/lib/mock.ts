@@ -181,6 +181,7 @@ class MockEngine {
       evidence: [],
       followups: this.inbox.followups,
       drafts: this.inbox.drafts,
+      digests: this.inbox.digests,
       last_seq: 0,
     };
   }

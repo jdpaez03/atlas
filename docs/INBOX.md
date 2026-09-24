@@ -95,6 +95,7 @@ max_threads: 25
 importance}]}` per ≤ 8 threads. Figures must appear verbatim in the emails, and `asks_me` is set only for an explicit
 request to the user. A thread with `asks_me` also creates or updates a REQUEST_TO_ME follow-up (and gets its
 `followup_id`). A scan with no candidates emits no digest. The mission report adds "CC digest: N threads".
+**Implementation notes** (deviations): the digest's `EmailRef`s carry **no excerpt** (an excerpt of a CC email would be raw body text; the thread bullets are the summary), so the UI's hover shows nothing for them. A figure is kept when it appears verbatim or when every number in it appears as-is in the thread's emails (the surrounding words may be the model's); other figures are dropped. Only messages the scan analyzed successfully are candidates, and `skipped` also counts CC emails dropped by the keyword rules.
 **API**: `GET /digests?limit=` (newest first) and `GET /digests/{id}`. The privacy rule is unchanged: bodies are never
 persisted; only the summaries and the `EmailRef`s are.
 

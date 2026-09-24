@@ -70,6 +70,14 @@ def _latest_attachment() -> str | None:
 async def brain(**kw: Any) -> Any:
     await asyncio.sleep(random.uniform(1.0, 2.5))
     tools, prompt = _tools(kw), call_text(kw)
+    if "summarize_threads" in tools:
+        convs = re.findall(r"##### conversation_id: (\S+)", prompt)
+        threads = [{"conversation_id": c, "summary": ["Avance de obra reportado en 62%.", "Se acordó revisar el programa el lunes."],
+                    "decisions": ["Revisar programa el lunes"], "figures": ["62%"],
+                    "asks_me": "Confirmar si el Scorecard incluye el avance de obra" if i == 0 else None,
+                    "importance": "HIGH" if i == 0 else "MEDIUM"} for i, c in enumerate(convs)]
+        return tool_use("summarize_threads", {"headline": ["Amāra reporta 62% de avance; revisión del programa el lunes."],
+                                              "threads": threads})
     if "record_followups" in tools:
         items = []
         for m in re.finditer(r"=== message_id: (\S+) \((SENT BY ME|RECEIVED)\) ===\n(.*?)=== end ===", prompt, re.DOTALL):

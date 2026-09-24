@@ -4,9 +4,11 @@
  *   ?inbox=disconnected  → Graph configured but not signed in (exercises the device-code flow)
  *   ?inbox=unconfigured  → no mail source configured
  *   ?inbox=none          → the backend has no inbox module (404 → the chip hides)
+ *   ?digest=none         → no seeded CC digest (empty Digest tab)
  */
 import type { DraftDecisionBody, FollowUpPatch, InboxApi, InboxConnectStart, InboxConnectState, InboxStatus } from "./api";
-import type { EmailDraft, EventType, FollowUp } from "./contracts";
+import type { Digest, EmailDraft, EventType, FollowUp } from "./contracts";
+import { digestFollowup, scanDigest, seedDigest } from "./mockDigest";
 
 type Emit = (type: EventType, payload: Record<string, unknown>, summary: string, agent: string | null) => void;
 
@@ -255,12 +257,17 @@ function eml(d: EmailDraft): string {
 export interface MockInbox {
   followups: FollowUp[];
   drafts: EmailDraft[];
+  digests: Digest[];
   api: InboxApi;
 }
 
 export function mockInbox(emit: Emit, speed: number): MockInbox {
   const mode = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("inbox") : null;
   const s = seed();
+  s.followups.push(digestFollowup());
+  // ?digest=none starts without a digest (empty state; "Scan now" still produces one).
+  const noDigest = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("digest") === "none";
+  const digests: Digest[] = noDigest ? [] : [seedDigest()];
   const followups = new Map(s.followups.map((f) => [f.id, f]));
   const drafts = new Map(s.drafts.map((d) => [d.id, d]));
   const later = (ms: number, fn: () => void) => setTimeout(fn, ms / speed);
@@ -320,6 +327,9 @@ export function mockInbox(emit: Emit, speed: number): MockInbox {
           },
         });
         putFollowup(f, `HERMES found a follow-up: ${f.title}`);
+        const dig = scanDigest(status.last_scan);
+        digests.push(dig);
+        emit("digest.ready", { digest: dig }, `HERMES published a CC digest — ${dig.threads.length} threads`, "hermes");
         status = { ...status, last_scan: iso(0), next_scan: nextSlot(), processed_count: status.processed_count + 7 };
         emit("log", {}, "Inbox scan complete — 7 emails read, 1 new follow-up", "hermes");
       });
@@ -403,5 +413,5 @@ export function mockInbox(emit: Emit, speed: number): MockInbox {
     },
   };
 
-  return { followups: s.followups, drafts: s.drafts, api };
+  return { followups: s.followups, drafts: s.drafts, digests, api };
 }

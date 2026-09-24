@@ -20,6 +20,7 @@ mutation so clients never have to derive anything):
     evidence.recorded                          {evidence}
     followup.upserted                          {followup}        inbox follow-up created/updated (docs/INBOX.md)
     draft.upserted                             {draft}           email draft proposed/edited/decided/exported
+    digest.ready                               {digest}          CC digest produced by an inbox scan
     log                                        {}                or {reset: true, agent_states: [...]}
 
 Persistence (docs/PHASE3.md B): when the bus has an `EventLog`, every event is stored; `restore()` folds
@@ -774,6 +775,28 @@ class WorldStore:
 
     def draft(self, draft_id: str) -> EmailDraft:
         return self._find(self._state.drafts, draft_id, "draft")
+
+    def digests(self, *, limit: int | None = None) -> list[Digest]:
+        """Newest first."""
+        items = sorted(self._state.digests, key=lambda d: d.created_at, reverse=True)
+        return items[:limit] if limit else items
+
+    def digest(self, digest_id: str) -> Digest:
+        return self._find(self._state.digests, digest_id, "digest")
+
+    async def upsert_digest(self, digest: Digest, *, mission_id: str | None = None,
+                            agent_id: str | None = None) -> Digest:
+        """Create or replace a CC digest (by id); emits digest.ready {digest}."""
+        self._check_node(digest.node)
+        _upsert(self._state.digests, digest)
+        n = len(digest.threads)
+        lead = digest.headline[0] if digest.headline else (digest.threads[0].subject if digest.threads else "")
+        await self._emit(
+            EventType.DIGEST_READY, f"CC digest · {n} thread{'s' if n != 1 else ''}" + (f" · {_clip(lead, 100)}"
+                                                                                     if lead else ""),
+            {"digest": digest}, mission_id=mission_id or digest.mission_id, agent_id=agent_id,
+        )
+        return digest
 
     async def upsert_followup(self, followup: FollowUp, *, summary: str | None = None,
                               mission_id: str | None = None, agent_id: str | None = None) -> FollowUp:
