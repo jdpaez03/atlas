@@ -8,7 +8,7 @@ The TypeScript types in `contracts/atlas.ts` are generated from these models
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import Enum
 from typing import Any, Literal
 from uuid import uuid4
@@ -240,7 +240,8 @@ class Evidence(AtlasModel):
     task_id: str | None = None
     agent_id: str
     kind: Literal[
-        "file_listed", "file_read", "file_written", "web_search", "web_fetch", "consult", "approval"
+        "file_listed", "file_read", "file_written", "web_search", "web_fetch", "consult", "approval",
+        "email_read", "draft_created",
     ]
     ref: str = Field(description="path, URL, agent id or approval id")
     detail: str = ""
@@ -375,6 +376,57 @@ class MissionReport(AtlasModel):
 
 
 # ---------------------------------------------------------------------------
+# Inbox: follow-ups and email drafts (docs/INBOX.md)
+# ---------------------------------------------------------------------------
+
+
+class EmailRef(AtlasModel):
+    """Minimal pointer to the source email. Full bodies are never stored."""
+
+    message_id: str
+    subject: str
+    sender: str
+    received_at: datetime | None = None
+    excerpt: str = Field(default="", description="the few lines that support the follow-up (≤ 400 chars)")
+    web_link: str | None = None
+
+
+class FollowUp(AtlasModel):
+    id: str = Field(default_factory=lambda: _id("fup"))
+    node: str = "corporate"
+    kind: Literal["MY_COMMITMENT", "THEIR_COMMITMENT", "AWAITING_REPLY", "REQUEST_TO_ME"]
+    title: str
+    detail: str = ""
+    counterpart: str | None = Field(default=None, description="the other person (name <email>)")
+    due: date | None = None
+    status: Literal["OPEN", "WAITING", "DONE", "DISMISSED"] = "OPEN"
+    priority: Priority = Priority.MEDIUM
+    source: EmailRef | None = None
+    draft_id: str | None = None
+    mission_id: str | None = Field(default=None, description="the inbox scan that found it")
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
+class EmailDraft(AtlasModel):
+    """A reply or follow-up ALFRED drafted. ATLAS never sends email."""
+
+    id: str = Field(default_factory=lambda: _id("drf"))
+    node: str = "corporate"
+    followup_id: str | None = None
+    to: list[str] = Field(default_factory=list)
+    cc: list[str] = Field(default_factory=list)
+    subject: str
+    body: str
+    in_reply_to: str | None = Field(default=None, description="source message id")
+    status: Literal["PROPOSED", "APPROVED", "DISCARDED", "EXPORTED"] = "PROPOSED"
+    export: Literal["eml", "outlook_drafts"] | None = None
+    download_url: str | None = None
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
+# ---------------------------------------------------------------------------
 # Human in the loop
 # ---------------------------------------------------------------------------
 
@@ -414,6 +466,8 @@ class EventType(str, Enum):
     APPROVAL_REQUESTED = "approval.requested"
     APPROVAL_DECIDED = "approval.decided"
     EVIDENCE_RECORDED = "evidence.recorded"
+    FOLLOWUP_UPSERTED = "followup.upserted"
+    DRAFT_UPSERTED = "draft.upserted"
     LOG = "log"
 
 
@@ -448,4 +502,6 @@ class WorldState(AtlasModel):
     mission_reports: list[MissionReport] = Field(default_factory=list)
     approvals: list[ApprovalRequest] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
+    followups: list[FollowUp] = Field(default_factory=list)
+    drafts: list[EmailDraft] = Field(default_factory=list)
     last_seq: int = 0

@@ -789,6 +789,172 @@
       "title": "DivisionDefinition",
       "type": "object"
     },
+    "EmailDraft": {
+      "description": "A reply or follow-up ALFRED drafted. ATLAS never sends email.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "node": {
+          "default": "corporate",
+          "type": "string"
+        },
+        "followup_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "to": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cc": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "in_reply_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "source message id"
+        },
+        "status": {
+          "default": "PROPOSED",
+          "enum": [
+            "PROPOSED",
+            "APPROVED",
+            "DISCARDED",
+            "EXPORTED"
+          ],
+          "type": "string"
+        },
+        "export": {
+          "anyOf": [
+            {
+              "enum": [
+                "eml",
+                "outlook_drafts"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "download_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "node",
+        "followup_id",
+        "to",
+        "cc",
+        "subject",
+        "body",
+        "in_reply_to",
+        "status",
+        "export",
+        "download_url",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "EmailDraft",
+      "type": "object"
+    },
+    "EmailRef": {
+      "description": "Minimal pointer to the source email. Full bodies are never stored.",
+      "properties": {
+        "message_id": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "sender": {
+          "type": "string"
+        },
+        "received_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "excerpt": {
+          "default": "",
+          "description": "the few lines that support the follow-up (\u2264 400 chars)",
+          "type": "string"
+        },
+        "web_link": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "message_id",
+        "subject",
+        "sender",
+        "received_at",
+        "excerpt",
+        "web_link"
+      ],
+      "title": "EmailRef",
+      "type": "object"
+    },
     "EventType": {
       "enum": [
         "mission.created",
@@ -804,6 +970,8 @@
         "approval.requested",
         "approval.decided",
         "evidence.recorded",
+        "followup.upserted",
+        "draft.upserted",
         "log"
       ],
       "title": "EventType",
@@ -840,7 +1008,9 @@
             "web_search",
             "web_fetch",
             "consult",
-            "approval"
+            "approval",
+            "email_read",
+            "draft_created"
           ],
           "type": "string"
         },
@@ -873,6 +1043,131 @@
         "at"
       ],
       "title": "Evidence",
+      "type": "object"
+    },
+    "FollowUp": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "node": {
+          "default": "corporate",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "MY_COMMITMENT",
+            "THEIR_COMMITMENT",
+            "AWAITING_REPLY",
+            "REQUEST_TO_ME"
+          ],
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "type": "string"
+        },
+        "counterpart": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "the other person (name <email>)"
+        },
+        "due": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "default": "OPEN",
+          "enum": [
+            "OPEN",
+            "WAITING",
+            "DONE",
+            "DISMISSED"
+          ],
+          "type": "string"
+        },
+        "priority": {
+          "$ref": "#/$defs/Priority",
+          "default": "MEDIUM"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EmailRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "draft_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mission_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "the inbox scan that found it"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "node",
+        "kind",
+        "title",
+        "detail",
+        "counterpart",
+        "due",
+        "status",
+        "priority",
+        "source",
+        "draft_id",
+        "mission_id",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "FollowUp",
       "type": "object"
     },
     "MessageType": {
@@ -1433,6 +1728,18 @@
           },
           "type": "array"
         },
+        "followups": {
+          "items": {
+            "$ref": "#/$defs/FollowUp"
+          },
+          "type": "array"
+        },
+        "drafts": {
+          "items": {
+            "$ref": "#/$defs/EmailDraft"
+          },
+          "type": "array"
+        },
         "last_seq": {
           "default": 0,
           "type": "integer"
@@ -1450,6 +1757,8 @@
         "mission_reports",
         "approvals",
         "evidence",
+        "followups",
+        "drafts",
         "last_seq"
       ],
       "title": "WorldState",
@@ -1494,6 +1803,12 @@
     },
     "Evidence": {
       "$ref": "#/$defs/Evidence"
+    },
+    "FollowUp": {
+      "$ref": "#/$defs/FollowUp"
+    },
+    "EmailDraft": {
+      "$ref": "#/$defs/EmailDraft"
     },
     "WorldState": {
       "$ref": "#/$defs/WorldState"

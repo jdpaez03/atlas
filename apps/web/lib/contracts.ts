@@ -84,7 +84,10 @@ export type EventType =
   | "approval.requested"
   | "approval.decided"
   | "evidence.recorded"
+  | "followup.upserted"
+  | "draft.upserted"
   | "log";
+export type Priority2 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
  * via the `definition` "AdapterType".
@@ -129,7 +132,7 @@ export type MissionPhase1 =
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
  * via the `definition` "Priority".
  */
-export type Priority2 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type Priority3 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
  * via the `definition` "TaskStatus".
@@ -158,6 +161,8 @@ export interface AtlasContracts {
   ApprovalRequest?: ApprovalRequest;
   AtlasEvent?: AtlasEvent;
   Evidence?: Evidence;
+  FollowUp?: FollowUp;
+  EmailDraft?: EmailDraft;
   WorldState?: WorldState;
 }
 /**
@@ -416,7 +421,16 @@ export interface Evidence {
   mission_id: string;
   task_id: string | null;
   agent_id: string;
-  kind: "file_listed" | "file_read" | "file_written" | "web_search" | "web_fetch" | "consult" | "approval";
+  kind:
+    | "file_listed"
+    | "file_read"
+    | "file_written"
+    | "web_search"
+    | "web_fetch"
+    | "consult"
+    | "approval"
+    | "email_read"
+    | "draft_created";
   /**
    * path, URL, agent id or approval id
    */
@@ -492,6 +506,73 @@ export interface AtlasEvent {
 }
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "FollowUp".
+ */
+export interface FollowUp {
+  id: string;
+  node: string;
+  kind: "MY_COMMITMENT" | "THEIR_COMMITMENT" | "AWAITING_REPLY" | "REQUEST_TO_ME";
+  title: string;
+  detail: string;
+  /**
+   * the other person (name <email>)
+   */
+  counterpart: string | null;
+  due: string | null;
+  status: "OPEN" | "WAITING" | "DONE" | "DISMISSED";
+  priority: Priority2;
+  source: EmailRef | null;
+  draft_id: string | null;
+  /**
+   * the inbox scan that found it
+   */
+  mission_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+/**
+ * Minimal pointer to the source email. Full bodies are never stored.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "EmailRef".
+ */
+export interface EmailRef {
+  message_id: string;
+  subject: string;
+  sender: string;
+  received_at: string | null;
+  /**
+   * the few lines that support the follow-up (≤ 400 chars)
+   */
+  excerpt: string;
+  web_link: string | null;
+}
+/**
+ * A reply or follow-up ALFRED drafted. ATLAS never sends email.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "EmailDraft".
+ */
+export interface EmailDraft {
+  id: string;
+  node: string;
+  followup_id: string | null;
+  to: string[];
+  cc: string[];
+  subject: string;
+  body: string;
+  /**
+   * source message id
+   */
+  in_reply_to: string | null;
+  status: "PROPOSED" | "APPROVED" | "DISCARDED" | "EXPORTED";
+  export: ("eml" | "outlook_drafts") | null;
+  download_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
  * via the `definition` "WorldState".
  */
 export interface WorldState {
@@ -506,5 +587,7 @@ export interface WorldState {
   mission_reports: MissionReport[];
   approvals: ApprovalRequest[];
   evidence: Evidence[];
+  followups: FollowUp[];
+  drafts: EmailDraft[];
   last_seq: number;
 }
