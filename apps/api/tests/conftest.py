@@ -13,6 +13,9 @@ def _pin_llm_backend(monkeypatch):
     """
     monkeypatch.setenv("ATLAS_LLM_BACKEND", "api")
     monkeypatch.delenv("ATLAS_WEB_SEARCH", raising=False)
+    # the app's ARGOS scheduler would start a catch-up watch in every TestClient (docs/ARGOS.md); tests opt in
+    monkeypatch.setenv("ATLAS_ARGOS_SCHEDULE", "")
+    monkeypatch.setenv("ATLAS_ARGOS_BRIEF", "")
 
 
 @pytest.fixture(autouse=True)

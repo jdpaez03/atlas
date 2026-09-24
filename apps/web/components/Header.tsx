@@ -14,12 +14,13 @@ const CONN: Record<ConnStatus, { label: string; color: string; pulse: boolean }>
   mock: { label: "Simulated", color: "#a78bfa", pulse: true },
 };
 
-export type View = "missions" | "followups";
+export type View = "missions" | "followups" | "monitor";
 
-function ViewSwitch({ view, onView, counts }: { view: View; onView: (v: View) => void; counts: { open: number; overdue: number } }) {
+function ViewSwitch({ view, onView, counts, highAlerts }: { view: View; onView: (v: View) => void; counts: { open: number; overdue: number }; highAlerts: number }) {
   const tabs: { id: View; label: string; key: string }[] = [
     { id: "missions", label: "Missions", key: "1" },
     { id: "followups", label: "Follow-ups", key: "2" },
+    { id: "monitor", label: "Monitor", key: "3" },
   ];
   return (
     <div role="tablist" aria-label="View" className="flex shrink-0 items-center rounded-md border border-edge bg-black/30 p-0.5">
@@ -50,6 +51,11 @@ function ViewSwitch({ view, onView, counts }: { view: View; onView: (v: View) =>
                 )}
               </span>
             )}
+            {t.id === "monitor" && highAlerts > 0 && (
+              <span className="rounded-full bg-red-500/25 px-1.5 text-[9.5px] leading-[16px] tracking-normal text-red-200 tabular-nums" title={`${highAlerts} open HIGH alert${highAlerts === 1 ? "" : "s"}`}>
+                {highAlerts}
+              </span>
+            )}
             <kbd className="hidden rounded border border-edge px-1 text-[8.5px] leading-[13px] text-mute 2xl:inline">{t.key}</kbd>
           </button>
         );
@@ -66,6 +72,7 @@ export function Header({
   view,
   onView,
   counts,
+  highAlerts = 0,
   inbox,
 }: {
   nodes: NodeDefinition[];
@@ -75,6 +82,8 @@ export function Header({
   view: View;
   onView: (v: View) => void;
   counts: { open: number; overdue: number };
+  /** open HIGH alerts → red count on the Monitor tab */
+  highAlerts?: number;
   /** the inbox status chip (renders nothing when the backend has no inbox) */
   inbox?: ReactNode;
 }) {
@@ -96,7 +105,7 @@ export function Header({
           </div>
         </div>
 
-        <ViewSwitch view={view} onView={onView} counts={counts} />
+        <ViewSwitch view={view} onView={onView} counts={counts} highAlerts={highAlerts} />
 
         {/* node switcher */}
         <nav className="flex min-w-0 flex-1 items-center justify-center gap-1" aria-label="Nodes">

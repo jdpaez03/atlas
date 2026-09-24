@@ -1,0 +1,5 @@
+# Inbox CC digest rules (tests): the dashboards check reuses these project keywords.
+projects:
+  Amāra: [amara, amāra]
+  Nativa: [nativa, "torre n"]
+  Altavista: [altavista, "alta vista"]

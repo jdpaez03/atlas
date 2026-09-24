@@ -29,6 +29,7 @@ import type {
   TaskStatus,
   WorldState,
 } from "./contracts";
+import { mockArgos, type MockArgos } from "./mockArgos";
 import { mockInbox, type MockInbox } from "./mockInbox";
 import type { Transport } from "./store";
 
@@ -152,6 +153,7 @@ class MockEngine {
   lastReport: MissionReport | null = null;
   lastApprovalId: string | null = null;
   inbox: MockInbox;
+  argos: MockArgos;
 
   publishReport(report: MissionReport) {
     const m = this.mission!;
@@ -167,11 +169,29 @@ class MockEngine {
     const seed = seedHistory();
     for (const m of seed.missions) this.missions.set(m.id, m);
     this.inbox = mockInbox((type, payload, summary, agentId, missionId) => this.emit(type, payload, summary, agentId, missionId ?? null), speed);
+    this.argos = mockArgos((type, payload, summary, agentId, missionId) => this.emit(type, payload, summary, agentId, missionId ?? null), speed, {
+      putMission: (m, type, summary) => {
+        this.missions.set(m.id, m);
+        this.emit(type, { mission: m }, summary, "argos", m.id);
+      },
+      // not this.deliverable(): that one also lists the file on the running mission's report
+      deliverable: (name, content, mime = "text/plain") => ({
+        id: rid("att"),
+        name,
+        kind: "file",
+        uri: null,
+        content: null,
+        size_bytes: new Blob([content]).size,
+        download_url: typeof URL !== "undefined" ? URL.createObjectURL(new Blob([content], { type: mime })) : null,
+      }),
+    });
     this.world = {
       nodes: NODES,
       divisions: DIVISIONS,
       agents: AGENTS,
-      agent_states: AGENTS.map((a) => ({ agent_id: a.id, status: "IDLE", current_task_id: null, activity: null, collaborating_with: [], updated_at: ts })),
+      agent_states: AGENTS.map((a) =>
+        a.id === "argos" ? this.argos.idleState : { agent_id: a.id, status: "IDLE", current_task_id: null, activity: null, collaborating_with: [], updated_at: ts },
+      ),
       missions: seed.missions,
       tasks: seed.tasks,
       messages: [],
@@ -182,6 +202,9 @@ class MockEngine {
       followups: this.inbox.followups,
       drafts: this.inbox.drafts,
       digests: this.inbox.digests,
+      alerts: this.argos.alerts,
+      rocks: this.argos.rocks,
+      briefs: this.argos.briefs,
       last_seq: 0,
     };
   }
@@ -939,6 +962,7 @@ export function mockTransport({ speed = 1 }: { speed?: number } = {}): Transport
     config: async () => mockConfig(),
     availability: async () => AVAILABILITY,
     inbox: engine.inbox.api,
+    argos: engine.argos.api,
     async cancel(id: string) {
       const m = engine.mission;
       if (!m || m.id !== id) throw new Error("ATLAS API 404: mission not found");

@@ -9,6 +9,8 @@ or sent from one of the ATLAS_MAIL_ME addresses, counts as sent by the user.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import email
 import email.policy
 import hashlib
@@ -25,6 +27,7 @@ from typing import Any
 from atlas.core.models import EmailDraft
 
 from .base import (
+    AttachmentMeta,
     MailMessage,
     SourceStatus,
     address_of,
@@ -37,6 +40,9 @@ from .base import (
 log = logging.getLogger("atlas.inbox.folder")
 
 SUFFIXES = {".eml", ".msg", ".json"}
+# Folders next to a .json message where a flow may save its attachments: "<stem>/", "<stem>_attachments/",
+# "<stem>.attachments/" or "<stem> attachments/".
+_ATTACHMENT_DIRS = ("{stem}", "{stem}_attachments", "{stem}.attachments", "{stem} attachments")
 MAX_FILE_BYTES = 25 * 1024 * 1024
 _SENT_DIRS = {"sent", "sentitems", "sent items", "sent_items", "enviados", "elementos enviados"}
 
@@ -194,6 +200,58 @@ def _open_msg(path: Path):  # separated so tests can inject a fake (extract-msg 
     return extract_msg.openMsg(str(path))
 
 
+def _eml_attachments(m) -> list[tuple[int, Any]]:
+    """File attachments of a parsed email (inline images and attached messages are skipped)."""
+    out = []
+    for i, part in enumerate(m.iter_attachments()):
+        if not part.get_filename() or part.get_content_maintype() == "message":
+            continue
+        if part.get_content_disposition() == "inline" and part.get("Content-ID"):
+            continue  # an inline image referenced from the HTML body
+        out.append((i, part))
+    return out
+
+
+def _msg_attachments(m) -> list[tuple[int, Any]]:
+    out = []
+    for i, att in enumerate(getattr(m, "attachments", None) or []):
+        if getattr(att, "hidden", False) or not isinstance(getattr(att, "data", None), bytes):
+            continue  # hidden (inline) attachments and attached Outlook items
+        out.append((i, att))
+    return out
+
+
+def _json_attachments(data: dict) -> list[tuple[str, bytes, str]]:
+    """Attachments embedded by a Power Automate flow ("Include attachments": Name + base64 ContentBytes)."""
+    raw = _ci(data, "Attachments", "attachments")
+    out: list[tuple[str, bytes, str]] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict) or _ci(item, "IsInline", "isInline") is True:
+            continue
+        content = _ci(item, "ContentBytes", "contentBytes")
+        name = str(_ci(item, "Name", "name") or "").strip()
+        if not name or not isinstance(content, str):
+            continue
+        try:
+            payload = base64.b64decode(content, validate=False)
+        except (binascii.Error, ValueError):
+            continue
+        out.append((name, payload, str(_ci(item, "ContentType", "contentType") or "")))
+    return out
+
+
+def _sibling_attachment_files(path: Path) -> list[Path]:
+    """Files a flow saved next to a .json message (see _ATTACHMENT_DIRS)."""
+    out: list[Path] = []
+    for pattern in _ATTACHMENT_DIRS:
+        folder = path.parent / pattern.format(stem=path.stem)
+        if folder.is_dir():
+            out += sorted(p for p in folder.iterdir() if p.is_file() and not p.name.startswith((".", "~$")))
+    return out
+
+
 class _Parsed:
     __slots__ = ("body", "msg")
 
@@ -294,6 +352,78 @@ class FolderSource:
         parsed = self._parse(path)
         return trim_quoted(parsed.body) if parsed else ""
 
+    # -- attachments ------------------------------------------------------------------------------------------
+
+    async def list_attachments(self, message_id: str) -> list[AttachmentMeta]:
+        return await asyncio.to_thread(lambda: [meta for meta, _ in self._attachments_sync(message_id)])
+
+    async def download_attachment(self, message_id: str, attachment_id: str) -> bytes:
+        def load() -> bytes:
+            for meta, data in self._attachments_sync(message_id):
+                if meta.id == attachment_id:
+                    return data()
+            raise KeyError(f"attachment {attachment_id} not found in {message_id}")
+
+        return await asyncio.to_thread(load)
+
+    def _path_for(self, message_id: str) -> Path:
+        path = self._paths.get(message_id)
+        if path is not None and path.exists():
+            return path
+        for candidate in self._files():
+            try:
+                parsed = self._parse(candidate)
+            except Exception:  # noqa: BLE001, S112 — unreadable files were already logged by the scan
+                continue
+            if parsed and parsed.msg.id == message_id:
+                self._paths[message_id] = candidate
+                return candidate
+        raise KeyError(f"mail file for {message_id} not found")
+
+    def _attachments_sync(self, message_id: str) -> list[tuple[AttachmentMeta, Any]]:
+        """(meta, loader) pairs; the loader returns the bytes. Files are only read."""
+        path = self._path_for(message_id)
+        suffix = path.suffix.lower()
+        if suffix == ".eml":
+            with path.open("rb") as fh:
+                m = email.message_from_binary_file(fh, policy=email.policy.default)
+            out = []
+            for i, part in _eml_attachments(m):
+                data = part.get_payload(decode=True) or b""
+                out.append((AttachmentMeta(id=str(i), name=part.get_filename() or f"attachment-{i}",
+                                           size=len(data), content_type=part.get_content_type()),
+                            lambda data=data: data))
+            return out
+        if suffix == ".msg":
+            m = _open_msg(path)
+            try:
+                out = []
+                for i, att in _msg_attachments(m):
+                    data = att.data
+                    name = (getattr(att, "longFilename", None) or getattr(att, "shortFilename", None)
+                            or getattr(att, "displayName", None) or f"attachment-{i}")
+                    out.append((AttachmentMeta(id=str(i), name=str(name), size=len(data),
+                                               content_type=str(getattr(att, "mimetype", None) or "")),
+                                lambda data=data: data))
+                return out
+            finally:
+                close = getattr(m, "close", None)
+                if close:
+                    close()
+        if suffix == ".json":
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            if isinstance(data, dict) and isinstance(data.get("body"), dict) and "subject" not in data:
+                data = data["body"]
+            out = []
+            for i, (name, raw, ctype) in enumerate(_json_attachments(data) if isinstance(data, dict) else []):
+                out.append((AttachmentMeta(id=f"j{i}", name=name, size=len(raw), content_type=ctype),
+                            lambda raw=raw: raw))
+            for f in _sibling_attachment_files(path):
+                out.append((AttachmentMeta(id="f:" + f.name, name=f.name, size=f.stat().st_size),
+                            lambda f=f: f.read_bytes()))
+            return out
+        return []
+
     def _parse(self, path: Path) -> _Parsed | None:
         suffix = path.suffix.lower()
         if suffix == ".json":
@@ -307,7 +437,8 @@ class FolderSource:
     def _is_from_me(self, sender: str, path: Path) -> bool:
         return _in_sent_dir(path, self.root) or (address_of(sender) in self.me if self.me else False)
 
-    def _build(self, path: Path, *, id_: str | None, imid, conv, subject, sender, to, cc, when, link, body):
+    def _build(self, path: Path, *, id_: str | None, imid, conv, subject, sender, to, cc, when, link, body,
+               has_attachments: bool = False):
         received = when or datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
         msg = MailMessage(
             id=str(id_) if id_ else _file_id(path, self.root),
@@ -321,6 +452,7 @@ class FolderSource:
             is_from_me=self._is_from_me(sender, path),
             web_link=link or None,
             preview=make_preview(trim_quoted(body, max_chars=1000)),
+            has_attachments=has_attachments,
         )
         return _Parsed(msg, body)
 
@@ -351,6 +483,8 @@ class FolderSource:
             when=_parse_dt(_ci(data, "DateTimeReceived", "receivedDateTime", "sentDateTime", "Date")),
             link=_ci(data, "WebLink", "webLink"),
             body=body,
+            has_attachments=bool(_ci(data, "HasAttachments", "hasAttachments")) or bool(_json_attachments(data))
+            or bool(_sibling_attachment_files(path)),
         )
 
     def _parse_eml(self, path: Path) -> _Parsed:
@@ -374,6 +508,7 @@ class FolderSource:
             when=_parse_dt(str(m.get("Date", ""))),
             link=None,
             body=body,
+            has_attachments=bool(_eml_attachments(m)),
         )
 
     def _parse_msg(self, path: Path) -> _Parsed:
@@ -396,6 +531,7 @@ class FolderSource:
                 when=_parse_dt(m.date),
                 link=None,
                 body=body,
+                has_attachments=bool(_msg_attachments(m)),
             )
         finally:
             close = getattr(m, "close", None)

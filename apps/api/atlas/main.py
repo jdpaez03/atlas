@@ -20,6 +20,8 @@
   POST /reset                       clear all missions (dev only)
   Inbox (docs/INBOX.md, routes/inbox.py): /inbox/status, /inbox/scan, /inbox/connect[/status], /followups,
                                     /followups/{id}[/draft], /drafts, /drafts/{id}/decision, /drafts/{id}/eml
+  ARGOS (docs/ARGOS.md, routes/argos.py): /argos/status, /argos/run, /argos/brief, /alerts, /alerts/{id},
+                                    /rocks, /rocks/reload, /rocks/{id}, /briefs, /briefs/{id}[/file]
   WS   /ws?since=<seq>              replay events with seq > since, then live
 
 Run: `uv run python -m atlas` (required on Windows for the subscription backend, see atlas/__main__.py).
@@ -39,6 +41,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
+from .argos.engine import ArgosEngine
+from .argos.scheduler import ArgosScheduler
 from .core import paths
 from .core.db import EventLog
 from .core.events import EventBus
@@ -49,7 +53,7 @@ from .inbox.engine import InboxEngine
 from .inbox.scheduler import InboxScheduler
 from .inbox.sources import make_source
 from .live.orchestrator import LiveEngine
-from .routes import approvals, inbox, live, missions, stream, world
+from .routes import approvals, argos, inbox, live, missions, stream, world
 from .sim.runner import ScenarioLibrary, Simulator
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -94,6 +98,11 @@ async def lifespan(app: FastAPI):
     inbox_scheduler = InboxScheduler(inbox_engine)
     app.state.inbox = inbox_engine
     app.state.inbox_scheduler = inbox_scheduler
+    # docs/ARGOS.md: shares the inbox's run gate (never alongside a scan) and its mail source
+    argos_engine = ArgosEngine(store, live_engine, mail_factory=lambda: inbox_engine.source, gate=inbox_engine.gate)
+    argos_scheduler = ArgosScheduler(argos_engine)
+    app.state.argos = argos_engine
+    app.state.argos_scheduler = argos_scheduler
     n_scenarios = len(library.all())
     info = live_engine.backend_info()
     live_line = (
@@ -113,10 +122,14 @@ async def lifespan(app: FastAPI):
             agent_id=registry.orchestrator.id,
         )
     await inbox_scheduler.start()
+    await argos_scheduler.start()
+    await argos_engine.set_idle()
     try:
         yield
     finally:
+        await argos_scheduler.stop()
         await inbox_scheduler.stop()  # fast: cancels the sleep; a running scan is left for recover_interrupted
+        await argos_engine.stop()
         await inbox_engine.stop()
         # stop the engines without closing their missions: on the next start they come back interrupted
         await live_engine.stop_all()
@@ -150,4 +163,5 @@ app.include_router(missions.router)
 app.include_router(live.router)
 app.include_router(approvals.router)
 app.include_router(inbox.router)
+app.include_router(argos.router)
 app.include_router(stream.router)

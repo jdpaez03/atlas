@@ -10,7 +10,7 @@ work in parallel against it without colliding.
 | **1 · Command Center (simulated)** | Mission panel, Agent Board with live statuses, Task Board with dependencies, collaboration graph, activity feed, reports view, human-intervention queue. A scripted "real-estate investment" mission replays through the real event stream (mock adapter). | Full experience, clickable, fake agents | ✅ done |
 | **2 · Live orchestrator** | ATLAS decomposes objectives with Claude into a task DAG, delegates, runs SOFIA/ORACLE/ALFRED on the Claude API, structured messages between agents | Type an objective → real agents work live | ✅ done (Max plan or API key) |
 | **3 · Files, evidence, thread, history** | Sandboxed read access to your folders per node, attachments, real deliverables (md/csv/xlsx/docx), system-recorded evidence + unverified-claim check, mission thread with follow-up rounds and report versions, SQLite history that survives restarts | Attach a file → agents read it, write a deliverable, prove it; follow up in the thread | ✅ done |
-| **4 · Tools** | SOFIA web search/fetch, ARGOS scheduled checks + alerts, ALFRED document/spreadsheet generation | Real information in, real deliverables out | |
+| **4 · Tools & live data** | Web search (SOFIA/MERCATO), deliverables, Inbox (follow-ups, drafts, CC digest), ARGOS monitoring (dashboards from email week-over-week, L10 via PAGA Suite, Rocks rules, Monday L10 brief) | Real information in, real deliverables out, alerts with verbatim evidence | ✅ built · L10 needs a Suite token |
 | **5 · Modularity & quality** | External agents (http / mcp / cli adapters) live, AUDITOR agent, cost/token tracking, retries & error recovery | Add an agent = add a YAML file | |
 
 ## Parallel build plan (Phase 1 onward)
@@ -49,3 +49,8 @@ work in parallel against it without colliding.
   or a Power Automate → OneDrive folder when IT approval isn't available), turns commitments into follow-ups on the
   ATLAS board, and ALFRED drafts follow-ups. ATLAS never sends: approved drafts go to Outlook Drafts or an `.eml`.
   Email bodies are never stored (only sender, subject, date and a verbatim excerpt). Setup: docs/INBOX_SETUP.md.
+- 2026-09-24 · **ARGOS monitoring**: dashboards arrive as email attachments → saved privately, compared week over week
+  (identical/missing reports, moved dates, removed rows, KPI mismatches) with verbatim quotes from both weeks; L10 to-dos
+  and issues via the PAGA Suite API (read-only); Rocks from a private rocks.yaml with the dossier's rules (overdue = failed,
+  pace < 50% = at risk, two owners = no owner, no measurable = finding); Monday 07:30 L10 brief (.docx). A brief never
+  says "all clear" for a source it couldn't check.

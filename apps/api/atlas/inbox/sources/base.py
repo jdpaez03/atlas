@@ -30,6 +30,17 @@ class MailMessage:
     is_from_me: bool  # the user sent it (for AWAITING_REPLY / MY_COMMITMENT detection)
     web_link: str | None
     preview: str  # ≤ 255 chars
+    has_attachments: bool = False  # the message carries file attachments (Graph `hasAttachments`)
+
+
+@dataclass
+class AttachmentMeta:
+    """A file attached to a message (docs/ARGOS.md, dashboards check)."""
+
+    id: str  # stable within its message (Graph attachment id, or an index for folder files)
+    name: str
+    size: int = 0  # bytes (0 when unknown)
+    content_type: str = ""
 
 
 @dataclass
@@ -60,6 +71,25 @@ class MailSource(Protocol):
     async def create_outlook_draft(self, draft: EmailDraft) -> str | None:
         """Save the draft in Outlook's Drafts folder; returns its web link, or None if unsupported."""
         ...
+
+
+@runtime_checkable
+class AttachmentSource(MailSource, Protocol):
+    """A MailSource that can also read attachments (Graph and folder sources). Kept separate from MailSource so
+    sources without attachment support (and test fakes) still satisfy the base contract."""
+
+    async def list_attachments(self, message_id: str) -> list[AttachmentMeta]:
+        """The message's file attachments (inline images, attached items and references are skipped)."""
+        ...
+
+    async def download_attachment(self, message_id: str, attachment_id: str) -> bytes:
+        """The attachment's bytes. Raises MailSourceError / KeyError when it can't be read."""
+        ...
+
+
+def supports_attachments(source: object) -> bool:
+    return callable(getattr(source, "list_attachments", None)) and callable(
+        getattr(source, "download_attachment", None))
 
 
 class MailSourceError(RuntimeError):

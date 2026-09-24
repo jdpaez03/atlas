@@ -70,6 +70,25 @@ def _latest_attachment() -> str | None:
 async def brain(**kw: Any) -> Any:
     await asyncio.sleep(random.uniform(1.0, 2.5))
     tools, prompt = _tools(kw), call_text(kw)
+    if "record_dashboard_findings" in tools:
+        prev = prompt.split("===== PREVIOUS VERSION =====", 1)[1].split("===== END PREVIOUS =====", 1)[0]
+        cur = prompt.split("===== CURRENT VERSION =====", 1)[1].split("===== END CURRENT =====", 1)[0]
+        pl = next((ln.strip() for ln in prev.splitlines() if "Escrituraciones" in ln), None)
+        cl = next((ln.strip() for ln in cur.splitlines() if "Escrituraciones" in ln), None)
+        gone = next((ln.strip() for ln in prev.splitlines() if "Agua y Drenaje" in ln and ln not in cur), None)
+        findings = []
+        if pl and cl and pl != cl:
+            findings.append({"kind": "moved_date", "severity": "HIGH", "title": "Escrituraciones movida 30-sep → 30-oct",
+                             "detail": "El hito del Rock salió del trimestre sin declararse.",
+                             "evidence": [{"version": "previous", "quote": pl}, {"version": "current", "quote": cl}]})
+        if gone:
+            findings.append({"kind": "removed_row", "severity": "MEDIUM", "title": "Desapareció el renglón 'Contrato Agua y Drenaje'",
+                             "evidence": [{"version": "previous", "quote": gone}]})
+        findings.append({"kind": "value_change", "severity": "LOW", "title": "Cifra inventada (debe descartarse)",
+                         "evidence": [{"version": "current", "quote": "Escrituradas 99/51"}]})
+        return tool_use("record_dashboard_findings", {"findings": findings})
+    if "write_brief" in tools:
+        return text("(demo: no prose — the brief falls back to computed lines)")
     if "summarize_threads" in tools:
         convs = re.findall(r"##### conversation_id: (\S+)", prompt)
         threads = [{"conversation_id": c, "summary": ["Avance de obra reportado en 62%.", "Se acordó revisar el programa el lunes."],

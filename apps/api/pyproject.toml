@@ -22,6 +22,7 @@ dependencies = [
   "extract-msg>=0.56.1",
   "httpx>=0.28.1",
   "tzdata>=2026.4",
+  "ruamel-yaml>=0.19.1",
 ]
 
 [dependency-groups]

@@ -21,6 +21,9 @@ const KIND: Record<EventType, { tag: string; color: string }> = {
   "followup.upserted": { tag: "FUP", color: "#f0abfc" },
   "draft.upserted": { tag: "DRF", color: "#34d399" },
   "digest.ready": { tag: "DIG", color: "#c4b5fd" },
+  "alert.upserted": { tag: "ALR", color: "#f87171" },
+  "rock.updated": { tag: "RCK", color: "#fbbf24" },
+  "brief.ready": { tag: "BRF", color: "#fde68a" },
   log: { tag: "LOG", color: "#64748b" },
 };
 

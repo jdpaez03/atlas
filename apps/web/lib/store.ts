@@ -1,19 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { NO_LIVE_CONFIG, api, inboxApi, wsUrl, type InboxApi, type AtlasConfig, type Availability, type Decision, type LaunchMissionBody, type MissionSummary, type Scenario } from "./api";
+import { NO_LIVE_CONFIG, api, argosApi, inboxApi, wsUrl, type ArgosApi, type InboxApi, type AtlasConfig, type Availability, type Decision, type LaunchMissionBody, type MissionSummary, type Scenario } from "./api";
 import type {
   AgentMessage,
   AgentReport,
   AgentState,
+  Alert,
   ApprovalRequest,
   AtlasEvent,
+  Brief,
   Digest,
   EmailDraft,
   Evidence,
   FollowUp,
   Mission,
   MissionReport,
+  RockStatus,
   Task,
   WorldState,
 } from "./contracts";
@@ -39,6 +42,9 @@ export function emptyWorld(): WorldState {
     followups: [],
     drafts: [],
     digests: [],
+    alerts: [],
+    rocks: [],
+    briefs: [],
     last_seq: 0,
   };
 }
@@ -76,6 +82,9 @@ export function applyEvent(s: WorldState, e: AtlasEvent): WorldState {
   if (p.followup) next.followups = upsertBy(s.followups ?? [], p.followup as FollowUp, byId);
   if (p.digest) next.digests = upsertBy(s.digests ?? [], p.digest as Digest, byId);
   if (p.draft) next.drafts = upsertBy(s.drafts ?? [], p.draft as EmailDraft, byId);
+  if (p.alert) next.alerts = upsertBy(s.alerts ?? [], p.alert as Alert, byId);
+  if (p.rock) next.rocks = upsertBy(s.rocks ?? [], p.rock as RockStatus, byId);
+  if (p.brief) next.briefs = upsertBy(s.briefs ?? [], p.brief as Brief, byId);
   if (p.approval) next.approvals = upsertBy(s.approvals, p.approval as ApprovalRequest, byId);
   if (p.message) {
     const m = p.message as AgentMessage;
@@ -122,6 +131,8 @@ export interface Transport {
   availability(): Promise<Availability>;
   /** Inbox follow-ups & drafts (docs/INBOX.md). */
   inbox: InboxApi;
+  /** ARGOS monitoring: alerts, Rocks, briefs (docs/ARGOS.md). */
+  argos: ArgosApi;
 }
 
 export function liveTransport(): Transport {
@@ -137,6 +148,7 @@ export function liveTransport(): Transport {
     config: api.config,
     availability: api.availability,
     inbox: inboxApi,
+    argos: argosApi,
     connect(h) {
       let closed = false;
       let ws: WebSocket | null = null;
@@ -233,7 +245,7 @@ function storeReducer(s: StoreState, a: Action): StoreState {
   switch (a.type) {
     case "snapshot":
       // Tolerate a pre-Phase-3 snapshot without `evidence`.
-      return { ...s, world: { ...a.world, evidence: a.world.evidence ?? [], followups: a.world.followups ?? [], drafts: a.world.drafts ?? [], digests: a.world.digests ?? [] }, loaded: true };
+      return { ...s, world: { ...a.world, evidence: a.world.evidence ?? [], followups: a.world.followups ?? [], drafts: a.world.drafts ?? [], digests: a.world.digests ?? [], alerts: a.world.alerts ?? [], rocks: a.world.rocks ?? [], briefs: a.world.briefs ?? [] }, loaded: true };
     case "event":
       return { ...s, world: applyEvent(s.world, a.event), feed: mergeFeed(s.feed, [a.event]) };
     case "backfill":
@@ -347,6 +359,25 @@ export function useAtlas() {
     };
   }, []);
 
+  // ARGOS: same pattern as the inbox wrappers.
+  const argos = useMemo<ArgosApi>(() => {
+    const t = () => {
+      const x = transportRef.current;
+      if (!x) throw new Error("not connected");
+      return x.argos;
+    };
+    return {
+      status: () => (transportRef.current ? transportRef.current.argos.status().catch(() => null) : Promise.resolve(null)),
+      run: (checks) => t().run(checks),
+      patchAlert: (id, st) => t().patchAlert(id, st),
+      reloadRocks: () => t().reloadRocks(),
+      patchRock: (id, current) => t().patchRock(id, current),
+      buildBrief: () => t().buildBrief(),
+      briefs: () => t().briefs(),
+      briefFileUrl: (b) => transportRef.current?.argos.briefFileUrl(b),
+    };
+  }, []);
+
   return useMemo(
     () => ({
       world: state.world,
@@ -365,8 +396,9 @@ export function useAtlas() {
       attach,
       missionHistory,
       inbox,
+      argos,
     }),
-    [state, conn, transport, launch, decide, scenarios, cancel, config, availability, sendMessage, attach, missionHistory, inbox],
+    [state, conn, transport, launch, decide, scenarios, cancel, config, availability, sendMessage, attach, missionHistory, inbox, argos],
   );
 }
 

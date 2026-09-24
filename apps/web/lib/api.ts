@@ -1,4 +1,4 @@
-import type { AgentDefinition, ApprovalRequest, AtlasEvent, EmailDraft, FollowUp, Mission, MissionPhase, Usage, WorldState } from "./contracts";
+import type { AgentDefinition, Alert, ApprovalRequest, AtlasEvent, Brief, EmailDraft, FollowUp, Mission, MissionPhase, RockStatus, Usage, WorldState } from "./contracts";
 
 export const API_URL = (process.env.NEXT_PUBLIC_ATLAS_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
@@ -281,4 +281,90 @@ export const inboxApi: InboxApi = {
   draftFollowup: (id) => post(`/followups/${encodeURIComponent(id)}/draft`).then((r) => json<unknown>(r)),
   decideDraft: (id, body) => post(`/drafts/${encodeURIComponent(id)}/decision`, body).then((r) => json<EmailDraft>(r)),
   runDigest: (days) => post("/digests/run", { days }).then((r) => json<Mission>(r)),
+};
+
+/* ------------------------------------------------------------------------------------------------
+ * ARGOS monitoring (docs/ARGOS.md § Framework). GET /argos/status maps a 404 to null so the Monitor
+ * view can say the backend has no ARGOS module.
+ * ---------------------------------------------------------------------------------------------- */
+
+export interface ArgosCheckStatus {
+  /** "dashboards" | "l10" | "rocks" */
+  name: string;
+  /** false = not configured; `note` carries the hint */
+  enabled: boolean;
+  last_run: string | null;
+  last_ok: boolean | null;
+  note: string | null;
+  /** backend state: ok | partial | failed | not configured | never run | not installed */
+  state?: string | null;
+  /** what to set up, when not configured */
+  hint?: string | null;
+}
+
+export interface ArgosStatus {
+  checks: ArgosCheckStatus[];
+  next_run: string | null;
+  next_brief: string | null;
+  running: boolean;
+  mission_id: string | null;
+}
+
+export type AlertStatus = Alert["status"];
+
+export interface ArgosApi {
+  status(): Promise<ArgosStatus | null>;
+  run(checks?: string[]): Promise<Mission>;
+  patchAlert(id: string, status: AlertStatus): Promise<Alert>;
+  reloadRocks(): Promise<unknown>;
+  patchRock(id: string, current: number): Promise<RockStatus>;
+  buildBrief(): Promise<Mission>;
+  briefs(): Promise<Brief[]>;
+  /** where "Download .docx" points */
+  briefFileUrl(brief: Brief): string | undefined;
+}
+
+function normalizeArgosStatus(body: unknown): ArgosStatus {
+  const b = (body ?? {}) as Partial<ArgosStatus> & Record<string, unknown>;
+  const checks = Array.isArray(b.checks) ? b.checks : [];
+  return {
+    checks: checks.map((c) => {
+      const x = (c ?? {}) as Partial<ArgosCheckStatus> & Record<string, unknown>;
+      return {
+        name: String(x.name ?? "check"),
+        enabled: x.enabled !== false,
+        last_run: (x.last_run as string | null) ?? null,
+        last_ok: typeof x.last_ok === "boolean" ? x.last_ok : null,
+        note: ((x.note ?? x.hint) as string | null) ?? null,
+        state: typeof x.state === "string" ? x.state : null,
+        hint: typeof x.hint === "string" ? x.hint : null,
+      };
+    }),
+    next_run: b.next_run ?? null,
+    next_brief: b.next_brief ?? null,
+    running: !!b.running,
+    mission_id: b.mission_id ?? null,
+  };
+}
+
+const patchJson = (path: string, body: unknown) =>
+  fetch(`${API_URL}${path}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+export const argosApi: ArgosApi = {
+  status: async () => {
+    const res = await fetch(`${API_URL}/argos/status`, { cache: "no-store" });
+    if (res.status === 404) return null;
+    return normalizeArgosStatus(await json<unknown>(res));
+  },
+  run: (checks) => post("/argos/run", checks?.length ? { checks } : {}).then((r) => json<Mission>(r)),
+  patchAlert: (id, status) => patchJson(`/alerts/${encodeURIComponent(id)}`, { status }).then((r) => json<Alert>(r)),
+  reloadRocks: () => post("/rocks/reload").then((r) => json<unknown>(r)),
+  patchRock: (id, current) => patchJson(`/rocks/${encodeURIComponent(id)}`, { current }).then((r) => json<RockStatus>(r)),
+  buildBrief: () => post("/argos/brief").then((r) => json<Mission>(r)),
+  briefs: async () => {
+    const body = await fetch(`${API_URL}/briefs`, { cache: "no-store" }).then((r) => json<unknown>(r));
+    const list = Array.isArray(body) ? body : (body as { briefs?: unknown[] })?.briefs;
+    return Array.isArray(list) ? (list as Brief[]) : [];
+  },
+  briefFileUrl: (b) => `${API_URL}/briefs/${encodeURIComponent(b.id)}/file`,
 };

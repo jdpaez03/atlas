@@ -21,6 +21,9 @@ mutation so clients never have to derive anything):
     followup.upserted                          {followup}        inbox follow-up created/updated (docs/INBOX.md)
     draft.upserted                             {draft}           email draft proposed/edited/decided/exported
     digest.ready                               {digest}          CC digest produced by an inbox scan
+    alert.upserted                             {alert}           ARGOS alert created/seen/updated/resolved (docs/ARGOS.md)
+    rock.updated                               {rock}            a Rock's computed status and paces
+    brief.ready                                {brief}           the weekly L10 brief
     log                                        {}                or {reset: true, agent_states: [...]}
 
 Persistence (docs/PHASE3.md B): when the bus has an `EventLog`, every event is stored; `restore()` folds
@@ -830,6 +833,81 @@ class WorldStore:
         )
         return draft
 
+    # -- monitoring: alerts, Rocks, briefs (docs/ARGOS.md) ------------------
+
+    def alerts(self, *, status: str | None = None, check: str | None = None, project: str | None = None,
+               node: str | None = None) -> list[Alert]:
+        return [a for a in self._state.alerts
+                if (status is None or a.status == status) and (check is None or a.check == check)
+                and (project is None or a.project == project) and (node is None or a.node == node)]
+
+    def alert(self, alert_id: str) -> Alert:
+        return self._find(self._state.alerts, alert_id, "alert")
+
+    def alert_by_fingerprint(self, fingerprint: str, statuses: Iterable[str] = ("OPEN", "ACKNOWLEDGED"),
+                             node: str | None = None) -> Alert | None:
+        """The newest alert with this fingerprint in one of `statuses` (a RESOLVED one is history)."""
+        wanted = set(statuses)
+        for a in reversed(self._state.alerts):
+            if a.fingerprint == fingerprint and a.status in wanted and (node is None or a.node == node):
+                return a
+        return None
+
+    async def upsert_alert(self, alert: Alert, *, summary: str | None = None, mission_id: str | None = None,
+                           agent_id: str | None = None) -> Alert:
+        """Create or replace an alert (by id); emits alert.upserted {alert}."""
+        self._check_node(alert.node)
+        previous = next((a for a in self._state.alerts if a.id == alert.id), None)
+        _upsert(self._state.alerts, alert)
+        await self._emit(
+            EventType.ALERT_UPSERTED, summary or alert_summary(alert, previous), {"alert": alert},
+            mission_id=mission_id or alert.mission_id, agent_id=agent_id,
+        )
+        return alert
+
+    async def set_alert_status(self, alert_id: str, status: str, *, agent_id: str | None = None) -> Alert:
+        """PATCH /alerts/{id}: OPEN | ACKNOWLEDGED | RESOLVED (a human decision)."""
+        if status not in ("OPEN", "ACKNOWLEDGED", "RESOLVED"):
+            raise StoreError("status must be OPEN, ACKNOWLEDGED or RESOLVED")
+        alert = self.alert(alert_id)
+        if alert.status == status:
+            return alert
+        return await self.upsert_alert(alert.model_copy(update={"status": status}), agent_id=agent_id,
+                                       mission_id=None)
+
+    def rocks(self) -> list[RockStatus]:
+        return list(self._state.rocks)
+
+    def rock(self, rock_id: str) -> RockStatus:
+        return self._find(self._state.rocks, rock_id, "rock")
+
+    async def upsert_rock(self, rock: RockStatus, *, summary: str | None = None, mission_id: str | None = None,
+                          agent_id: str | None = None) -> RockStatus:
+        """Create or replace a Rock status (by id); emits rock.updated {rock}. `updated_at` is set now."""
+        rock = rock.model_copy(update={"updated_at": _now()})
+        _upsert(self._state.rocks, rock)
+        await self._emit(EventType.ROCK_UPDATED, summary or rock_summary(rock), {"rock": rock},
+                         mission_id=mission_id, agent_id=agent_id)
+        return rock
+
+    def briefs(self, *, limit: int | None = None) -> list[Brief]:
+        """Newest first."""
+        items = sorted(self._state.briefs, key=lambda b: b.created_at, reverse=True)
+        return items[:limit] if limit else items
+
+    def brief(self, brief_id: str) -> Brief:
+        return self._find(self._state.briefs, brief_id, "brief")
+
+    async def upsert_brief(self, brief: Brief, *, summary: str | None = None, mission_id: str | None = None,
+                           agent_id: str | None = None) -> Brief:
+        """Create or replace a weekly brief (by id); emits brief.ready {brief}."""
+        self._check_node(brief.node)
+        _upsert(self._state.briefs, brief)
+        lead = f" · {_clip(brief.headline[0], 100)}" if brief.headline else ""
+        await self._emit(EventType.BRIEF_READY, summary or f"L10 brief {brief.week} ready{lead}", {"brief": brief},
+                         mission_id=mission_id or brief.mission_id, agent_id=agent_id)
+        return brief
+
     # -- misc ----------------------------------------------------------------
 
     async def record_evidence(self, evidence: Evidence, summary: str | None = None) -> Evidence:
@@ -1035,6 +1113,46 @@ def _draft_summary(d: EmailDraft, previous: EmailDraft | None) -> str:
             return f"Draft {where} · {subject}"
         return f"Draft {d.status.lower()} · {subject}"
     return f"Draft edited · {subject}"
+
+
+# ---------------------------------------------------------------------------
+# Monitoring event summaries (docs/ARGOS.md)
+# ---------------------------------------------------------------------------
+
+
+def _alert_label(a: Alert) -> str:
+    return " · ".join(x for x in (a.severity, a.project, _clip(a.title, 110)) if x)
+
+
+def alert_summary(a: Alert, previous: Alert | None) -> str:
+    """'Alert · HIGH · Amāra · Escrituraciones moved 30-sep → 30-oct', 'Resolved · …', 'Alert acknowledged · …'."""
+    if previous is None:
+        return f"Alert · {_alert_label(a)}"
+    if previous.status != a.status:
+        if a.status == "RESOLVED":
+            return f"Resolved · {_clip(a.title, 110)}"
+        if a.status == "ACKNOWLEDGED":
+            return f"Alert acknowledged · {_alert_label(a)}"
+        return f"Alert reopened · {_alert_label(a)}"
+    if (previous.severity, previous.title, previous.detail, previous.evidence) != \
+            (a.severity, a.title, a.detail, a.evidence):
+        return f"Alert updated · {_alert_label(a)}"
+    return f"Alert still open · {_alert_label(a)}" if a.status == "OPEN" else \
+        f"Alert still {a.status.lower()} · {_alert_label(a)}"
+
+
+def _num(x: float) -> str:
+    return f"{x:.1f}"
+
+
+def rock_summary(r: RockStatus) -> str:
+    """'Rock R1 · AT_RISK · pace 2.0/wk vs 5.3 required'."""
+    head = f"Rock {r.id} · {r.status}"
+    if r.observed_pace is not None and r.required_pace is not None and r.status not in ("DONE", "UNKNOWN"):
+        return f"{head} · pace {_num(r.observed_pace)}/wk vs {_num(r.required_pace)} required"
+    if r.reason:
+        return f"{head} · {_clip(r.reason, 100)}"
+    return f"{head} · {_clip(r.title, 100)}"
 
 
 __all__ = [

@@ -59,6 +59,11 @@ class CheckContext:
     now: datetime
     mission_id: str | None = None
     node: str = "corporate"
+    # added by the engine (A1): the check's task (for evidence) and the LLM executor for `scope`
+    # (`await ctx.executor.structured(ctx.scope, model=..., system=[...], prompt=..., tool=..., max_tokens=...)`);
+    # both None in pure unit tests, and `executor`/`scope` are None when no LLM backend is available.
+    task_id: str | None = None
+    executor: Any = None
 
 
 class Check(Protocol):

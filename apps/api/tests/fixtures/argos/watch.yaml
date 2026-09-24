@@ -1,0 +1,10 @@
+# ARGOS test watch rules (tests/test_argos_dashboards.py). Projects come from digest_rules.yaml.
+dashboards:
+  enabled: true
+  lookback_days: 10
+  match:
+    - semana
+    - reporte semanal
+    - dashboard
+    - 'S\d{2}'
+  extensions: [.pdf, .xlsx, .xlsm]

@@ -13,6 +13,7 @@ import { InboxChip } from "@/components/InboxChip";
 import { MissionHistory } from "@/components/MissionHistory";
 import { MissionPanel } from "@/components/MissionPanel";
 import { MissionThread } from "@/components/MissionThread";
+import { MonitorView } from "@/components/Monitor";
 import { Emblem } from "@/components/primitives";
 import { Reports } from "@/components/Reports";
 import { TaskBoard } from "@/components/TaskBoard";
@@ -24,10 +25,12 @@ import { STATUS, msgFrom, msgTo, useNow } from "@/lib/ui";
 
 const DIGEST_SEEN_KEY = "atlas.digest.lastSeen";
 const INBOX_EVENTS = new Set(["followup.upserted", "draft.upserted", "digest.ready"]);
+const MONITOR_EVENTS = new Set(["alert.upserted", "rock.updated", "brief.ready"]);
 
 function initialView(): View {
   if (typeof window === "undefined") return "missions";
-  return new URLSearchParams(window.location.search).get("view") === "followups" ? "followups" : "missions";
+  const v = new URLSearchParams(window.location.search).get("view");
+  return v === "followups" || v === "monitor" ? v : "missions";
 }
 
 export default function CommandCenter() {
@@ -139,6 +142,7 @@ export default function CommandCenter() {
       if (document.querySelector('[aria-modal="true"]')) return;
       if (e.key === "1") setView("missions");
       else if (e.key === "2") setView("followups");
+      else if (e.key === "3") setView("monitor");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -226,6 +230,15 @@ export default function CommandCenter() {
     [feed],
   );
 
+  /* ---- ARGOS monitor (docs/ARGOS.md § UI) */
+  const alerts = useMemo(() => (world.alerts ?? []).filter((a) => !nodeId || a.node === nodeId), [world.alerts, nodeId]);
+  const highAlerts = alerts.filter((a) => a.status === "OPEN" && a.severity === "HIGH").length;
+  const briefs = useMemo(
+    () => (world.briefs ?? []).filter((b) => !nodeId || b.node === nodeId).sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    [world.briefs, nodeId],
+  );
+  const monitorEvents = useMemo(() => feed.filter((e) => MONITOR_EVENTS.has(e.type) || e.agent_id === "argos"), [feed]);
+
   const activeAgents = org.visible.filter((a) => STATUS[states.get(a.id)?.status ?? "IDLE"].active).length;
 
   if (!loaded) return <Boot conn={conn} />;
@@ -240,10 +253,29 @@ export default function CommandCenter() {
         view={view}
         onView={setView}
         counts={fuCounts}
+        highAlerts={highAlerts}
         inbox={<InboxChip inbox={inbox} ready={ready} conn={conn} />}
       />
       <DraftDrawer draft={openDraft} followup={openDraftFollowup} onClose={() => setDraftId(null)} decide={inbox.decideDraft} />
-      {view === "followups" ? (
+      {view === "monitor" ? (
+        <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
+          <MonitorView
+            alerts={alerts}
+            rocks={world.rocks ?? []}
+            briefs={briefs}
+            missions={world.missions}
+            argos={atlas.argos}
+            ready={ready}
+            feed={<ActivityFeed events={monitorEvents} agents={agents} className="h-[380px]" />}
+          />
+          <footer className="flex items-center justify-between py-2 font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
+            <span>ARGOS · Dashboards, L10 and Rocks · reads only, never writes to the Suite</span>
+            <span>
+              {atlas.mode === "mock" ? "Simulated stream" : API_URL} · seq {world.last_seq}
+            </span>
+          </footer>
+        </main>
+      ) : view === "followups" ? (
         <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_340px]">
             {fuTab === "digest" ? (

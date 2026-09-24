@@ -29,6 +29,7 @@ from atlas.core import paths
 from atlas.core.models import EmailDraft
 
 from .base import (
+    AttachmentMeta,
     MailMessage,
     MailSourceError,
     SourceStatus,
@@ -49,8 +50,9 @@ MAX_RETRIES = 4
 MAX_RETRY_WAIT = 60.0
 SELECT = (
     "id,internetMessageId,conversationId,subject,from,toRecipients,ccRecipients,"
-    "receivedDateTime,sentDateTime,webLink,bodyPreview"
+    "receivedDateTime,sentDateTime,webLink,bodyPreview,hasAttachments"
 )
+FILE_ATTACHMENT = "#microsoft.graph.fileAttachment"
 
 ADMIN_HINT = (
     "Your organization requires admin approval for this app — ask IT, or use the Power Automate folder option "
@@ -432,6 +434,7 @@ class GraphSource:
             is_from_me=sent or address_of(sender) in mine,
             web_link=item.get("webLink"),
             preview=make_preview(item.get("bodyPreview") or ""),
+            has_attachments=bool(item.get("hasAttachments")),
         )
 
     async def get_body(self, message_id: str) -> str:
@@ -447,6 +450,33 @@ class GraphSource:
         unique = ((data.get("uniqueBody") or {}).get("content") or "").strip()
         text = unique or (data.get("body") or {}).get("content") or ""
         return trim_quoted(text)
+
+    async def list_attachments(self, message_id: str) -> list[AttachmentMeta]:
+        """File attachments only: inline images, attached Outlook items and reference (cloud) attachments are
+        skipped."""
+        out: list[AttachmentMeta] = []
+        async with self._client() as client:
+            url: str | None = f"{GRAPH}/me/messages/{message_id}/attachments"
+            params: dict | None = {"$select": "id,name,size,contentType,isInline"}
+            while url:
+                data = (await self._request(client, "GET", url, params=params)).json()
+                params = None
+                for item in data.get("value", []):
+                    kind = item.get("@odata.type") or FILE_ATTACHMENT  # $select may drop it on some tenants
+                    if kind != FILE_ATTACHMENT or item.get("isInline") or not item.get("id"):
+                        continue
+                    out.append(AttachmentMeta(
+                        id=str(item["id"]), name=(item.get("name") or "").strip() or "attachment",
+                        size=int(item.get("size") or 0), content_type=item.get("contentType") or "",
+                    ))
+                url = data.get("@odata.nextLink")
+        return out
+
+    async def download_attachment(self, message_id: str, attachment_id: str) -> bytes:
+        async with self._client() as client:
+            resp = await self._request(client, "GET", f"{GRAPH}/me/messages/{message_id}/attachments/"
+                                       f"{attachment_id}/$value")  # fmt: skip
+        return resp.content
 
     async def create_outlook_draft(self, draft: EmailDraft) -> str | None:
         if self.read_only:

@@ -44,6 +44,7 @@ from ..core.models import (
     Priority,
     TaskStatus,
 )
+from ..core.rungate import RunGate
 from ..core.store import NotFoundError, StoreError, WorldStore, _person
 from ..live.evidence import record
 from ..live.llm import LLMError, Meter
@@ -215,6 +216,7 @@ class InboxEngine:
         followup_days: int | None = None,
         lookback_days: int | None = None,
         batch_size: int = BATCH_SIZE,
+        gate: RunGate | None = None,
     ):
         self.store = store
         self.live = live
@@ -230,7 +232,8 @@ class InboxEngine:
         self._scan_task: asyncio.Task[None] | None = None
         self.scan_mission_id: str | None = None
         self._drafting: set[str] = set()
-        self._lock = asyncio.Lock()
+        self.gate = gate or RunGate()  # shared with ARGOS: one background run at a time
+        self._lock = self.gate.lock
 
     # -- configuration -------------------------------------------------------
 
@@ -321,6 +324,8 @@ class InboxEngine:
             raise LiveUnavailableError("Live agents are unavailable", info.hint)
         if self.scanning:
             raise ScanBusyError("An inbox scan is already running", "Wait for it to finish.")
+        if self.gate.busy:
+            raise ScanBusyError(self.gate.describe(), "Wait for it to finish.")
         return src, info.backend
 
     async def start_scan(self, trigger: str = "manual") -> Mission:
@@ -340,6 +345,7 @@ class InboxEngine:
             )
             self._scan_task = asyncio.create_task(self._run_scan(mission.id, src, backend),
                                                   name=f"inbox-scan:{mission.id}")
+            self.gate.hold("An inbox scan", mission.id, self._scan_task)
             return mission
 
     async def start_digest(self, days: int = 1) -> Mission:
@@ -360,6 +366,7 @@ class InboxEngine:
             self._scan_task = asyncio.create_task(
                 self._guarded(mission.id, backend, lambda scope: self._window_digest(scope, src, days)),
                 name=f"inbox-digest:{mission.id}")
+            self.gate.hold("A CC digest", mission.id, self._scan_task)
             return mission
 
     async def _window_digest(self, scope: MissionScope, src: MailSource, days: int) -> None:
