@@ -158,8 +158,13 @@ def _validate(
 
 
 _ENV = re.compile(r"\$\{([A-Z0-9_]+)\}")
+# Defaults used when the variable is not set (Claude Code keeps user agents in ~/.claude/agents).
+ENV_DEFAULTS = {"ATLAS_CLAUDE_AGENTS_DIR": "~/.claude/agents"}
 
 
 def resolve_path(value: str) -> Path:
     """Expand ${ENV_VAR} and ~ in adapter paths, so personal paths stay out of the public repo."""
-    return Path(os.path.expanduser(_ENV.sub(lambda m: os.getenv(m.group(1), m.group(0)), value)))
+    def sub(m: re.Match[str]) -> str:
+        return os.getenv(m.group(1)) or ENV_DEFAULTS.get(m.group(1), m.group(0))
+
+    return Path(os.path.expanduser(_ENV.sub(sub, value)))

@@ -73,10 +73,15 @@ export const REASON_LABEL: Record<string, string> = {
   EXTERNAL_COMMUNICATION: "External communication",
   FINANCIAL_COMMITMENT: "Financial commitment",
   CONSEQUENTIAL_DECISION: "Consequential decision",
-  AMBIGUOUS_OR_CONFLICTING: "Ambiguous / conflicting",
+  AMBIGUOUS_OR_CONFLICTING: "Needs clarification",
   IRREVERSIBLE_ACTION: "Irreversible action",
-  INSUFFICIENT_INFORMATION: "Insufficient information",
+  INSUFFICIENT_INFORMATION: "Needs information",
 };
+
+/** Approval reasons that are really questions to the human — the note is the answer. */
+export const QUESTION_REASONS = new Set(["INSUFFICIENT_INFORMATION", "AMBIGUOUS_OR_CONFLICTING"]);
+
+export const reasonLabel = (r: string) => REASON_LABEL[r] ?? human(r).toLowerCase().replace(/^./, (c) => c.toUpperCase());
 
 export const human = (s: string) => s.replace(/_/g, " ");
 

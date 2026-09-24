@@ -10,14 +10,27 @@ import { MissionPanel } from "@/components/MissionPanel";
 import { Emblem } from "@/components/primitives";
 import { Reports } from "@/components/Reports";
 import { TaskBoard } from "@/components/TaskBoard";
-import { API_URL } from "@/lib/api";
+import { API_URL, type AtlasConfig, type Availability } from "@/lib/api";
 import type { AgentDefinition, Task } from "@/lib/contracts";
 import { useAtlas } from "@/lib/store";
 import { STATUS } from "@/lib/ui";
 
 export default function CommandCenter() {
   const atlas = useAtlas();
-  const { world, feed, conn, loaded } = atlas;
+  const { world, feed, conn, loaded, ready, config: loadConfig, availability: loadAvailability } = atlas;
+
+  /* ---- Phase 2: live-mode config + agent availability (404 → no live / all available) */
+  const [config, setConfig] = useState<AtlasConfig | null>(null);
+  const [availability, setAvailability] = useState<Availability>({});
+  useEffect(() => {
+    if (!ready) return;
+    let alive = true;
+    loadConfig().then((c) => alive && setConfig(c));
+    loadAvailability().then((a) => alive && setAvailability(a));
+    return () => {
+      alive = false;
+    };
+  }, [ready, conn, loadConfig, loadAvailability]);
 
   /* ---- node selection */
   const [nodeId, setNodeId] = useState<string | null>(null);
@@ -73,7 +86,11 @@ export default function CommandCenter() {
     [world.approvals, nodeMissionIds, mid],
   );
   const pendingCount = approvals.filter((a) => a.state === "PENDING").length;
-  const events = useMemo(() => feed.filter((e) => !e.mission_id || nodeMissionIds.has(e.mission_id)), [feed, nodeMissionIds]);
+  const events = useMemo(
+    // mission.updated fires after every LLM call (usage) — it's noise in the feed.
+    () => feed.filter((e) => e.type !== "mission.updated" && (!e.mission_id || nodeMissionIds.has(e.mission_id))),
+    [feed, nodeMissionIds],
+  );
 
   const activeAgents = org.visible.filter((a) => STATUS[states.get(a.id)?.status ?? "IDLE"].active).length;
 
@@ -95,6 +112,8 @@ export default function CommandCenter() {
           loadScenarios={atlas.scenarios}
           launch={atlas.launch}
           onLaunched={(m) => setPicked(m.id)}
+          config={config}
+          cancelMission={atlas.cancel}
         />
 
         {/* Three independent columns: each stretches to the tallest; the feed fills what's left. */}
@@ -108,6 +127,7 @@ export default function CommandCenter() {
               states={states}
               tasks={tasksById}
               agents={agents}
+              availability={availability}
             />
           </div>
           <div className="flex min-w-0 flex-col gap-4">

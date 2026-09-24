@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { api, wsUrl, type Decision, type LaunchMissionBody, type Scenario } from "./api";
+import { NO_LIVE_CONFIG, api, wsUrl, type AtlasConfig, type Availability, type Decision, type LaunchMissionBody, type Scenario } from "./api";
 import type {
   AgentMessage,
   AgentReport,
@@ -99,6 +99,9 @@ export interface Transport {
   scenarios(): Promise<Scenario[]>;
   launch(body: LaunchMissionBody): Promise<Mission>;
   decide(id: string, decision: Decision, note?: string): Promise<ApprovalRequest>;
+  cancel(id: string): Promise<Mission>;
+  config(): Promise<AtlasConfig>;
+  availability(): Promise<Availability>;
 }
 
 export function liveTransport(): Transport {
@@ -107,6 +110,9 @@ export function liveTransport(): Transport {
     scenarios: api.scenarios,
     launch: api.launch,
     decide: api.decide,
+    cancel: api.cancel,
+    config: api.config,
+    availability: api.availability,
     connect(h) {
       let closed = false;
       let ws: WebSocket | null = null;
@@ -261,6 +267,21 @@ export function useAtlas() {
     if (!t) return Promise.reject(new Error("not connected"));
     return t.decide(id, decision, note);
   }, []);
+  const cancel = useCallback((id: string) => {
+    const t = transportRef.current;
+    if (!t) return Promise.reject(new Error("not connected"));
+    return t.cancel(id);
+  }, []);
+  const config = useCallback(() => {
+    const t = transportRef.current;
+    if (!t) return Promise.resolve(NO_LIVE_CONFIG);
+    return t.config().catch(() => NO_LIVE_CONFIG);
+  }, []);
+  const availability = useCallback(() => {
+    const t = transportRef.current;
+    if (!t) return Promise.resolve({} as Availability);
+    return t.availability().catch(() => ({}) as Availability);
+  }, []);
   const scenarios = useCallback(() => {
     const t = transportRef.current;
     if (!t) return Promise.resolve([] as Scenario[]);
@@ -278,8 +299,11 @@ export function useAtlas() {
       launch,
       decide,
       scenarios,
+      cancel,
+      config,
+      availability,
     }),
-    [state, conn, transport, launch, decide, scenarios],
+    [state, conn, transport, launch, decide, scenarios, cancel, config, availability],
   );
 }
 

@@ -9,6 +9,7 @@ Payload keys (primary key per docs/EVENTS.md, plus secondary objects touched by 
 mutation so clients never have to derive anything):
 
     mission.created / phase_changed / closed   {mission}
+    mission.updated                            {mission}         usage/cost changed (live mode)
     task.created                               {task, mission}   mission.task_ids gained the task
     task.updated                               {task}
     agent.state_changed                        {state}
@@ -47,6 +48,7 @@ from .models import (
     Priority,
     Task,
     TaskStatus,
+    Usage,
     WorldState,
     _now,
 )
@@ -210,9 +212,10 @@ class WorldStore:
         *,
         context: str | None = None,
         priority: Priority | str = Priority.MEDIUM,
+        mode: str = "simulated",
     ) -> Mission:
         self._check_node(node)
-        mission = Mission(objective=objective, node=node, context=context, priority=priority)
+        mission = Mission(objective=objective, node=node, context=context, priority=priority, mode=mode)
         self._state.missions.append(mission)
         node_name = self._node_name(node)
         await self._emit(
@@ -242,6 +245,74 @@ class WorldStore:
             agent_id=self.registry.orchestrator.id,
         )
         return mission
+
+    async def update_usage(self, mission_id: str, delta: Usage) -> Mission:
+        """Add one LLM call's usage (tokens + estimated cost) to the mission; emits mission.updated."""
+        mission = self.mission(mission_id)
+        u = mission.usage
+        usage = Usage(
+            input_tokens=u.input_tokens + delta.input_tokens,
+            output_tokens=u.output_tokens + delta.output_tokens,
+            cache_read_tokens=u.cache_read_tokens + delta.cache_read_tokens,
+            llm_calls=u.llm_calls + delta.llm_calls,
+            est_cost_usd=round(u.est_cost_usd + delta.est_cost_usd, 6),
+        )
+        mission = self._replace(self._state.missions, mission, {"usage": usage.model_dump()})
+        tokens = usage.input_tokens + usage.output_tokens + usage.cache_read_tokens
+        await self._emit(
+            EventType.MISSION_UPDATED,
+            f"Usage · {usage.llm_calls} LLM calls · {tokens:,} tokens · ~${usage.est_cost_usd:.4f}",
+            {"mission": mission},
+            mission_id=mission.id,
+            agent_id=self.registry.orchestrator.id,
+        )
+        return mission
+
+    async def cancel_mission(self, mission_id: str, reason: str = "cancelled by the user") -> Mission:
+        """Cancel every open task, expire pending approvals (waking their waiters) and close the
+        mission. Stopping the engine that drives the mission is the caller's job."""
+        mission = self.mission(mission_id)
+        if mission.phase == MissionPhase.CLOSED.value:
+            raise ConflictError(f"mission '{mission_id}' is already closed")
+        for t in self.tasks_for(mission_id):
+            if t.status not in _TERMINAL:
+                await self.update_task(t.id, status=TaskStatus.CANCELLED)
+        for a in list(self._state.approvals):
+            if a.mission_id == mission_id and a.state == ApprovalState.PENDING.value:
+                a = self._replace(
+                    self._state.approvals,
+                    a,
+                    {"state": ApprovalState.EXPIRED.value, "decision_note": reason, "decided_at": _now()},
+                )
+                await self._emit(
+                    EventType.APPROVAL_DECIDED,
+                    f"Approval '{a.title}' expired · mission cancelled",
+                    {"approval": a},
+                    mission_id=mission_id,
+                    agent_id=a.requested_by,
+                )
+                if ev := self._decisions.get(a.id):
+                    ev.set()
+        await self.log(f"Mission cancelled · {reason}", mission_id=mission_id,
+                       agent_id=self.registry.orchestrator.id)
+        return await self.set_phase(mission_id, MissionPhase.CLOSED)
+
+    async def release_agents(self, mission_id: str, agent_ids: Iterable[str]) -> None:
+        """Return agents touched by a finished mission to their default status, unless they are
+        now busy on a task of another open mission."""
+        active_elsewhere = {
+            t.id
+            for m in self._state.missions
+            if m.id != mission_id and m.phase != MissionPhase.CLOSED.value
+            for t in self.tasks_for(m.id)
+        }
+        for agent_id in sorted(set(agent_ids)):
+            st = self.agent_state(agent_id)
+            if st.current_task_id and st.current_task_id in active_elsewhere:
+                continue
+            if st.status == self.default_status(agent_id).value and not st.current_task_id:
+                continue
+            await self.reset_agent(agent_id, mission_id=mission_id)
 
     # -- tasks ---------------------------------------------------------------
 

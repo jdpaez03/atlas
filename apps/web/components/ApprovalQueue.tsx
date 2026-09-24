@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { Decision } from "@/lib/api";
 import type { AgentDefinition, ApprovalRequest } from "@/lib/contracts";
-import { REASON_LABEL, cx, hms, useNow } from "@/lib/ui";
+import { QUESTION_REASONS, cx, hms, reasonLabel, useNow } from "@/lib/ui";
 import { AgentName, Panel } from "./primitives";
 
 function PendingCard({
@@ -20,6 +20,8 @@ function PendingCard({
   const [err, setErr] = useState<string | null>(null);
   const now = useNow(1000);
   const waited = now ? Math.max(0, Math.floor((now - new Date(a.created_at).getTime()) / 1000)) : 0;
+  const question = QUESTION_REASONS.has(a.reason);
+  const waitedLabel = waited >= 3600 ? `${Math.floor(waited / 3600)}h ${Math.floor((waited % 3600) / 60)}m` : waited >= 60 ? `${Math.floor(waited / 60)}m ${waited % 60}s` : `${waited}s`;
 
   async function go(d: Decision) {
     setBusy(d);
@@ -37,38 +39,58 @@ function PendingCard({
       <div className="flex items-center justify-between gap-2">
         <span className="inline-flex items-center gap-1.5 rounded border border-red-400/50 bg-red-500/15 px-1.5 py-[1px] font-mono text-[9px] uppercase tracking-[0.18em] text-red-300">
           <span className="h-1.5 w-1.5 rounded-full bg-red-400 dot-live" style={{ ["--c" as string]: "#ef4444aa" }} />
-          Decision required
+          {question ? "Agent is asking" : "Decision required"}
         </span>
-        <span className="font-mono text-[9.5px] tabular-nums text-amber-300/80">waiting {waited}s</span>
+        <span className="font-mono text-[9.5px] tabular-nums text-amber-300/80">waiting {waitedLabel}</span>
       </div>
       <h3 className="mt-2.5 text-[14px] leading-snug font-medium text-ink">{a.title}</h3>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 font-mono text-[9.5px] uppercase tracking-[0.12em] text-amber-300/80">
-        <span>{REASON_LABEL[a.reason] ?? a.reason}</span>
+        <span
+          className={cx("rounded border px-1 py-[0.5px]", question ? "border-sky-400/40 bg-sky-500/10 text-sky-300" : "border-amber-400/40 bg-amber-500/10")}
+          title={a.reason}
+        >
+          {reasonLabel(a.reason)}
+        </span>
         <span className="text-mute">·</span>
         <span className="normal-case tracking-normal text-dim">
           requested by <AgentName agent={agents.get(a.requested_by)} id={a.requested_by} className="text-[10px]" />
         </span>
       </div>
-      <p className="mt-2 text-[11.5px] leading-relaxed text-slate-300">{a.detail}</p>
+      <p className="scroll-thin mt-2 max-h-40 overflow-y-auto text-[11.5px] leading-relaxed whitespace-pre-line text-slate-300">{a.detail}</p>
       {a.proposed_action && (
         <div className="mt-2 rounded-md border border-edge bg-black/30 px-2.5 py-2">
           <p className="label !text-[8.5px]">Proposed action</p>
           <p className="mt-0.5 text-[11.5px] text-slate-200">{a.proposed_action}</p>
         </div>
       )}
-      <input
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        placeholder="Optional note for the agents…"
-        className="mt-2.5 h-8 w-full rounded-md border border-edge bg-black/30 px-2.5 text-[11.5px] text-ink placeholder:text-mute focus:border-amber-400/60 focus:outline-none"
-      />
-      <div className="mt-2.5 grid grid-cols-2 gap-2">
+      <label className="mt-3 block">
+        <span className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.16em] text-amber-200">Reply / note to the agent</span>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={question ? 3 : 2}
+          autoFocus={question}
+          placeholder={question ? "Answer the agent's question — it will continue with your reply…" : "Optional — conditions, corrections or context for the agent…"}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && busy === null) {
+              e.preventDefault();
+              void go("APPROVED");
+            }
+          }}
+          aria-describedby={`${a.id}-hint`}
+          className="mt-1 block w-full resize-y rounded-md border border-amber-500/30 bg-black/40 px-2.5 py-2 text-[12px] leading-relaxed text-ink placeholder:text-mute focus:border-amber-400/70 focus:ring-1 focus:ring-amber-400/30 focus:outline-none"
+        />
+        <span id={`${a.id}-hint`} className="mt-1 block text-right font-mono text-[8.5px] tracking-[0.08em] text-mute">
+          Ctrl+Enter to {question ? "reply & continue" : "approve"}
+        </span>
+      </label>
+      <div className="mt-1.5 grid grid-cols-2 gap-2">
         <button
           onClick={() => go("APPROVED")}
           disabled={busy !== null}
           className="h-8 rounded-md border border-emerald-400/60 bg-emerald-500/15 font-mono text-[10.5px] font-semibold uppercase tracking-[0.2em] text-emerald-300 transition hover:bg-emerald-500/25 disabled:opacity-50"
         >
-          {busy === "APPROVED" ? "Approving…" : "Approve"}
+          {busy === "APPROVED" ? "Sending…" : question ? (note.trim() ? "Reply & continue" : "Continue") : note.trim() ? "Approve + note" : "Approve"}
         </button>
         <button
           onClick={() => go("REJECTED")}

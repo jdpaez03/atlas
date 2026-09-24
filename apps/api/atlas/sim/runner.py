@@ -309,6 +309,22 @@ class Simulator:
         if entry:
             await asyncio.shield(entry[1])
 
+    async def cancel(self, mission_id: str, reason: str = "cancelled by the user") -> bool:
+        """Stop one running mission: open tasks → CANCELLED, mission CLOSED, agents released."""
+        entry = self._running.get(mission_id)
+        if entry is None:
+            return False
+        runner, task = entry
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, NotFoundError):
+            pass
+        if self.store.mission(mission_id).phase != "CLOSED":
+            await self.store.cancel_mission(mission_id, reason)
+        await runner._release_agents()
+        return True
+
     async def cancel_all(self) -> None:
         tasks = [t for _, t in self._running.values()]
         for t in tasks:

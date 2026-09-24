@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { Availability } from "@/lib/api";
 import type { AgentDefinition, AgentState, AgentStatus, DivisionDefinition, Task } from "@/lib/contracts";
 import { STATUS, aggregateStatus, cx } from "@/lib/ui";
 import { Emblem, Panel, ProgressBar, StatusDot, StatusPill } from "./primitives";
@@ -14,7 +15,31 @@ type Lookup = {
   states: Map<string, AgentState>;
   tasks: Map<string, Task>;
   agents: Map<string, AgentDefinition>;
+  availability: Availability;
 };
+
+/** Undefined when available; otherwise the reason (or a generic one) the agent can't be used. */
+const offlineReason = (l: Lookup, id: string): string | undefined => {
+  const a = l.availability[id];
+  return a && a.available === false ? a.reason || "Agent unavailable" : undefined;
+};
+
+const OFFLINE_COLOR = "#64748b";
+
+function OfflineTag({ reason, compact }: { reason: string; compact?: boolean }) {
+  return (
+    <span
+      className={cx(
+        "inline-flex shrink-0 items-center gap-1 rounded border border-dashed border-slate-500/50 font-mono uppercase tracking-[0.16em] text-slate-400",
+        compact ? "px-1 py-0 text-[8px]" : "px-1.5 py-[1px] text-[9px]",
+      )}
+      title={reason}
+    >
+      <span className="h-1.5 w-1.5 rounded-full border border-slate-500" />
+      Offline
+    </span>
+  );
+}
 
 const statusOf = (l: Lookup, id: string): AgentStatus => l.states.get(id)?.status ?? "IDLE";
 
@@ -44,9 +69,11 @@ function OrchestratorCard({ agent, l }: { agent: AgentDefinition; l: Lookup }) {
   const status = st?.status ?? "IDLE";
   const s = STATUS[status];
   const task = st?.current_task_id ? l.tasks.get(st.current_task_id) : undefined;
+  const offline = offlineReason(l, agent.id);
   return (
     <article
-      className={cx("relative overflow-hidden rounded-lg border border-edge-2 bg-gradient-to-br from-white/[0.04] to-transparent p-4", s.active && "glow")}
+      title={offline ? `Offline — ${offline}` : undefined}
+      className={cx(offline && "opacity-60", "relative overflow-hidden rounded-lg border border-edge-2 bg-gradient-to-br from-white/[0.04] to-transparent p-4", s.active && "glow")}
       style={glowStyle(status)}
     >
       <div className="pointer-events-none absolute -top-16 -right-10 h-40 w-40 rounded-full opacity-30 blur-3xl" style={{ background: s.active ? s.color : "#7dd3fc" }} />
@@ -57,7 +84,7 @@ function OrchestratorCard({ agent, l }: { agent: AgentDefinition; l: Lookup }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <h3 className="font-mono text-[20px] font-semibold tracking-[0.34em] text-ink">{agent.name}</h3>
-            <StatusPill status={status} />
+            {offline ? <OfflineTag reason={offline} /> : <StatusPill status={status} />}
           </div>
           <p className="label mt-0.5 !text-[9.5px]">{agent.title}</p>
           <p className={cx("mt-2 line-clamp-2 text-[12.5px] leading-snug", st?.activity ? "text-slate-200" : "text-mute")}>
@@ -78,6 +105,22 @@ function AgentCard({ agent, l }: { agent: AgentDefinition; l: Lookup }) {
   const status = st?.status ?? "IDLE";
   const s = STATUS[status];
   const task = st?.current_task_id ? l.tasks.get(st.current_task_id) : undefined;
+  const offline = offlineReason(l, agent.id);
+  if (offline) {
+    return (
+      <article className="relative flex min-w-0 flex-col rounded-lg border border-dashed border-edge-2 bg-black/20 p-3" title={`Offline — ${offline}`}>
+        <span className="absolute top-3 bottom-3 left-0 w-[2px] rounded-full" style={{ background: OFFLINE_COLOR, opacity: 0.3 }} />
+        <div className="flex items-center justify-between gap-2 pl-1.5">
+          <h3 className="truncate font-mono text-[13px] font-semibold tracking-[0.2em] opacity-45" style={{ color: agent.color }}>
+            {agent.name}
+          </h3>
+          <OfflineTag reason={offline} />
+        </div>
+        <p className="mt-0.5 truncate pl-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-mute">{agent.title}</p>
+        <p className="mt-2 line-clamp-2 min-h-[2.6em] pl-1.5 text-[11px] leading-[1.3] text-mute italic">{offline}</p>
+      </article>
+    );
+  }
   return (
     <article
       className={cx(
@@ -118,6 +161,7 @@ function DivisionCard({ group, l }: { group: DivisionGroup; l: Lookup }) {
   const statuses = members.map((m) => statusOf(l, m.id));
   const agg = aggregateStatus(statuses);
   const active = statuses.filter((s) => STATUS[s].active).length;
+  const offlineCount = members.filter((m) => offlineReason(l, m.id)).length;
   const s = STATUS[agg];
   return (
     <article className={cx("rounded-lg border border-edge bg-white/[0.02]", STATUS[agg].active && "glow")} style={glowStyle(agg)}>
@@ -133,7 +177,7 @@ function DivisionCard({ group, l }: { group: DivisionGroup; l: Lookup }) {
             </h3>
             <span className="label !text-[9px]">Division</span>
           </div>
-          <p className="mt-0.5 truncate font-mono text-[10px] text-dim">
+          <p className="mt-0.5 truncate font-mono text-[10px] text-dim" title={offlineCount > 0 ? `${offlineCount} offline` : undefined}>
             {members.length} specialists · <span style={{ color: active ? s.color : undefined }}>{active} active</span>
           </p>
         </div>
@@ -147,6 +191,18 @@ function DivisionCard({ group, l }: { group: DivisionGroup; l: Lookup }) {
           {members.map((m) => {
             const st = statusOf(l, m.id);
             const on = STATUS[st].active;
+            const off = offlineReason(l, m.id);
+            if (off) {
+              return (
+                <div
+                  key={m.id}
+                  className="flex items-center justify-center gap-1 rounded border border-dashed border-edge-2 py-1 font-mono text-[8.5px] tracking-[0.1em] text-mute line-through decoration-slate-600"
+                  title={`${m.name} · Offline — ${off}`}
+                >
+                  {m.name.replace(/^.*·/, "").slice(0, 4)}
+                </div>
+              );
+            }
             return (
               <div
                 key={m.id}
@@ -164,11 +220,26 @@ function DivisionCard({ group, l }: { group: DivisionGroup; l: Lookup }) {
       {open && (
         <div className="border-t border-edge/70 px-3 pt-2 pb-3">
           <p className="mb-2 text-[11px] leading-snug text-slate-500">{division.description}</p>
-          <ul className="grid gap-1.5">
+          <ul className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
             {members.map((m) => {
               const st = l.states.get(m.id);
               const status = st?.status ?? "IDLE";
               const task = st?.current_task_id ? l.tasks.get(st.current_task_id) : undefined;
+              const off = offlineReason(l, m.id);
+              if (off) {
+                return (
+                  <li key={m.id} className="rounded-md border border-dashed border-edge-2 bg-black/10 px-2.5 py-2" title={`Offline — ${off}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full border border-slate-500" />
+                      <span className="w-[98px] shrink-0 truncate font-mono text-[11px] font-semibold tracking-[0.12em] opacity-45" style={{ color: m.color }}>
+                        {m.name}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-[11px] text-mute italic">{off}</span>
+                      <OfflineTag reason={off} compact />
+                    </div>
+                  </li>
+                );
+              }
               return (
                 <li key={m.id} className="rounded-md border border-edge/70 bg-black/20 px-2.5 py-2" title={m.description}>
                   <div className="flex items-center gap-2">
@@ -199,6 +270,7 @@ export function AgentBoard({
   states,
   tasks,
   agents,
+  availability = {},
   className,
 }: {
   orchestrator: AgentDefinition | undefined;
@@ -207,11 +279,13 @@ export function AgentBoard({
   states: Map<string, AgentState>;
   tasks: Map<string, Task>;
   agents: Map<string, AgentDefinition>;
+  availability?: Availability;
   className?: string;
 }) {
-  const l: Lookup = { states, tasks, agents };
+  const l: Lookup = { states, tasks, agents, availability };
   const all = [...(orchestrator ? [orchestrator] : []), ...core, ...divisions.flatMap((d) => d.members)];
   const active = all.filter((a) => STATUS[statusOf(l, a.id)].active).length;
+  const offline = all.filter((a) => offlineReason(l, a.id)).length;
   return (
     <Panel
       code="02"
@@ -220,6 +294,7 @@ export function AgentBoard({
       meta={
         <span>
           <span className="text-slate-300">{active}</span>/{all.length} active
+          {offline > 0 && <span className="text-mute"> · {offline} offline</span>}
         </span>
       }
       bodyClassName="flex flex-col gap-3 p-3"

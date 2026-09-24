@@ -6,18 +6,25 @@
   GET  /scenarios                   simulated missions [{id, node, title, objective}]
   GET  /state                       WorldState snapshot (with last_seq)
   GET  /events?since=&mission_id=   event history
-  POST /missions                    {objective, node, scenario_id?, speed?} -> Mission
+  GET  /config                      {live_available, models, web_search, context_nodes}
+  GET  /agents/availability         {agent_id: {available, reason?}} for live missions
+  POST /missions                    {objective, node, mode?, scenario_id?, speed?} -> Mission
+  POST /missions/{id}/cancel        stop a running mission (live or simulated) -> Mission
   POST /approvals/{id}/decision     {decision: APPROVED|REJECTED, note?} -> ApprovalRequest
   POST /reset                       clear all missions (dev only)
   WS   /ws?since=<seq>              replay events with seq > since, then live
 
-Contract: docs/EVENTS.md. Env: ATLAS_AGENTS_DIR, ATLAS_CORS_ORIGINS, ATLAS_SIM_SPEED (default 1.0).
+Contract: docs/EVENTS.md, docs/LIVE.md. Env: ATLAS_AGENTS_DIR, ATLAS_CORS_ORIGINS, ATLAS_SIM_SPEED
+(default 1.0), plus the live-mode variables in .env.example. `.env` at the repo root is loaded at
+startup without overriding variables already set (skipped under pytest).
 """
 
 from __future__ import annotations
 
 import os
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,9 +34,23 @@ from .core.events import EventBus
 from .core.models import AgentDefinition
 from .core.registry import DEFAULT_AGENTS_DIR, AgentRegistry
 from .core.store import WorldStore
-from .routes import approvals, missions, stream, world
+from .live.orchestrator import LiveEngine
+from .routes import approvals, live, missions, stream, world
 from .sim.runner import ScenarioLibrary, Simulator
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _load_dotenv() -> None:
+    # Tests must never pick up a real API key from a developer's .env (it would start live missions).
+    if "pytest" in sys.modules:
+        return
+    from dotenv import load_dotenv
+
+    load_dotenv(REPO_ROOT / ".env", override=False)
+
+
+_load_dotenv()
 registry = AgentRegistry.load(os.getenv("ATLAS_AGENTS_DIR") or DEFAULT_AGENTS_DIR)
 
 
@@ -47,10 +68,12 @@ async def lifespan(app: FastAPI):
     store = WorldStore(registry, bus)
     library = ScenarioLibrary(registry)
     sim = Simulator(store, library, default_speed=_default_speed())
+    live_engine = LiveEngine(store)
     app.state.registry = registry
     app.state.bus = bus
     app.state.store = store
     app.state.sim = sim
+    app.state.live = live_engine
     n_scenarios = len(library.all())
     await store.log(
         f"ATLAS online with {len(registry.all())} agents · {n_scenarios} simulated scenarios.",
@@ -59,6 +82,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await live_engine.cancel_all()
         await sim.cancel_all()
 
 
@@ -85,5 +109,6 @@ def list_agents() -> list[AgentDefinition]:
 
 app.include_router(world.router)
 app.include_router(missions.router)
+app.include_router(live.router)
 app.include_router(approvals.router)
 app.include_router(stream.router)

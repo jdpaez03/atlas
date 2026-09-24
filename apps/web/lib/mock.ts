@@ -4,7 +4,7 @@
  *
  * Enable with NEXT_PUBLIC_ATLAS_MOCK=1 or ?mock=1 (optional ?speed=2 to accelerate).
  */
-import type { Decision, LaunchMissionBody, Scenario } from "./api";
+import type { AtlasConfig, Availability, Decision, LaunchMissionBody, Scenario } from "./api";
 import type {
   AgentDefinition,
   AgentMessage,
@@ -84,6 +84,21 @@ const SCENARIOS: Scenario[] = [
       "Evaluate acquiring a 4,200 m² lot in Zapopan for a 120-unit vertical housing project and recommend go / no-go with an offer range.",
   },
 ];
+
+/* ---------------------------------------------------------------- live-mode config (Phase 2) */
+
+/** Mock has no API key, so LIVE is unavailable; it still reports models and context like /config would. */
+const CONFIG: AtlasConfig = {
+  live_available: false,
+  models: { orchestrator: "claude-opus-5-5", default: "claude-sonnet-5" },
+  web_search: false,
+  context_nodes: ["corporate"],
+};
+
+/** One claude_md agent whose file is missing, to exercise the OFFLINE state (docs/LIVE.md § Agent sources). */
+const AVAILABILITY: Availability = {
+  "eos-process": { available: false, reason: "EOS agent file not found: ${EOS_AGENTS_DIR}/eos-process.md" },
+};
 
 /* ---------------------------------------------------------------- engine */
 
@@ -566,7 +581,30 @@ export function mockTransport({ speed = 1 }: { speed?: number } = {}): Transport
       };
     },
     scenarios: async () => SCENARIOS,
+    config: async () => CONFIG,
+    availability: async () => AVAILABILITY,
+    async cancel(id: string) {
+      const m = engine.mission;
+      if (!m || m.id !== id) throw new Error("ATLAS API 404: mission not found");
+      if (m.phase === "CLOSED") return m;
+      engine.stop();
+      engine.paused = false;
+      for (const [ref, t] of engine.tasks) {
+        if (!["COMPLETED", "FAILED", "CANCELLED"].includes(t.status)) engine.tupd(ref, "CANCELLED");
+      }
+      const a = engine.pendingApproval;
+      if (a) {
+        engine.pendingApproval = null;
+        const expired: ApprovalRequest = { ...a, state: "EXPIRED", decision_note: "Mission cancelled", decided_at: now() };
+        engine.emit("approval.decided", { approval: expired }, `Approval expired: ${a.title}`, null);
+      }
+      for (const ag of AGENTS) engine.agent(ag.id, "IDLE", null);
+      engine.mission = { ...engine.mission!, phase: "CLOSED", closed_at: now() };
+      engine.emit("mission.closed", { mission: engine.mission }, "Mission cancelled by human", "atlas");
+      return engine.mission;
+    },
     async launch(body: LaunchMissionBody) {
+      if (body.mode === "live") throw new Error("ATLAS API 422: live mode requires ANTHROPIC_API_KEY");
       engine.stop();
       engine.paused = false;
       engine.tasks.clear();

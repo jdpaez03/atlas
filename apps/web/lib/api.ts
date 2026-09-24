@@ -15,7 +15,23 @@ export interface LaunchMissionBody {
   node: string;
   scenario_id?: string;
   speed?: number;
+  mode?: MissionMode;
 }
+
+export type MissionMode = "simulated" | "live";
+
+/** GET /config (docs/LIVE.md). A 404 (Phase 1 backend) is treated as "live not available". */
+export interface AtlasConfig {
+  live_available: boolean;
+  models: { orchestrator?: string | null; default?: string | null };
+  web_search: boolean;
+  context_nodes: string[];
+}
+
+export const NO_LIVE_CONFIG: AtlasConfig = { live_available: false, models: {}, web_search: false, context_nodes: [] };
+
+/** GET /agents/availability — `{agent_id: {available, reason?}}`. A 404 means "all available". */
+export type Availability = Record<string, { available: boolean; reason?: string | null }>;
 
 export type Decision = "APPROVED" | "REJECTED";
 
@@ -50,6 +66,24 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(note ? { decision, note } : { decision }),
     }).then((r) => json<ApprovalRequest>(r)),
+  cancel: (id: string) =>
+    fetch(`${API_URL}/missions/${encodeURIComponent(id)}/cancel`, { method: "POST" }).then((r) => json<Mission>(r)),
+  config: async (): Promise<AtlasConfig> => {
+    const res = await fetch(`${API_URL}/config`, { cache: "no-store" });
+    if (res.status === 404) return NO_LIVE_CONFIG;
+    const c = await json<Partial<AtlasConfig>>(res);
+    return {
+      live_available: !!c.live_available,
+      models: c.models ?? {},
+      web_search: !!c.web_search,
+      context_nodes: Array.isArray(c.context_nodes) ? c.context_nodes : [],
+    };
+  },
+  availability: async (): Promise<Availability> => {
+    const res = await fetch(`${API_URL}/agents/availability`, { cache: "no-store" });
+    if (res.status === 404) return {};
+    return json<Availability>(res);
+  },
 };
 
 export async function getAgents(): Promise<AgentDefinition[]> {

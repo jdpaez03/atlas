@@ -6,7 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from ..core.models import AtlasEvent, NodeDefinition, WorldState
-from .deps import BusDep, RegistryDep, SimDep, StoreDep
+from .deps import BusDep, LiveDep, RegistryDep, SimDep, StoreDep
 
 router = APIRouter(tags=["world"])
 
@@ -42,6 +42,7 @@ def list_events(bus: BusDep, since: int = 0, mission_id: str | None = None) -> l
 
 
 @router.post("/reset")
-async def reset(sim: SimDep) -> dict[str, str]:
+async def reset(sim: SimDep, live: LiveDep) -> dict[str, str]:
+    await live.cancel_all()
     await sim.reset()
     return {"status": "reset"}
