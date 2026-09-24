@@ -1,0 +1,10 @@
+id: sofia
+name: SOFIA
+title: Research
+description: Investigates, finds sources, and builds context — markets, comparables, competitors, regulations.
+color: "#38bdf8"
+adapter: claude
+capabilities: [research, source_discovery, market_research, summarization]
+tools: [web_search, web_fetch, send_message, submit_report]
+permissions:
+  max_parallel_tasks: 3

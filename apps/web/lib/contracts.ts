@@ -1,0 +1,379 @@
+/* Generated from contracts/atlas.schema.json — do not edit. Run: npm run gen:types */
+
+export type AgentKind = "native" | "external";
+export type AdapterType = "claude" | "http" | "mcp" | "cli" | "mock";
+/**
+ * Why a human must intervene (spec section 11).
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "ApprovalReason".
+ */
+export type ApprovalReason =
+  | "EXTERNAL_COMMUNICATION"
+  | "FINANCIAL_COMMITMENT"
+  | "CONSEQUENTIAL_DECISION"
+  | "AMBIGUOUS_OR_CONFLICTING"
+  | "IRREVERSIBLE_ACTION"
+  | "INSUFFICIENT_INFORMATION";
+/**
+ * Operational status shown on the Agent Board.
+ */
+export type AgentStatus =
+  "IDLE" | "WORKING" | "WAITING" | "COLLABORATING" | "REVIEWING" | "MONITORING" | "BLOCKED" | "COMPLETED" | "ERROR";
+/**
+ * The nine-step lifecycle from the project spec.
+ */
+export type MissionPhase =
+  | "OBJECTIVE"
+  | "DECOMPOSITION"
+  | "DELEGATION"
+  | "EXECUTION"
+  | "COLLABORATION"
+  | "VALIDATION"
+  | "CONSOLIDATION"
+  | "REPORTING"
+  | "FOLLOW_UP"
+  | "CLOSED";
+export type Priority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type TaskStatus =
+  | "PENDING"
+  | "READY"
+  | "IN_PROGRESS"
+  | "AWAITING_APPROVAL"
+  | "BLOCKED"
+  | "IN_REVIEW"
+  | "COMPLETED"
+  | "FAILED"
+  | "CANCELLED";
+export type Priority1 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "MessageType".
+ */
+export type MessageType = "REQUEST" | "RESULT" | "ALERT" | "QUESTION" | "ANSWER" | "REVIEW";
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "Confidence".
+ */
+export type Confidence = "LOW" | "MEDIUM" | "HIGH";
+/**
+ * ORACLE's rule: never present an assumption as a fact.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "ClaimKind".
+ */
+export type ClaimKind = "FACT" | "ASSUMPTION" | "SCENARIO" | "RECOMMENDATION";
+export type Confidence1 = "LOW" | "MEDIUM" | "HIGH";
+export type Confidence2 = "LOW" | "MEDIUM" | "HIGH";
+export type ApprovalState = "PENDING" | "APPROVED" | "REJECTED" | "EXPIRED";
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "EventType".
+ */
+export type EventType =
+  | "mission.created"
+  | "mission.phase_changed"
+  | "mission.closed"
+  | "task.created"
+  | "task.updated"
+  | "agent.state_changed"
+  | "message.sent"
+  | "report.submitted"
+  | "mission.report_ready"
+  | "approval.requested"
+  | "approval.decided"
+  | "log";
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "AdapterType".
+ */
+export type AdapterType1 = "claude" | "http" | "mcp" | "cli" | "mock";
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "AgentKind".
+ */
+export type AgentKind1 = "native" | "external";
+/**
+ * Operational status shown on the Agent Board.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "AgentStatus".
+ */
+export type AgentStatus1 =
+  "IDLE" | "WORKING" | "WAITING" | "COLLABORATING" | "REVIEWING" | "MONITORING" | "BLOCKED" | "COMPLETED" | "ERROR";
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "ApprovalState".
+ */
+export type ApprovalState1 = "PENDING" | "APPROVED" | "REJECTED" | "EXPIRED";
+/**
+ * The nine-step lifecycle from the project spec.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "MissionPhase".
+ */
+export type MissionPhase1 =
+  | "OBJECTIVE"
+  | "DECOMPOSITION"
+  | "DELEGATION"
+  | "EXECUTION"
+  | "COLLABORATION"
+  | "VALIDATION"
+  | "CONSOLIDATION"
+  | "REPORTING"
+  | "FOLLOW_UP"
+  | "CLOSED";
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "Priority".
+ */
+export type Priority2 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "TaskStatus".
+ */
+export type TaskStatus1 =
+  | "PENDING"
+  | "READY"
+  | "IN_PROGRESS"
+  | "AWAITING_APPROVAL"
+  | "BLOCKED"
+  | "IN_REVIEW"
+  | "COMPLETED"
+  | "FAILED"
+  | "CANCELLED";
+
+export interface AtlasContracts {
+  AgentDefinition?: AgentDefinition;
+  AgentState?: AgentState;
+  Mission?: Mission;
+  Task?: Task;
+  AgentMessage?: AgentMessage;
+  AgentReport?: AgentReport;
+  MissionReport?: MissionReport;
+  ApprovalRequest?: ApprovalRequest;
+  AtlasEvent?: AtlasEvent;
+}
+/**
+ * One file in /agents. Adding an agent = adding a YAML file.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "AgentDefinition".
+ */
+export interface AgentDefinition {
+  id: string;
+  name: string;
+  title: string;
+  description: string;
+  color: string;
+  kind: AgentKind;
+  adapter: AdapterType;
+  adapter_config: {
+    [k: string]: unknown;
+  };
+  model: string | null;
+  capabilities: string[];
+  tools: string[];
+  permissions: AgentPermissions;
+  system_prompt: string | null;
+  enabled: boolean;
+  is_orchestrator: boolean;
+}
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "AgentPermissions".
+ */
+export interface AgentPermissions {
+  can_delegate: boolean;
+  /**
+   * agent ids, '*' = all
+   */
+  can_message: string[];
+  requires_approval_for: ApprovalReason[];
+  max_parallel_tasks: number;
+}
+/**
+ * Live runtime state of one agent (what the Agent Board renders).
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "AgentState".
+ */
+export interface AgentState {
+  agent_id: string;
+  status: AgentStatus;
+  current_task_id: string | null;
+  /**
+   * one-line 'what I'm doing now'
+   */
+  activity: string | null;
+  collaborating_with: string[];
+  updated_at: string;
+}
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "Mission".
+ */
+export interface Mission {
+  id: string;
+  objective: string;
+  context: string | null;
+  phase: MissionPhase;
+  priority: Priority;
+  task_ids: string[];
+  final_report_id: string | null;
+  created_at: string;
+  closed_at: string | null;
+}
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "Task".
+ */
+export interface Task {
+  id: string;
+  mission_id: string;
+  title: string;
+  description: string;
+  /**
+   * agent id
+   */
+  assigned_to: string | null;
+  created_by: string;
+  status: TaskStatus;
+  priority: Priority1;
+  /**
+   * task ids
+   */
+  depends_on: string[];
+  requires_approval: boolean;
+  approval_reason: ApprovalReason | null;
+  progress: number;
+  parent_task_id: string | null;
+  result_report_id: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+/**
+ * Structured agent-to-agent message (spec section 9).
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "AgentMessage".
+ */
+export interface AgentMessage {
+  id: string;
+  mission_id: string;
+  task_id: string | null;
+  from: string;
+  to: string;
+  type: MessageType;
+  subject: string;
+  body: string;
+  attachments: Attachment[];
+  confidence: Confidence | null;
+  requires_response: boolean;
+  in_reply_to: string | null;
+  created_at: string;
+}
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "Attachment".
+ */
+export interface Attachment {
+  id: string;
+  name: string;
+  kind: "text" | "markdown" | "json" | "file" | "url";
+  uri: string | null;
+  content: string | null;
+}
+/**
+ * Agent-level report (spec section 10).
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "AgentReport".
+ */
+export interface AgentReport {
+  id: string;
+  mission_id: string;
+  task_id: string;
+  agent_id: string;
+  asked_to: string;
+  actions_taken: string[];
+  inputs_used: string[];
+  findings: Claim[];
+  unresolved: string[];
+  needs_agents: string[];
+  confidence: Confidence2;
+  limitations: string[];
+  attachments: Attachment[];
+  created_at: string;
+}
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "Claim".
+ */
+export interface Claim {
+  kind: ClaimKind;
+  statement: string;
+  sources: string[];
+  confidence: Confidence1;
+}
+/**
+ * ATLAS-level executive consolidation (spec section 10).
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "MissionReport".
+ */
+export interface MissionReport {
+  id: string;
+  mission_id: string;
+  executive_summary: string;
+  objective_status: "ACHIEVED" | "PARTIAL" | "NOT_ACHIEVED";
+  tasks_completed: string[];
+  tasks_pending: string[];
+  key_findings: Claim[];
+  conflicts: string[];
+  assumptions: string[];
+  needs_human_attention: string[];
+  next_actions: string[];
+  references: string[];
+  agent_report_ids: string[];
+  created_at: string;
+}
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "ApprovalRequest".
+ */
+export interface ApprovalRequest {
+  id: string;
+  mission_id: string;
+  task_id: string | null;
+  requested_by: string;
+  reason: ApprovalReason;
+  title: string;
+  detail: string;
+  proposed_action: string | null;
+  options: string[];
+  state: ApprovalState;
+  decision_note: string | null;
+  created_at: string;
+  decided_at: string | null;
+}
+/**
+ * Every event carries a human-readable `summary` for the Activity Feed
+ * and a typed `payload` for the widgets that react to it.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "AtlasEvent".
+ */
+export interface AtlasEvent {
+  id: string;
+  seq: number;
+  type: EventType;
+  mission_id: string | null;
+  agent_id: string | null;
+  summary: string;
+  payload: {
+    [k: string]: unknown;
+  };
+  ts: string;
+}

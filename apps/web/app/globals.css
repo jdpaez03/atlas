@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+@theme {
+  --color-void: #05070d;
+  --color-panel: #0b1020;
+  --color-edge: #1c2540;
+  --color-signal: #7dd3fc;
+  --font-mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+}
+
+body { background: var(--color-void); color: #cbd5e1; }
+.grid-bg {
+  background-image: linear-gradient(rgba(125,211,252,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(125,211,252,.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+}

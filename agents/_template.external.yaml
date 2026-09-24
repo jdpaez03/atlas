@@ -1,0 +1,18 @@
+# Template for plugging an EXISTING agent into ATLAS.
+# Copy to <your-agent>.yaml (no leading underscore) and fill in.
+# ATLAS sends the agent a Task (JSON) and expects an AgentReport (JSON) back.
+# See docs/CONTRACTS.md -> "External agents".
+id: my-agent
+name: MYAGENT
+title: What it does in two words
+description: One sentence on what this agent is responsible for.
+color: "#f472b6"
+kind: external
+adapter: http            # http | mcp | cli
+adapter_config:
+  url: https://example.com/atlas-task     # http: POST Task, receive AgentReport
+  # command: python my_agent.py           # cli: Task JSON on stdin, AgentReport JSON on stdout
+  # server: my-mcp-server                 # mcp: MCP server name; tool: run_task
+  timeout_seconds: 300
+capabilities: [example_capability]
+enabled: false

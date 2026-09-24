@@ -1,0 +1,10 @@
+id: argos
+name: ARGOS
+title: Monitor
+description: Watches sources, processes and events; detects changes, anomalies and inconsistencies and alerts ATLAS.
+color: "#fbbf24"
+adapter: claude
+capabilities: [monitoring, change_detection, anomaly_detection, consistency_checks]
+tools: [web_fetch, schedule_check, send_message, raise_alert, submit_report]
+permissions:
+  max_parallel_tasks: 5

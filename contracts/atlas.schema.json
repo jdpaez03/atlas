@@ -1,0 +1,1100 @@
+{
+  "$defs": {
+    "AdapterType": {
+      "enum": [
+        "claude",
+        "http",
+        "mcp",
+        "cli",
+        "mock"
+      ],
+      "title": "AdapterType",
+      "type": "string"
+    },
+    "AgentDefinition": {
+      "description": "One file in /agents. Adding an agent = adding a YAML file.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "color": {
+          "default": "#7dd3fc",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentKind",
+          "default": "native"
+        },
+        "adapter": {
+          "$ref": "#/$defs/AdapterType",
+          "default": "claude"
+        },
+        "adapter_config": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "permissions": {
+          "$ref": "#/$defs/AgentPermissions"
+        },
+        "system_prompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "is_orchestrator": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "title",
+        "description",
+        "color",
+        "kind",
+        "adapter",
+        "adapter_config",
+        "model",
+        "capabilities",
+        "tools",
+        "permissions",
+        "system_prompt",
+        "enabled",
+        "is_orchestrator"
+      ],
+      "title": "AgentDefinition",
+      "type": "object"
+    },
+    "AgentKind": {
+      "enum": [
+        "native",
+        "external"
+      ],
+      "title": "AgentKind",
+      "type": "string"
+    },
+    "AgentMessage": {
+      "description": "Structured agent-to-agent message (spec section 9).",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "mission_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/MessageType"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Confidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "requires_response": {
+          "default": false,
+          "type": "boolean"
+        },
+        "in_reply_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "mission_id",
+        "task_id",
+        "from",
+        "to",
+        "type",
+        "subject",
+        "body",
+        "attachments",
+        "confidence",
+        "requires_response",
+        "in_reply_to",
+        "created_at"
+      ],
+      "title": "AgentMessage",
+      "type": "object"
+    },
+    "AgentPermissions": {
+      "properties": {
+        "can_delegate": {
+          "default": false,
+          "type": "boolean"
+        },
+        "can_message": {
+          "description": "agent ids, '*' = all",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requires_approval_for": {
+          "items": {
+            "$ref": "#/$defs/ApprovalReason"
+          },
+          "type": "array"
+        },
+        "max_parallel_tasks": {
+          "default": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "can_delegate",
+        "can_message",
+        "requires_approval_for",
+        "max_parallel_tasks"
+      ],
+      "title": "AgentPermissions",
+      "type": "object"
+    },
+    "AgentReport": {
+      "description": "Agent-level report (spec section 10).",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "mission_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "asked_to": {
+          "type": "string"
+        },
+        "actions_taken": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "inputs_used": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "type": "array"
+        },
+        "unresolved": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "needs_agents": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence",
+          "default": "MEDIUM"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "mission_id",
+        "task_id",
+        "agent_id",
+        "asked_to",
+        "actions_taken",
+        "inputs_used",
+        "findings",
+        "unresolved",
+        "needs_agents",
+        "confidence",
+        "limitations",
+        "attachments",
+        "created_at"
+      ],
+      "title": "AgentReport",
+      "type": "object"
+    },
+    "AgentState": {
+      "description": "Live runtime state of one agent (what the Agent Board renders).",
+      "properties": {
+        "agent_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentStatus",
+          "default": "IDLE"
+        },
+        "current_task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "activity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "one-line 'what I'm doing now'"
+        },
+        "collaborating_with": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_id",
+        "status",
+        "current_task_id",
+        "activity",
+        "collaborating_with",
+        "updated_at"
+      ],
+      "title": "AgentState",
+      "type": "object"
+    },
+    "AgentStatus": {
+      "description": "Operational status shown on the Agent Board.",
+      "enum": [
+        "IDLE",
+        "WORKING",
+        "WAITING",
+        "COLLABORATING",
+        "REVIEWING",
+        "MONITORING",
+        "BLOCKED",
+        "COMPLETED",
+        "ERROR"
+      ],
+      "title": "AgentStatus",
+      "type": "string"
+    },
+    "ApprovalReason": {
+      "description": "Why a human must intervene (spec section 11).",
+      "enum": [
+        "EXTERNAL_COMMUNICATION",
+        "FINANCIAL_COMMITMENT",
+        "CONSEQUENTIAL_DECISION",
+        "AMBIGUOUS_OR_CONFLICTING",
+        "IRREVERSIBLE_ACTION",
+        "INSUFFICIENT_INFORMATION"
+      ],
+      "title": "ApprovalReason",
+      "type": "string"
+    },
+    "ApprovalRequest": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "mission_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "requested_by": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/ApprovalReason"
+        },
+        "title": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "proposed_action": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "options": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/ApprovalState",
+          "default": "PENDING"
+        },
+        "decision_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "decided_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "mission_id",
+        "task_id",
+        "requested_by",
+        "reason",
+        "title",
+        "detail",
+        "proposed_action",
+        "options",
+        "state",
+        "decision_note",
+        "created_at",
+        "decided_at"
+      ],
+      "title": "ApprovalRequest",
+      "type": "object"
+    },
+    "ApprovalState": {
+      "enum": [
+        "PENDING",
+        "APPROVED",
+        "REJECTED",
+        "EXPIRED"
+      ],
+      "title": "ApprovalState",
+      "type": "string"
+    },
+    "AtlasEvent": {
+      "description": "Every event carries a human-readable `summary` for the Activity Feed\nand a typed `payload` for the widgets that react to it.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "seq": {
+          "default": 0,
+          "type": "integer"
+        },
+        "type": {
+          "$ref": "#/$defs/EventType"
+        },
+        "mission_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "agent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "summary": {
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "ts": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "seq",
+        "type",
+        "mission_id",
+        "agent_id",
+        "summary",
+        "payload",
+        "ts"
+      ],
+      "title": "AtlasEvent",
+      "type": "object"
+    },
+    "Attachment": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "default": "text",
+          "enum": [
+            "text",
+            "markdown",
+            "json",
+            "file",
+            "url"
+          ],
+          "type": "string"
+        },
+        "uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "uri",
+        "content"
+      ],
+      "title": "Attachment",
+      "type": "object"
+    },
+    "Claim": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ClaimKind"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "sources": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "confidence": {
+          "$ref": "#/$defs/Confidence",
+          "default": "MEDIUM"
+        }
+      },
+      "required": [
+        "kind",
+        "statement",
+        "sources",
+        "confidence"
+      ],
+      "title": "Claim",
+      "type": "object"
+    },
+    "ClaimKind": {
+      "description": "ORACLE's rule: never present an assumption as a fact.",
+      "enum": [
+        "FACT",
+        "ASSUMPTION",
+        "SCENARIO",
+        "RECOMMENDATION"
+      ],
+      "title": "ClaimKind",
+      "type": "string"
+    },
+    "Confidence": {
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH"
+      ],
+      "title": "Confidence",
+      "type": "string"
+    },
+    "EventType": {
+      "enum": [
+        "mission.created",
+        "mission.phase_changed",
+        "mission.closed",
+        "task.created",
+        "task.updated",
+        "agent.state_changed",
+        "message.sent",
+        "report.submitted",
+        "mission.report_ready",
+        "approval.requested",
+        "approval.decided",
+        "log"
+      ],
+      "title": "EventType",
+      "type": "string"
+    },
+    "MessageType": {
+      "enum": [
+        "REQUEST",
+        "RESULT",
+        "ALERT",
+        "QUESTION",
+        "ANSWER",
+        "REVIEW"
+      ],
+      "title": "MessageType",
+      "type": "string"
+    },
+    "Mission": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "objective": {
+          "type": "string"
+        },
+        "context": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "phase": {
+          "$ref": "#/$defs/MissionPhase",
+          "default": "OBJECTIVE"
+        },
+        "priority": {
+          "$ref": "#/$defs/Priority",
+          "default": "MEDIUM"
+        },
+        "task_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "final_report_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "closed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "objective",
+        "context",
+        "phase",
+        "priority",
+        "task_ids",
+        "final_report_id",
+        "created_at",
+        "closed_at"
+      ],
+      "title": "Mission",
+      "type": "object"
+    },
+    "MissionPhase": {
+      "description": "The nine-step lifecycle from the project spec.",
+      "enum": [
+        "OBJECTIVE",
+        "DECOMPOSITION",
+        "DELEGATION",
+        "EXECUTION",
+        "COLLABORATION",
+        "VALIDATION",
+        "CONSOLIDATION",
+        "REPORTING",
+        "FOLLOW_UP",
+        "CLOSED"
+      ],
+      "title": "MissionPhase",
+      "type": "string"
+    },
+    "MissionReport": {
+      "description": "ATLAS-level executive consolidation (spec section 10).",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "mission_id": {
+          "type": "string"
+        },
+        "executive_summary": {
+          "type": "string"
+        },
+        "objective_status": {
+          "enum": [
+            "ACHIEVED",
+            "PARTIAL",
+            "NOT_ACHIEVED"
+          ],
+          "type": "string"
+        },
+        "tasks_completed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tasks_pending": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "key_findings": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "type": "array"
+        },
+        "conflicts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "assumptions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "needs_human_attention": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "next_actions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "references": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "agent_report_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "mission_id",
+        "executive_summary",
+        "objective_status",
+        "tasks_completed",
+        "tasks_pending",
+        "key_findings",
+        "conflicts",
+        "assumptions",
+        "needs_human_attention",
+        "next_actions",
+        "references",
+        "agent_report_ids",
+        "created_at"
+      ],
+      "title": "MissionReport",
+      "type": "object"
+    },
+    "Priority": {
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "CRITICAL"
+      ],
+      "title": "Priority",
+      "type": "string"
+    },
+    "Task": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "mission_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "assigned_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "agent id"
+        },
+        "created_by": {
+          "default": "atlas",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/TaskStatus",
+          "default": "PENDING"
+        },
+        "priority": {
+          "$ref": "#/$defs/Priority",
+          "default": "MEDIUM"
+        },
+        "depends_on": {
+          "description": "task ids",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requires_approval": {
+          "default": false,
+          "type": "boolean"
+        },
+        "approval_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalReason"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "progress": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "parent_task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "result_report_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "mission_id",
+        "title",
+        "description",
+        "assigned_to",
+        "created_by",
+        "status",
+        "priority",
+        "depends_on",
+        "requires_approval",
+        "approval_reason",
+        "progress",
+        "parent_task_id",
+        "result_report_id",
+        "created_at",
+        "started_at",
+        "completed_at"
+      ],
+      "title": "Task",
+      "type": "object"
+    },
+    "TaskStatus": {
+      "enum": [
+        "PENDING",
+        "READY",
+        "IN_PROGRESS",
+        "AWAITING_APPROVAL",
+        "BLOCKED",
+        "IN_REVIEW",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED"
+      ],
+      "title": "TaskStatus",
+      "type": "string"
+    }
+  },
+  "title": "AtlasContracts",
+  "type": "object",
+  "properties": {
+    "AgentDefinition": {
+      "$ref": "#/$defs/AgentDefinition"
+    },
+    "AgentState": {
+      "$ref": "#/$defs/AgentState"
+    },
+    "Mission": {
+      "$ref": "#/$defs/Mission"
+    },
+    "Task": {
+      "$ref": "#/$defs/Task"
+    },
+    "AgentMessage": {
+      "$ref": "#/$defs/AgentMessage"
+    },
+    "AgentReport": {
+      "$ref": "#/$defs/AgentReport"
+    },
+    "MissionReport": {
+      "$ref": "#/$defs/MissionReport"
+    },
+    "ApprovalRequest": {
+      "$ref": "#/$defs/ApprovalRequest"
+    },
+    "AtlasEvent": {
+      "$ref": "#/$defs/AtlasEvent"
+    }
+  }
+}

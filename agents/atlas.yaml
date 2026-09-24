@@ -1,0 +1,13 @@
+id: atlas
+name: ATLAS
+title: Orchestrator / Commander
+description: Receives objectives, decomposes them into tasks, delegates to specialists, monitors progress, resolves conflicts and consolidates the final report.
+color: "#e2e8f0"
+is_orchestrator: true
+adapter: claude
+capabilities: [decomposition, delegation, supervision, consolidation, reporting]
+tools: [create_task, assign_task, send_message, request_approval, submit_mission_report]
+permissions:
+  can_delegate: true
+  max_parallel_tasks: 10
+  requires_approval_for: [IRREVERSIBLE_ACTION, FINANCIAL_COMMITMENT, EXTERNAL_COMMUNICATION]
