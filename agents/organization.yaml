@@ -1,0 +1,20 @@
+# Nodes are isolated operating contexts. A mission lives in exactly one node.
+# Node-bound agents only work in their node; shared agents (nodes: ['*']) serve all
+# nodes but never carry context from one node into another.
+nodes:
+  - id: corporate
+    name: Corporate
+    description: Company work — strategy, finance, operations, EOS.
+    color: "#7dd3fc"
+  - id: personal
+    name: Personal
+    description: Personal matters. Fully isolated from Corporate.
+    color: "#f9a8d4"
+    enabled: false   # structure to be defined
+
+divisions:
+  - id: eos
+    name: EOS
+    node: corporate
+    description: Entrepreneurial Operating System specialists — one per EOS component.
+    color: "#fb923c"

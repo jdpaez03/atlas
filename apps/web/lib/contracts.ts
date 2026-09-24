@@ -1,7 +1,7 @@
 /* Generated from contracts/atlas.schema.json — do not edit. Run: npm run gen:types */
 
 export type AgentKind = "native" | "external";
-export type AdapterType = "claude" | "http" | "mcp" | "cli" | "mock";
+export type AdapterType = "claude" | "http" | "mcp" | "cli" | "claude_md" | "mock";
 /**
  * Why a human must intervene (spec section 11).
  *
@@ -87,7 +87,7 @@ export type EventType =
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
  * via the `definition` "AdapterType".
  */
-export type AdapterType1 = "claude" | "http" | "mcp" | "cli" | "mock";
+export type AdapterType1 = "claude" | "http" | "mcp" | "cli" | "claude_md" | "mock";
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
  * via the `definition` "AgentKind".
@@ -144,6 +144,8 @@ export type TaskStatus1 =
   | "CANCELLED";
 
 export interface AtlasContracts {
+  NodeDefinition?: NodeDefinition;
+  DivisionDefinition?: DivisionDefinition;
   AgentDefinition?: AgentDefinition;
   AgentState?: AgentState;
   Mission?: Mission;
@@ -153,6 +155,40 @@ export interface AtlasContracts {
   MissionReport?: MissionReport;
   ApprovalRequest?: ApprovalRequest;
   AtlasEvent?: AtlasEvent;
+  WorldState?: WorldState;
+}
+/**
+ * An isolated operating context (e.g. corporate, personal).
+ *
+ * Isolation rule: a mission lives in exactly one node. Node-bound agents only work on missions of
+ * their node; shared agents (nodes: ['*']) serve every node but never carry context between them.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "NodeDefinition".
+ */
+export interface NodeDefinition {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+  enabled: boolean;
+}
+/**
+ * A team of specialist agents shown as one expandable unit (e.g. the EOS division).
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "DivisionDefinition".
+ */
+export interface DivisionDefinition {
+  id: string;
+  name: string;
+  node: string;
+  description: string;
+  color: string;
+  /**
+   * agent id that triages work for the division
+   */
+  lead: string | null;
 }
 /**
  * One file in /agents. Adding an agent = adding a YAML file.
@@ -178,6 +214,11 @@ export interface AgentDefinition {
   system_prompt: string | null;
   enabled: boolean;
   is_orchestrator: boolean;
+  /**
+   * node ids, '*' = shared core agent
+   */
+  nodes: string[];
+  division: string | null;
 }
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
@@ -216,6 +257,7 @@ export interface AgentState {
 export interface Mission {
   id: string;
   objective: string;
+  node: string;
   context: string | null;
   phase: MissionPhase;
   priority: Priority;
@@ -376,4 +418,21 @@ export interface AtlasEvent {
     [k: string]: unknown;
   };
   ts: string;
+}
+/**
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "WorldState".
+ */
+export interface WorldState {
+  nodes: NodeDefinition[];
+  divisions: DivisionDefinition[];
+  agents: AgentDefinition[];
+  agent_states: AgentState[];
+  missions: Mission[];
+  tasks: Task[];
+  messages: AgentMessage[];
+  agent_reports: AgentReport[];
+  mission_reports: MissionReport[];
+  approvals: ApprovalRequest[];
+  last_seq: number;
 }

@@ -1,0 +1,13 @@
+id: eos-data
+name: EOS·DATA
+title: Data
+description: Scorecard, measurables per seat, thresholds and data integrity — what the system fails to detect.
+color: "#fb923c"
+kind: external
+adapter: claude_md
+adapter_config:
+  # The agent prompt stays on your machine; set ATLAS_CLAUDE_AGENTS_DIR in .env
+  path: ${ATLAS_CLAUDE_AGENTS_DIR}/eos-data.md
+nodes: [corporate]
+division: eos
+capabilities: [eos, data]

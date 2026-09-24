@@ -1,0 +1,13 @@
+id: eos-process
+name: EOS·PROCESS
+title: Process
+description: Core processes, documentation and standardization — knowledge living in people instead of the system.
+color: "#fb923c"
+kind: external
+adapter: claude_md
+adapter_config:
+  # The agent prompt stays on your machine; set ATLAS_CLAUDE_AGENTS_DIR in .env
+  path: ${ATLAS_CLAUDE_AGENTS_DIR}/eos-process.md
+nodes: [corporate]
+division: eos
+capabilities: [eos, process]

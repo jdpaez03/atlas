@@ -1,0 +1,13 @@
+id: eos-issues
+name: EOS·ISSUES
+title: Issues
+description: Issues List and IDS quality — symptoms vs. root causes, issues that never close.
+color: "#fb923c"
+kind: external
+adapter: claude_md
+adapter_config:
+  # The agent prompt stays on your machine; set ATLAS_CLAUDE_AGENTS_DIR in .env
+  path: ${ATLAS_CLAUDE_AGENTS_DIR}/eos-issues.md
+nodes: [corporate]
+division: eos
+capabilities: [eos, issues]

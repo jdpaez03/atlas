@@ -14,8 +14,8 @@ from atlas.core import models as m
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS = [
-    m.AgentDefinition, m.AgentState, m.Mission, m.Task, m.AgentMessage, m.AgentReport,
-    m.MissionReport, m.ApprovalRequest, m.AtlasEvent,
+    m.NodeDefinition, m.DivisionDefinition, m.AgentDefinition, m.AgentState, m.Mission, m.Task, m.AgentMessage, m.AgentReport,
+    m.MissionReport, m.ApprovalRequest, m.AtlasEvent, m.WorldState,
 ]
 
 _, schema = models_json_schema([(model, "serialization") for model in MODELS], by_alias=True,

@@ -6,6 +6,7 @@
         "http",
         "mcp",
         "cli",
+        "claude_md",
         "mock"
       ],
       "title": "AdapterType",
@@ -88,6 +89,24 @@
         "is_orchestrator": {
           "default": false,
           "type": "boolean"
+        },
+        "nodes": {
+          "description": "node ids, '*' = shared core agent",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "division": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -105,7 +124,9 @@
         "permissions",
         "system_prompt",
         "enabled",
-        "is_orchestrator"
+        "is_orchestrator",
+        "nodes",
+        "division"
       ],
       "title": "AgentDefinition",
       "type": "object"
@@ -681,6 +702,52 @@
       "title": "Confidence",
       "type": "string"
     },
+    "DivisionDefinition": {
+      "description": "A team of specialist agents shown as one expandable unit (e.g. the EOS division).",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "node": {
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "color": {
+          "default": "#7dd3fc",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "type": "string"
+        },
+        "lead": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "agent id that triages work for the division"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "node",
+        "description",
+        "color",
+        "lead"
+      ],
+      "title": "DivisionDefinition",
+      "type": "object"
+    },
     "EventType": {
       "enum": [
         "mission.created",
@@ -717,6 +784,10 @@
           "type": "string"
         },
         "objective": {
+          "type": "string"
+        },
+        "node": {
+          "default": "corporate",
           "type": "string"
         },
         "context": {
@@ -775,6 +846,7 @@
       "required": [
         "id",
         "objective",
+        "node",
         "context",
         "phase",
         "priority",
@@ -899,6 +971,40 @@
         "created_at"
       ],
       "title": "MissionReport",
+      "type": "object"
+    },
+    "NodeDefinition": {
+      "description": "An isolated operating context (e.g. corporate, personal).\n\nIsolation rule: a mission lives in exactly one node. Node-bound agents only work on missions of\ntheir node; shared agents (nodes: ['*']) serve every node but never carry context between them.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "color": {
+          "default": "#7dd3fc",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "description",
+        "color",
+        "enabled"
+      ],
+      "title": "NodeDefinition",
       "type": "object"
     },
     "Priority": {
@@ -1064,11 +1170,100 @@
       ],
       "title": "TaskStatus",
       "type": "string"
+    },
+    "WorldState": {
+      "properties": {
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/NodeDefinition"
+          },
+          "type": "array"
+        },
+        "divisions": {
+          "items": {
+            "$ref": "#/$defs/DivisionDefinition"
+          },
+          "type": "array"
+        },
+        "agents": {
+          "items": {
+            "$ref": "#/$defs/AgentDefinition"
+          },
+          "type": "array"
+        },
+        "agent_states": {
+          "items": {
+            "$ref": "#/$defs/AgentState"
+          },
+          "type": "array"
+        },
+        "missions": {
+          "items": {
+            "$ref": "#/$defs/Mission"
+          },
+          "type": "array"
+        },
+        "tasks": {
+          "items": {
+            "$ref": "#/$defs/Task"
+          },
+          "type": "array"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/AgentMessage"
+          },
+          "type": "array"
+        },
+        "agent_reports": {
+          "items": {
+            "$ref": "#/$defs/AgentReport"
+          },
+          "type": "array"
+        },
+        "mission_reports": {
+          "items": {
+            "$ref": "#/$defs/MissionReport"
+          },
+          "type": "array"
+        },
+        "approvals": {
+          "items": {
+            "$ref": "#/$defs/ApprovalRequest"
+          },
+          "type": "array"
+        },
+        "last_seq": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "nodes",
+        "divisions",
+        "agents",
+        "agent_states",
+        "missions",
+        "tasks",
+        "messages",
+        "agent_reports",
+        "mission_reports",
+        "approvals",
+        "last_seq"
+      ],
+      "title": "WorldState",
+      "type": "object"
     }
   },
   "title": "AtlasContracts",
   "type": "object",
   "properties": {
+    "NodeDefinition": {
+      "$ref": "#/$defs/NodeDefinition"
+    },
+    "DivisionDefinition": {
+      "$ref": "#/$defs/DivisionDefinition"
+    },
     "AgentDefinition": {
       "$ref": "#/$defs/AgentDefinition"
     },
@@ -1095,6 +1290,9 @@
     },
     "AtlasEvent": {
       "$ref": "#/$defs/AtlasEvent"
+    },
+    "WorldState": {
+      "$ref": "#/$defs/WorldState"
     }
   }
 }

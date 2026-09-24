@@ -143,6 +143,7 @@ class AdapterType(str, Enum):
     HTTP = "http"  # external: POST a Task, receive a Report (webhook, n8n, Make, custom API)
     MCP = "mcp"  # external: an MCP server whose tools the agent exposes
     CLI = "cli"  # external: a local script/command (stdin Task JSON -> stdout Report JSON)
+    CLAUDE_MD = "claude_md"  # external: a Claude Code agent file (.md) run on the Claude API; prompt stays local
     MOCK = "mock"  # scripted agent for the simulated Command Center
 
 
@@ -151,6 +152,31 @@ class AgentPermissions(AtlasModel):
     can_message: list[str] = Field(default_factory=lambda: ["*"], description="agent ids, '*' = all")
     requires_approval_for: list[ApprovalReason] = Field(default_factory=list)
     max_parallel_tasks: int = 1
+
+
+class NodeDefinition(AtlasModel):
+    """An isolated operating context (e.g. corporate, personal).
+
+    Isolation rule: a mission lives in exactly one node. Node-bound agents only work on missions of
+    their node; shared agents (nodes: ['*']) serve every node but never carry context between them.
+    """
+
+    id: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
+    name: str
+    description: str = ""
+    color: str = Field(default="#7dd3fc", pattern=r"^#[0-9a-fA-F]{6}$")
+    enabled: bool = True
+
+
+class DivisionDefinition(AtlasModel):
+    """A team of specialist agents shown as one expandable unit (e.g. the EOS division)."""
+
+    id: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
+    name: str
+    node: str
+    description: str = ""
+    color: str = Field(default="#7dd3fc", pattern=r"^#[0-9a-fA-F]{6}$")
+    lead: str | None = Field(default=None, description="agent id that triages work for the division")
 
 
 class AgentDefinition(AtlasModel):
@@ -171,6 +197,8 @@ class AgentDefinition(AtlasModel):
     system_prompt: str | None = None
     enabled: bool = True
     is_orchestrator: bool = False
+    nodes: list[str] = Field(default_factory=lambda: ["*"], description="node ids, '*' = shared core agent")
+    division: str | None = None
 
 
 class AgentState(AtlasModel):
@@ -220,6 +248,7 @@ class Task(AtlasModel):
 class Mission(AtlasModel):
     id: str = Field(default_factory=lambda: _id("msn"))
     objective: str
+    node: str = "corporate"
     context: str | None = None
     phase: MissionPhase = MissionPhase.OBJECTIVE
     priority: Priority = Priority.MEDIUM
@@ -355,3 +384,22 @@ class AtlasEvent(AtlasModel):
     summary: str
     payload: dict[str, Any] = Field(default_factory=dict)
     ts: datetime = Field(default_factory=_now)
+
+
+# ---------------------------------------------------------------------------
+# Snapshot (GET /state) — everything the Command Center needs on load
+# ---------------------------------------------------------------------------
+
+
+class WorldState(AtlasModel):
+    nodes: list[NodeDefinition] = Field(default_factory=list)
+    divisions: list[DivisionDefinition] = Field(default_factory=list)
+    agents: list[AgentDefinition] = Field(default_factory=list)
+    agent_states: list[AgentState] = Field(default_factory=list)
+    missions: list[Mission] = Field(default_factory=list)
+    tasks: list[Task] = Field(default_factory=list)
+    messages: list[AgentMessage] = Field(default_factory=list)
+    agent_reports: list[AgentReport] = Field(default_factory=list)
+    mission_reports: list[MissionReport] = Field(default_factory=list)
+    approvals: list[ApprovalRequest] = Field(default_factory=list)
+    last_seq: int = 0

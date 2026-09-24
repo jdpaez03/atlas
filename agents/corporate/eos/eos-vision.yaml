@@ -1,0 +1,13 @@
+id: eos-vision
+name: EOS·VISION
+title: Vision
+description: V/TO, Core Values, Core Focus, 10-Year Target, 3-Year Picture and 1-Year Plan — is the vision clear and shared?
+color: "#fb923c"
+kind: external
+adapter: claude_md
+adapter_config:
+  # The agent prompt stays on your machine; set ATLAS_CLAUDE_AGENTS_DIR in .env
+  path: ${ATLAS_CLAUDE_AGENTS_DIR}/eos-vision.md
+nodes: [corporate]
+division: eos
+capabilities: [eos, vision]

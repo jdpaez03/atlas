@@ -29,3 +29,8 @@ work in parallel against it without colliding.
   can be plugged in early and kept or dropped later.
 - 2026-09-23 · Anthropic API key lives only in ATLAS's `.env` (never a global env var, which would make
   Claude Code bill the key instead of the Max plan).
+- 2026-09-23 · **Nodes**: missions live in one node (Corporate, Personal…). Node-bound agents never leave their
+  node; shared core agents serve all nodes without carrying context across. Personal node structure TBD.
+- 2026-09-23 · **EOS division** (Corporate): the six existing Claude Code EOS agents (Vision, People, Data, Issues,
+  Process, Traction) join via the `claude_md` adapter. Their prompts stay on the local machine
+  (`ATLAS_CLAUDE_AGENTS_DIR`), never in the public repo.

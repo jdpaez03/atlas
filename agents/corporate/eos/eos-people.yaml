@@ -1,0 +1,13 @@
+id: eos-people
+name: EOS·PEOPLE
+title: People
+description: Accountability Chart, seats, GWC and Core Values — right people in the right seats.
+color: "#fb923c"
+kind: external
+adapter: claude_md
+adapter_config:
+  # The agent prompt stays on your machine; set ATLAS_CLAUDE_AGENTS_DIR in .env
+  path: ${ATLAS_CLAUDE_AGENTS_DIR}/eos-people.md
+nodes: [corporate]
+division: eos
+capabilities: [eos, people]

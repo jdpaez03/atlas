@@ -8,11 +8,13 @@ title: What it does in two words
 description: One sentence on what this agent is responsible for.
 color: "#f472b6"
 kind: external
-adapter: http            # http | mcp | cli
+adapter: http            # http | mcp | cli | claude_md
 adapter_config:
   url: https://example.com/atlas-task     # http: POST Task, receive AgentReport
   # command: python my_agent.py           # cli: Task JSON on stdin, AgentReport JSON on stdout
   # server: my-mcp-server                 # mcp: MCP server name; tool: run_task
+  # path: ${ATLAS_CLAUDE_AGENTS_DIR}/x.md  # claude_md: a Claude Code agent file
   timeout_seconds: 300
 capabilities: [example_capability]
+nodes: [corporate]      # or ["*"] for a shared agent
 enabled: false
