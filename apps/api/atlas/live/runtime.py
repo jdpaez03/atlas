@@ -73,13 +73,18 @@ class LiveConfig:
     consult_max_tokens: int = 1500
 
     @classmethod
-    def from_env(cls) -> LiveConfig:
+    def from_env(cls, backend: str = "api") -> LiveConfig:
+        """Defaults differ per backend: on `subscription` the models are Claude Code aliases, web search is
+        on unless ATLAS_WEB_SEARCH=0 (it's included in the plan), and agents get 12 turns (a web search
+        is a turn there)."""
+        sub = backend == "subscription"
+        raw_web = os.getenv("ATLAS_WEB_SEARCH", "").strip().lower()
         return cls(
-            models=ModelConfig.from_env(),
+            models=ModelConfig.from_env(backend),
             max_concurrency=_env_int("ATLAS_MAX_CONCURRENCY", 4),
-            max_turns=_env_int("ATLAS_MAX_TURNS", 8, minimum=2),
+            max_turns=_env_int("ATLAS_MAX_TURNS", 12 if sub else 8, minimum=2),
             max_consults=_env_int("ATLAS_MAX_CONSULTS", 2, minimum=0),
-            web_search=os.getenv("ATLAS_WEB_SEARCH", "0").strip().lower() in ("1", "true", "yes", "on"),
+            web_search=raw_web in ("1", "true", "yes", "on") if raw_web else sub,
             web_search_tool=os.getenv("ATLAS_WEB_SEARCH_TOOL") or DEFAULT_WEB_SEARCH_TOOL,
         )
 
@@ -326,15 +331,7 @@ class AgentRun:
                                   with_=[self.aid])
         ok = True
         try:
-            resp = await sc.meter.create(
-                model=sc.config.models.fast,
-                max_tokens=sc.config.consult_max_tokens,
-                system=system_blocks(target.role_prompt, CONSULT_PROTOCOL,
-                                     context_block(sc.context_for(target.agent))),
-                messages=[{"role": "user",
-                           "content": consult_message(sc.objective, self.agent.agent.name, question)}],
-            )
-            answer = response_text(resp) or "(no answer)"
+            answer = await self._ask(target, question) or "(no answer)"
         except LLMError as exc:
             ok = False
             answer = f"The consultation failed: {exc}"
@@ -347,6 +344,17 @@ class AgentRun:
             )
         await self._activity(f"Working on '{task.title}'")
         return _tool_result(tool_id, answer, error=not ok)
+
+    async def _ask(self, target: ResolvedAgent, question: str) -> str:
+        """One LLM call answering a consultation with the target agent's role prompt (fast model, no tools)."""
+        sc = self.scope
+        resp = await sc.meter.create(
+            model=sc.config.models.fast,
+            max_tokens=sc.config.consult_max_tokens,
+            system=system_blocks(target.role_prompt, CONSULT_PROTOCOL, context_block(sc.context_for(target.agent))),
+            messages=[{"role": "user", "content": consult_message(sc.objective, self.agent.agent.name, question)}],
+        )
+        return response_text(resp)
 
     async def _restore(self, agent_id: str, prev: AgentState, mine: AgentState) -> None:
         """Put the consulted agent back as it was, unless it changed state in the meantime."""

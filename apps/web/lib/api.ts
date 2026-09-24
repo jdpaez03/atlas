@@ -23,6 +23,12 @@ export type MissionMode = "simulated" | "live";
 /** GET /config (docs/LIVE.md). A 404 (Phase 1 backend) is treated as "live not available". */
 export interface AtlasConfig {
   live_available: boolean;
+  /** What runs live missions: the Claude API (key) or the user's Claude plan via Claude Code. */
+  backend?: "api" | "subscription" | null;
+  /** "api_equivalent": plan usage priced at API rates (not billed). */
+  cost_basis?: "api" | "api_equivalent" | null;
+  /** Why live is unavailable, in plain words. */
+  live_hint?: string | null;
   models: { orchestrator?: string | null; default?: string | null };
   web_search: boolean;
   context_nodes: string[];
@@ -74,6 +80,9 @@ export const api = {
     const c = await json<Partial<AtlasConfig>>(res);
     return {
       live_available: !!c.live_available,
+      backend: c.backend ?? null,
+      cost_basis: c.cost_basis ?? null,
+      live_hint: c.live_hint ?? null,
       models: c.models ?? {},
       web_search: !!c.web_search,
       context_nodes: Array.isArray(c.context_nodes) ? c.context_nodes : [],

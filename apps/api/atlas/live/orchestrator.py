@@ -28,8 +28,10 @@ from ..core.models import (
 )
 from ..core.store import WorldStore
 from .agent_loader import AgentLoader, ResolvedAgent
+from .backend import BackendInfo, detect_backend
 from .context import NodeContext
-from .llm import LLMClient, LLMError, Meter, block_to_param, tool_uses
+from .executor import ApiExecutor, Executor
+from .llm import LLMClient, LLMError, Meter, UsageLimitError
 from .pricing import PriceTable
 from .prompts import (
     ORCHESTRATOR,
@@ -38,14 +40,11 @@ from .prompts import (
     context_block,
     create_plan_tool,
     followups_tool,
-    plan_errors_message,
     planning_message,
     render_report,
     review_message,
-    system_blocks,
 )
 from .runtime import (
-    AgentRun,
     LiveConfig,
     MissionScope,
     _enum,
@@ -159,16 +158,19 @@ def _roster_entry(r: ResolvedAgent) -> dict[str, Any]:
 
 
 class LiveMission:
-    def __init__(self, engine: LiveEngine, mission: Mission):
+    def __init__(self, engine: LiveEngine, mission: Mission, backend: str = "api"):
         self.engine = engine
         self.store: WorldStore = engine.store
         self.mission_id = mission.id
-        self.config = engine.config
-        orchestrator = engine.loader.resolve(self.store.registry.orchestrator.id)
-        roster = engine.loader.roster(mission.node)
+        self.backend = backend
+        self.config = engine.config_for(backend)
+        self.executor: Executor = engine.executor(backend)
+        loader = engine.loader_for(backend)
+        orchestrator = loader.resolve(self.store.registry.orchestrator.id)
+        roster = loader.roster(mission.node)
         self.scope = MissionScope(
             store=self.store,
-            meter=Meter(engine.llm, self.store, mission.id, engine.prices),
+            meter=Meter(engine.llm if backend == "api" else None, self.store, mission.id, engine.prices),
             config=self.config,
             context=engine.context,
             mission_id=mission.id,
@@ -179,6 +181,7 @@ class LiveMission:
         )
         self.refs: dict[str, str] = {}  # plan ref -> task id
         self.failures: list[str] = []
+        self.limited: str | None = None  # plan usage limit hit: no more LLM calls in this mission
         self._active: dict[str, list[str]] = {}  # agent id -> running task ids
         self._children: set[asyncio.Task[None]] = set()
 
@@ -190,9 +193,15 @@ class LiveMission:
     def roster(self) -> list[ResolvedAgent]:
         return list(self.scope.agents.values())
 
-    def _system(self) -> list[dict[str, Any]]:
+    def _system(self) -> list[str]:
         o = self.scope.orchestrator
-        return system_blocks(o.role_prompt, ORCHESTRATOR, context_block(self.scope.context_for(o.agent)))
+        return [o.role_prompt, ORCHESTRATOR, context_block(self.scope.context_for(o.agent))]
+
+    async def _atlas_step(self, tool: dict[str, Any], prompt: str, **kw: Any) -> dict[str, Any] | None:
+        return await self.executor.structured(
+            self.scope, model=self.scope.orchestrator.model, system=self._system(), prompt=prompt, tool=tool,
+            max_tokens=self.config.orchestrator_max_tokens, **kw,
+        )
 
     async def _atlas(self, status: AgentStatus, activity: str) -> None:
         await self.scope.set_agent(self.atlas, status, activity=activity)
@@ -299,56 +308,39 @@ class LiveMission:
 
     async def _plan(self) -> list[dict[str, Any]] | None:
         allowed = set(self.scope.agents)
-        messages: list[dict[str, Any]] = [{
-            "role": "user",
-            "content": planning_message(self.scope.objective, self.scope.node,
-                                        [_roster_entry(r) for r in self.roster]),
-        }]
+        prompt = planning_message(self.scope.objective, self.scope.node, [_roster_entry(r) for r in self.roster])
         errors: list[str] = []
-        for attempt in range(2):
-            try:
-                resp = await self.scope.meter.create(
-                    model=self.scope.orchestrator.model,
-                    max_tokens=self.config.orchestrator_max_tokens,
-                    system=self._system(),
-                    tools=[create_plan_tool(sorted(allowed))],
-                    tool_choice={"type": "tool", "name": "create_plan"},
-                    messages=messages,
-                )
-            except LLMError as exc:
-                await self._abort(f"Planning failed: {exc}")
-                return None
-            uses = tool_uses(resp)
-            plan_use = next((u for u in uses if u.name == "create_plan"), None)
-            if plan_use is None:
+        tasks: list[dict[str, Any]] = []
+        attempts = 0
+
+        async def validate(data: dict[str, Any] | None) -> list[str]:
+            nonlocal errors, tasks, attempts
+            attempts += 1
+            if data is None:
                 tasks, errors = [], ["you must call create_plan"]
             else:
-                tasks, errors = validate_plan(plan_use.input, allowed)
-            if not errors:
-                rationale = str((plan_use.input or {}).get("rationale") or "").strip()
+                tasks, errors = validate_plan(data, allowed)
+            if errors:
                 await self.store.log(
-                    f"ATLAS planned {len(tasks)} tasks" + (f" · {_short(rationale, 140)}" if rationale else ""),
+                    f"ATLAS plan rejected ({'retrying' if attempts == 1 else 'giving up'}) · {'; '.join(errors)}",
                     mission_id=self.mission_id, agent_id=self.atlas,
                 )
-                return tasks
-            await self.store.log(
-                f"ATLAS plan rejected ({'retrying' if attempt == 0 else 'giving up'}) · {'; '.join(errors)}",
-                mission_id=self.mission_id, agent_id=self.atlas,
-            )
-            if attempt == 0:
-                content = [block_to_param(b) for b in resp.content]
-                if content:
-                    messages.append({"role": "assistant", "content": content})
-                results = [
-                    {"type": "tool_result", "tool_use_id": u.id, "is_error": True,
-                     "content": plan_errors_message(errors) if u is plan_use else "Ignored."}
-                    for u in uses
-                ]
-                if not results:
-                    results = [{"type": "text", "text": plan_errors_message(errors)}]
-                messages.append({"role": "user", "content": results})
-        await self._abort("ATLAS could not produce a valid plan: " + "; ".join(errors))
-        return None
+            return errors
+
+        try:
+            data = await self._atlas_step(create_plan_tool(sorted(allowed)), prompt, validate=validate, attempts=2)
+        except LLMError as exc:
+            await self._abort(f"Planning failed: {exc}")
+            return None
+        if data is None or errors:
+            await self._abort("ATLAS could not produce a valid plan: " + "; ".join(errors or ["no plan"]))
+            return None
+        rationale = str(data.get("rationale") or "").strip()
+        await self.store.log(
+            f"ATLAS planned {len(tasks)} tasks" + (f" · {_short(rationale, 140)}" if rationale else ""),
+            mission_id=self.mission_id, agent_id=self.atlas,
+        )
+        return tasks
 
     async def _create_tasks(self, plan: list[dict[str, Any]]) -> list[str]:
         ids = []
@@ -424,14 +416,19 @@ class LiveMission:
             task = s.task(task_id)
             if task.status != TaskStatus.READY.value:
                 return
+            if self.limited:  # the plan's usage limit was hit earlier: don't even start
+                await self._fail_unstarted(task_id)
+                return
             self._active.setdefault(agent_id, []).append(task_id)
             try:
-                run = AgentRun(self.scope, task, dependency_inputs(self.scope, task, self.refs))
-                await run.run()
+                await self.executor.run_task(self.scope, task, dependency_inputs(self.scope, task, self.refs))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                log.warning("task %s failed: %s", task_id, exc, exc_info=True)
+                if isinstance(exc, UsageLimitError):
+                    await self._on_limit(str(exc))
+                else:
+                    log.warning("task %s failed: %s", task_id, exc, exc_info=True)
                 self.failures.append(f"Task '{task.title}' ({self.scope.name(agent_id)}) failed: {exc}")
                 if s.task(task_id).status not in _TERMINAL:
                     await s.update_task(task_id, status=TaskStatus.FAILED)
@@ -450,6 +447,25 @@ class LiveMission:
             else:
                 await self.scope.set_agent(agent_id, AgentStatus.COMPLETED,
                                            activity=f"Delivered '{task.title}'", task_id=task_id)
+
+    async def _on_limit(self, reason: str) -> None:
+        if self.limited:
+            return
+        self.limited = reason
+        await self.store.log(
+            f"{reason} · ATLAS stops starting new work and will close the mission with what it has",
+            mission_id=self.mission_id, agent_id=self.atlas,
+        )
+
+    async def _fail_unstarted(self, task_id: str) -> None:
+        s = self.store
+        task = s.task(task_id)
+        agent_id = task.assigned_to or ""
+        await s.update_task(task_id, status=TaskStatus.FAILED)
+        self.failures.append(f"Task '{task.title}' ({self.scope.name(agent_id)}) not started: {self.limited}")
+        await self.scope.set_agent(agent_id, AgentStatus.ERROR, activity=_short(f"Not started: {self.limited}", 140),
+                                   task_id=task_id)
+        await s.log(f"'{task.title}' not started · {self.limited}", mission_id=self.mission_id, agent_id=agent_id)
 
     # -- review + consolidation ---------------------------------------------
 
@@ -471,28 +487,25 @@ class LiveMission:
 
     async def _review(self) -> list[dict[str, Any]]:
         allowed = set(self.scope.agents)
+        if self.limited:
+            await self.store.log(f"Review skipped · {self.limited}", mission_id=self.mission_id, agent_id=self.atlas)
+            return []
         try:
-            resp = await self.scope.meter.create(
-                model=self.scope.orchestrator.model,
-                max_tokens=self.config.orchestrator_max_tokens,
-                system=self._system(),
-                tools=[followups_tool(sorted(allowed))],
-                tool_choice={"type": "tool", "name": "request_followups"},
-                messages=[{"role": "user", "content": review_message(
-                    self.scope.objective, self._tasks_text(), self._reports_text(), self.failures,
-                    [_roster_entry(r) for r in self.roster])}],
-            )
+            data = await self._atlas_step(followups_tool(sorted(allowed)), review_message(
+                self.scope.objective, self._tasks_text(), self._reports_text(), self.failures,
+                [_roster_entry(r) for r in self.roster]))
         except LLMError as exc:
+            if isinstance(exc, UsageLimitError):
+                await self._on_limit(str(exc))
             await self.store.log(f"Review skipped · {exc}", mission_id=self.mission_id, agent_id=self.atlas)
             return []
-        use = next((u for u in tool_uses(resp) if u.name == "request_followups"), None)
-        if use is None:
+        if data is None:
             return []
-        assessment = str((use.input or {}).get("assessment") or "").strip()
+        assessment = str(data.get("assessment") or "").strip()
         if assessment:
             await self.store.log(f"ATLAS review · {_short(assessment, 200)}", mission_id=self.mission_id,
                                  agent_id=self.atlas)
-        tasks, errors = validate_plan(use.input, allowed, existing_refs=set(self.refs), min_tasks=0,
+        tasks, errors = validate_plan(data, allowed, existing_refs=set(self.refs), min_tasks=0,
                                       max_tasks=MAX_FOLLOWUPS)
         if errors:
             await self.store.log(f"Follow-ups skipped (invalid) · {'; '.join(errors)}",
@@ -519,23 +532,18 @@ class LiveMission:
 
     async def _consolidate(self) -> MissionReport:
         try:
-            resp = await self.scope.meter.create(
-                model=self.scope.orchestrator.model,
-                max_tokens=self.config.orchestrator_max_tokens,
-                system=self._system(),
-                tools=[SUBMIT_MISSION_REPORT_TOOL],
-                tool_choice={"type": "tool", "name": "submit_mission_report"},
-                messages=[{"role": "user", "content": consolidation_message(
-                    self.scope.objective, self._tasks_text(), self._reports_text(), self.failures)}],
-            )
-            use = next((u for u in tool_uses(resp) if u.name == "submit_mission_report"), None)
-            if use is None:
+            if self.limited:
+                raise LLMError(self.limited)
+            data = await self._atlas_step(SUBMIT_MISSION_REPORT_TOOL, consolidation_message(
+                self.scope.objective, self._tasks_text(), self._reports_text(), self.failures))
+            if data is None:
                 raise LLMError("ATLAS did not call submit_mission_report")
         except LLMError as exc:
+            if isinstance(exc, UsageLimitError):
+                await self._on_limit(str(exc))
             await self.store.log(f"Consolidation fell back to an automatic summary · {exc}",
                                  mission_id=self.mission_id, agent_id=self.atlas)
             return self._fallback_report(str(exc))
-        data = use.input or {}
         status = str(data.get("objective_status") or "").upper()
         if status not in ("ACHIEVED", "PARTIAL", "NOT_ACHIEVED"):
             status = "PARTIAL"
@@ -573,7 +581,12 @@ class LiveMission:
 
 
 class LiveEngine:
-    """Starts, tracks and cancels live missions. Concurrency caps are shared by all missions."""
+    """Starts, tracks and cancels live missions. Concurrency caps are shared by all missions.
+
+    The backend (api | subscription) is picked per mission: `backend=` if given, else ATLAS_LLM_BACKEND
+    (see backend.py). An explicit `config`/`loader` applies to every backend (tests); otherwise each
+    backend gets its own env-derived config (models and web-search defaults differ).
+    """
 
     def __init__(
         self,
@@ -584,16 +597,58 @@ class LiveEngine:
         config: LiveConfig | None = None,
         llm: LLMClient | None = None,
         prices: PriceTable | None = None,
+        backend: str | None = None,
+        sdk_query: Any = None,
     ):
         self.store = store
+        self._explicit_config = config
+        self._explicit_loader = loader
         self.config = config or LiveConfig.from_env()
         self.loader = loader or AgentLoader(store.registry, self.config.models)
         self.context = context or NodeContext(store.registry)
         self.prices = prices or PriceTable.from_env()
         self._llm = llm
+        self.backend = backend or ("api" if llm is not None else None)  # an injected Messages client means api
+        self._sdk_query = sdk_query
+        self._configs: dict[str, LiveConfig] = {}
+        self._loaders: dict[str, AgentLoader] = {}
+        self._executors: dict[str, Executor] = {}
         self.global_slot = asyncio.Semaphore(self.config.max_concurrency)
         self._agent_slots: dict[str, asyncio.Semaphore] = {}
         self._running: dict[str, tuple[LiveMission, asyncio.Task[None]]] = {}
+
+    # -- backends ------------------------------------------------------------
+
+    def backend_info(self) -> BackendInfo:
+        if self.backend:
+            return BackendInfo(self.backend)
+        return detect_backend()
+
+    def config_for(self, backend: str) -> LiveConfig:
+        if self._explicit_config is not None:
+            return self._explicit_config
+        if backend not in self._configs:
+            self._configs[backend] = self.config if backend == "api" else LiveConfig.from_env(backend)
+        return self._configs[backend]
+
+    def loader_for(self, backend: str) -> AgentLoader:
+        if self._explicit_loader is not None:
+            return self._explicit_loader
+        if backend not in self._loaders:
+            self._loaders[backend] = (
+                self.loader if backend == "api" else AgentLoader(self.store.registry, self.config_for(backend).models)
+            )
+        return self._loaders[backend]
+
+    def executor(self, backend: str) -> Executor:
+        if backend not in self._executors:
+            if backend == "subscription":
+                from .sdk import SubscriptionExecutor
+
+                self._executors[backend] = SubscriptionExecutor(query=self._sdk_query)
+            else:
+                self._executors[backend] = ApiExecutor()
+        return self._executors[backend]
 
     @property
     def llm(self) -> LLMClient:
@@ -613,9 +668,14 @@ class LiveEngine:
             self._agent_slots[agent_id] = asyncio.Semaphore(limit)
         return self._agent_slots[agent_id]
 
-    async def start(self, objective: str, node: str) -> Mission:
+    async def start(self, objective: str, node: str, backend: str | None = None) -> Mission:
+        chosen = backend or self.backend_info().backend or "api"
         mission = await self.store.create_mission(objective, node, mode="live")
-        live = LiveMission(self, mission)
+        live = LiveMission(self, mission, chosen)
+        await self.store.log(
+            f"Live mission on {'your Claude plan (Claude Code)' if chosen == 'subscription' else 'the Claude API'}",
+            mission_id=mission.id, agent_id=self.store.registry.orchestrator.id,
+        )
         task = asyncio.create_task(live.run(), name=f"live-mission:{mission.id}")
         self._running[mission.id] = (live, task)
         task.add_done_callback(lambda _t, mid=mission.id: self._running.pop(mid, None))

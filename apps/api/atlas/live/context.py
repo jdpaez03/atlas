@@ -20,7 +20,7 @@ log = logging.getLogger("atlas.live")
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_LOCAL_DIR = REPO_ROOT.parent / "atlas-local"
-DEFAULT_MAX_CHARS = 60_000
+DEFAULT_MAX_CHARS = 150_000
 SUFFIXES = {".md", ".txt"}
 TRUNCATED = "\n\n[... context truncated ...]"
 

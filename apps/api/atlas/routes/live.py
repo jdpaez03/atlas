@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from .deps import LiveDep
-from .missions import live_available
 
 router = APIRouter(tags=["live"])
 
@@ -21,6 +20,9 @@ class ModelsInfo(BaseModel):
 
 class ConfigInfo(BaseModel):
     live_available: bool
+    backend: Literal["api", "subscription"] | None  # what runs live missions (ATLAS_LLM_BACKEND)
+    cost_basis: Literal["api", "api_equivalent"] | None  # api_equivalent: plan usage priced at API rates
+    live_hint: str | None  # why live is unavailable (None when it is)
     models: ModelsInfo
     web_search: bool
     context_nodes: list[str]
@@ -32,12 +34,17 @@ class Availability(BaseModel):
 
 
 @router.get("/config", response_model=ConfigInfo)
-def get_config(live: LiveDep) -> ConfigInfo:
-    m = live.config.models
+async def get_config(live: LiveDep) -> ConfigInfo:  # async: the Windows event-loop check needs the loop
+    info = live.backend_info()
+    cfg = live.config_for(info.backend or "api")
+    m = cfg.models
     return ConfigInfo(
-        live_available=live_available(),
+        live_available=info.available,
+        backend=info.backend,  # type: ignore[arg-type]
+        cost_basis=info.cost_basis,  # type: ignore[arg-type]
+        live_hint=info.hint,
         models=ModelsInfo(orchestrator=m.orchestrator, default=m.default, fast=m.fast),
-        web_search=live.config.web_search,
+        web_search=cfg.web_search,
         context_nodes=live.context.nodes_with_context(),
     )
 

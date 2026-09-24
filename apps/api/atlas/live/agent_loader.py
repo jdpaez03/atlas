@@ -26,6 +26,8 @@ log = logging.getLogger("atlas.live")
 DEFAULT_ORCHESTRATOR_MODEL = "claude-opus-5-5"
 DEFAULT_MODEL = "claude-sonnet-5"
 DEFAULT_FAST_MODEL = "claude-haiku-4-5-20251001"
+# Subscription backend (Claude Code): the CLI's own aliases, which always point at the current models.
+SUBSCRIPTION_MODELS = ("opus", "sonnet", "haiku")
 
 
 @dataclass(frozen=True)
@@ -35,11 +37,16 @@ class ModelConfig:
     fast: str = DEFAULT_FAST_MODEL
 
     @classmethod
-    def from_env(cls) -> ModelConfig:
+    def from_env(cls, backend: str = "api") -> ModelConfig:
+        """Env overrides win; defaults are API model ids, or Claude Code aliases for `subscription`."""
+        orch, default, fast = (
+            SUBSCRIPTION_MODELS if backend == "subscription"
+            else (DEFAULT_ORCHESTRATOR_MODEL, DEFAULT_MODEL, DEFAULT_FAST_MODEL)
+        )
         return cls(
-            orchestrator=os.getenv("ATLAS_ORCHESTRATOR_MODEL") or DEFAULT_ORCHESTRATOR_MODEL,
-            default=os.getenv("ATLAS_MODEL") or DEFAULT_MODEL,
-            fast=os.getenv("ATLAS_FAST_MODEL") or DEFAULT_FAST_MODEL,
+            orchestrator=os.getenv("ATLAS_ORCHESTRATOR_MODEL") or orch,
+            default=os.getenv("ATLAS_MODEL") or default,
+            fast=os.getenv("ATLAS_FAST_MODEL") or fast,
         )
 
     def resolve(self, alias: str | None, *, fallback: str | None = None) -> str:

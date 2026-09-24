@@ -53,6 +53,22 @@ type LaunchFn = (b: LaunchMissionBody) => Promise<Mission>;
 
 const shortModel = (m?: string | null) => (m ? m.replace(/^claude-/, "").replace(/-\d{8}$/, "") : "—");
 
+function BackendBadge({ backend, costBasis }: { backend: "api" | "subscription"; costBasis?: AtlasConfig["cost_basis"] }) {
+  const plan = backend === "subscription";
+  return (
+    <span
+      className={cx(
+        "rounded border px-1 py-[1px] tracking-[0.12em]",
+        plan ? "border-violet-400/40 text-violet-300/90" : "border-slate-500/40 text-slate-300/90",
+      )}
+      title={plan ? "Runs on your Claude Max plan via Claude Code; cost shown is the API-equivalent value, not billed" : "Runs on the Claude API (billed per token)"}
+    >
+      {plan ? "Max plan" : "API"}
+      <span className="text-mute"> · {costBasis === "api_equivalent" ? "API-equivalent cost" : "API cost"}</span>
+    </span>
+  );
+}
+
 function ModeSwitch({ mode, onMode, liveAvailable }: { mode: MissionMode; onMode: (m: MissionMode) => void; liveAvailable: boolean }) {
   const opt = (m: MissionMode, label: string, disabled: boolean) => {
     const on = mode === m;
@@ -185,6 +201,7 @@ export function LaunchForm({
             agents <span className="text-slate-300">{shortModel(config?.models.default)}</span>
           </span>
           {config?.web_search && <span className="text-sky-300/80">web search on</span>}
+          {config?.backend && <BackendBadge backend={config.backend} costBasis={config.cost_basis} />}
         </div>
       ) : (
         !liveAvailable && (
@@ -192,7 +209,11 @@ export function LaunchForm({
             <span className="text-amber-300/70">Live agents off</span>
             <span>·</span>
             <span>
-              Add <code className="text-slate-400">ANTHROPIC_API_KEY</code> to <code className="text-slate-400">.env</code> to enable live agents
+              {config?.live_hint ?? (
+                <>
+                  Add <code className="text-slate-400">ANTHROPIC_API_KEY</code> to <code className="text-slate-400">.env</code> to enable live agents
+                </>
+              )}
             </span>
           </p>
         )

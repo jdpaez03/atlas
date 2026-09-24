@@ -27,6 +27,10 @@ class LLMError(RuntimeError):
     """The model could not be reached (after the retry) or answered unusably."""
 
 
+class UsageLimitError(LLMError):
+    """The plan's usage limit (or a hard rate limit) was hit: retrying now won't help."""
+
+
 class LLMClient(Protocol):
     async def create(self, **kwargs: Any) -> Any: ...
 
@@ -216,13 +220,15 @@ def call_text(kwargs: dict[str, Any]) -> str:
 class Meter:
     """Performs LLM calls for one mission and records usage + estimated cost in the store."""
 
-    def __init__(self, llm: LLMClient, store: WorldStore, mission_id: str, prices: PriceTable):
-        self.llm = llm
+    def __init__(self, llm: LLMClient | None, store: WorldStore, mission_id: str, prices: PriceTable):
+        self.llm = llm  # None on the subscription backend (no Messages API calls; only record_totals)
         self.store = store
         self.mission_id = mission_id
         self.prices = prices
 
     async def create(self, **kwargs: Any) -> Any:
+        if self.llm is None:
+            raise LLMError("no Messages API client on this backend")
         try:
             message = await self.llm.create(**kwargs)
         except LLMError:
@@ -250,5 +256,23 @@ class Meter:
             cache_read_tokens=read,
             llm_calls=1,
             est_cost_usd=cost,
+        )
+        await self.store.update_usage(self.mission_id, delta)
+
+    async def record_totals(self, model: str, *, input_tokens: int = 0, output_tokens: int = 0,
+                            cache_read_tokens: int = 0, cache_write_tokens: int = 0, calls: int = 1,
+                            cost_usd: float | None = None) -> None:
+        """Record a whole session's usage (subscription backend). `cost_usd` (e.g. the SDK's API-equivalent
+        total_cost_usd) wins over the price-table estimate."""
+        cost = cost_usd if cost_usd is not None else self.prices.estimate(
+            model, input_tokens=input_tokens, output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens, cache_write_tokens=cache_write_tokens,
+        )
+        delta = Usage(
+            input_tokens=input_tokens + cache_write_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            llm_calls=max(1, calls),
+            est_cost_usd=float(cost),
         )
         await self.store.update_usage(self.mission_id, delta)

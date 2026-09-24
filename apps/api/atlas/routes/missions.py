@@ -1,14 +1,14 @@
 """POST /missions (simulated or live) · POST /missions/{id}/cancel.
 
 Mode resolution (docs/LIVE.md):
-  mode "live"       -> live orchestrator; 422 without ANTHROPIC_API_KEY
+  mode "live"       -> live orchestrator on the configured backend (ATLAS_LLM_BACKEND: api | subscription);
+                       422 with the reason when no backend is usable
   mode "simulated"  -> scenario (scenario_id, or the node's first scenario)
-  no mode           -> simulated if a scenario_id is given or no key is configured, else live
+  no mode           -> simulated if a scenario_id is given or live is unavailable, else live
 """
 
 from __future__ import annotations
 
-import os
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -29,14 +29,10 @@ class MissionCreate(BaseModel):
     speed: float | None = Field(default=None, gt=0)
 
 
-def live_available() -> bool:
-    return bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
-
-
-def resolve_mode(body: MissionCreate) -> str:
+def resolve_mode(body: MissionCreate, live_available: bool) -> str:
     if body.mode:
         return body.mode
-    if body.scenario_id or not live_available():
+    if body.scenario_id or not live_available:
         return "simulated"
     return "live"
 
@@ -56,13 +52,14 @@ async def create_mission(
             raise HTTPException(404, f"unknown node '{body.node}'") from None
         raise HTTPException(422, f"node '{body.node}' is disabled")
 
-    if resolve_mode(body) == "live":
-        if not live_available():
-            raise HTTPException(422, "live mode requires ANTHROPIC_API_KEY (set it in .env)")
+    info = live.backend_info()
+    if resolve_mode(body, info.available) == "live":
+        if not info.available:
+            raise HTTPException(422, f"live mode is unavailable: {info.hint}")
         if body.scenario_id:
             raise HTTPException(422, "scenario_id is only valid for simulated missions")
         try:
-            return await live.start(body.objective, body.node)
+            return await live.start(body.objective, body.node, backend=info.backend)
         except StoreError as exc:
             raise http_error(exc) from exc
 
