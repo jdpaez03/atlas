@@ -4,7 +4,7 @@
  *
  * Enable with NEXT_PUBLIC_ATLAS_MOCK=1 or ?mock=1 (optional ?speed=2 to accelerate).
  */
-import type { AtlasConfig, Availability, Decision, LaunchMissionBody, Scenario } from "./api";
+import type { AtlasConfig, Availability, Decision, LaunchMissionBody, MissionSummary, Scenario } from "./api";
 import type {
   AgentDefinition,
   AgentMessage,
@@ -14,9 +14,11 @@ import type {
   ApprovalReason,
   ApprovalRequest,
   AtlasEvent,
+  Attachment,
   Claim,
   DivisionDefinition,
   EventType,
+  Evidence,
   MessageType,
   Mission,
   MissionPhase,
@@ -87,13 +89,21 @@ const SCENARIOS: Scenario[] = [
 
 /* ---------------------------------------------------------------- live-mode config (Phase 2) */
 
-/** Mock has no API key, so LIVE is unavailable; it still reports models and context like /config would. */
-const CONFIG: AtlasConfig = {
-  live_available: false,
-  models: { orchestrator: "claude-opus-5-5", default: "claude-sonnet-5" },
-  web_search: false,
-  context_nodes: ["corporate"],
-};
+/**
+ * Mock "live" runs the same script with mode=live (fake usage) so the mission thread and follow-up rounds
+ * can be exercised without an API key. `?live=0` turns it off to show the "Live agents off" hint.
+ */
+function mockConfig(): AtlasConfig {
+  const off = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("live") === "0";
+  return {
+    live_available: !off,
+    backend: off ? null : "api",
+    cost_basis: off ? null : "api",
+    models: { orchestrator: "claude-opus-5-5", default: "claude-sonnet-5" },
+    web_search: !off,
+    context_nodes: ["corporate"],
+  };
+}
 
 /** One claude_md agent whose file is missing, to exercise the OFFLINE state (docs/LIVE.md § Agent sources). */
 const AVAILABILITY: Availability = {
@@ -132,22 +142,104 @@ class MockEngine {
   timer: ReturnType<typeof setTimeout> | null = null;
   paused = false;
   pendingApproval: ApprovalRequest | null = null;
+  /** every mission this session knows (seeded history + launched), for GET /missions */
+  missions = new Map<string, Mission>();
+  reportVersions = new Map<string, number>();
+  evidence: Evidence[] = [];
+  deliverables: Attachment[] = [];
+  lastReport: MissionReport | null = null;
+  lastApprovalId: string | null = null;
+
+  publishReport(report: MissionReport) {
+    const m = this.mission!;
+    this.lastReport = report;
+    this.reportVersions.set(m.id, report.version);
+    this.mission = { ...m, final_report_id: report.id };
+    this.missions.set(m.id, this.mission);
+    this.emit("mission.report_ready", { report }, report.version > 1 ? `ATLAS published mission report v${report.version}` : "ATLAS published the mission report", "atlas");
+  }
 
   constructor(public speed: number) {
     const ts = now();
+    const seed = seedHistory();
+    for (const m of seed.missions) this.missions.set(m.id, m);
     this.world = {
       nodes: NODES,
       divisions: DIVISIONS,
       agents: AGENTS,
       agent_states: AGENTS.map((a) => ({ agent_id: a.id, status: "IDLE", current_task_id: null, activity: null, collaborating_with: [], updated_at: ts })),
-      missions: [],
-      tasks: [],
+      missions: seed.missions,
+      tasks: seed.tasks,
       messages: [],
       agent_reports: [],
       mission_reports: [],
       approvals: [],
+      evidence: [],
       last_seq: 0,
     };
+  }
+
+  /** Keep the mission index in sync and emit it. */
+  setMission(m: Mission, type: EventType, summary: string) {
+    this.mission = m;
+    this.missions.set(m.id, m);
+    this.emit(type, { mission: m }, summary, "atlas");
+  }
+
+  /** Fake LLM usage for mock-live missions. */
+  tick(calls = 1) {
+    const m = this.mission;
+    if (!m || m.mode !== "live") return;
+    const u = m.usage;
+    const inp = 5200 * calls, out = 900 * calls;
+    const usage = {
+      input_tokens: u.input_tokens + inp,
+      output_tokens: u.output_tokens + out,
+      cache_read_tokens: u.cache_read_tokens + 3100 * calls,
+      llm_calls: u.llm_calls + calls,
+      est_cost_usd: +(u.est_cost_usd + (inp * 3 + out * 15) / 1e6).toFixed(4),
+    };
+    this.mission = { ...m, usage };
+    this.missions.set(m.id, this.mission);
+    this.emit("mission.updated", { mission: this.mission }, "Usage updated", "atlas");
+  }
+
+  /** A system-recorded action (docs/PHASE3.md §A). */
+  ev(agentId: string, taskRef: string | null, kind: Evidence["kind"], ref: string, detail: string, ok = true) {
+    if (!this.mission) return;
+    const ev: Evidence = {
+      id: rid("evd"),
+      mission_id: this.mission.id,
+      task_id: taskRef ? this.tasks.get(taskRef)?.id ?? null : null,
+      agent_id: agentId,
+      kind,
+      ref,
+      detail,
+      ok,
+      at: now(),
+    };
+    this.evidence.push(ev);
+    const name = AGENTS.find((a) => a.id === agentId)?.name ?? agentId;
+    const verb: Record<Evidence["kind"], string> = {
+      file_listed: "listed",
+      file_read: "read",
+      file_written: "wrote",
+      web_search: "searched the web for",
+      web_fetch: "fetched",
+      consult: "consulted",
+      approval: "requested approval",
+      };
+    const short = ref.split(/[\\/]/).pop() || ref;
+    this.emit("evidence.recorded", { evidence: ev }, `${name} ${verb[kind]} ${kind === "consult" ? short.toUpperCase() : short}${ok ? "" : ` — failed: ${detail}`}`, agentId);
+    return ev;
+  }
+
+  /** A deliverable written to outputs/ — in mock it's a blob URL so the link really downloads. */
+  deliverable(name: string, content: string, mime = "text/markdown"): Attachment {
+    const url = typeof URL !== "undefined" && typeof Blob !== "undefined" ? URL.createObjectURL(new Blob([content], { type: mime })) : null;
+    const a: Attachment = { id: rid("att"), name, kind: "file", uri: null, content: null, size_bytes: new Blob([content]).size, download_url: url };
+    this.deliverables.push(a);
+    return a;
   }
 
   snapshot(): WorldState {
@@ -189,8 +281,9 @@ class MockEngine {
   /* --- world helpers (always emit full objects) */
   phase(phase: MissionPhase) {
     if (!this.mission) return;
-    this.mission = { ...this.mission, phase, closed_at: phase === "CLOSED" ? now() : null };
-    this.emit(phase === "CLOSED" ? "mission.closed" : "mission.phase_changed", { mission: this.mission }, phase === "CLOSED" ? "Mission closed" : `Mission entered ${phase.replace("_", " ")}`, "atlas");
+    this.tick();
+    const m = { ...this.mission, phase, closed_at: phase === "CLOSED" ? now() : null };
+    this.setMission(m, phase === "CLOSED" ? "mission.closed" : "mission.phase_changed", phase === "CLOSED" ? "Mission closed" : `Mission entered ${phase.replace("_", " ")}`);
   }
 
   agent(id: string, status: AgentStatus, activity: string | null, taskRef?: string | null, collab: string[] = []) {
@@ -223,12 +316,14 @@ class MockEngine {
       progress: 0,
       parent_task_id: null,
       result_report_id: null,
+      round: this.mission.round,
       created_at: now(),
       started_at: null,
       completed_at: null,
     };
     this.tasks.set(ref, t);
     this.mission = { ...this.mission, task_ids: [...this.mission.task_ids, t.id] };
+    this.missions.set(this.mission.id, this.mission);
     const who = AGENTS.find((a) => a.id === spec.assigned_to)?.name ?? spec.assigned_to;
     this.emit("task.created", { task: t }, `ATLAS created '${t.title}' → ${who}`, "atlas");
   }
@@ -273,14 +368,52 @@ class MockEngine {
     this.emit("message.sent", { message: m }, `${n(from)} → ${n(to)} · ${type}: ${subject}`, from);
   }
 
-  report(agentId: string, taskRef: string, r: Omit<AgentReport, "id" | "mission_id" | "task_id" | "agent_id" | "created_at" | "attachments">) {
+  report(
+    agentId: string,
+    taskRef: string,
+    r: Omit<AgentReport, "id" | "mission_id" | "task_id" | "agent_id" | "created_at" | "attachments" | "evidence" | "deliverables"> & { deliverables?: Attachment[] },
+  ) {
     if (!this.mission) return;
+    this.tick();
     const t = this.tasks.get(taskRef)!;
-    const report: AgentReport = { id: rid("rpt"), mission_id: this.mission.id, task_id: t.id, agent_id: agentId, created_at: now(), attachments: [], ...r };
+    // The runtime attaches the task's system-recorded evidence (never the agent's own account).
+    const evidence = this.evidence.filter((x) => x.task_id === t.id);
+    const report: AgentReport = { id: rid("rpt"), mission_id: this.mission.id, task_id: t.id, agent_id: agentId, created_at: now(), attachments: [], evidence, ...r, deliverables: r.deliverables ?? [] };
     this.tasks.set(taskRef, { ...t, result_report_id: report.id });
     const name = AGENTS.find((a) => a.id === agentId)?.name ?? agentId;
     this.emit("report.submitted", { report }, `${name} submitted report for '${t.title}'`, agentId);
     return report;
+  }
+
+  /** Mission thread message (human ↔ ATLAS). Works for any known mission, not only the running one. */
+  thread(missionId: string, from: string, to: string, type: MessageType, subject: string, body: string) {
+    const m: AgentMessage = {
+      id: rid("msg"),
+      mission_id: missionId,
+      task_id: null,
+      from,
+      to,
+      type,
+      subject,
+      body,
+      attachments: [],
+      confidence: null,
+      requires_response: from === "human",
+      in_reply_to: null,
+      created_at: now(),
+    };
+    const e: AtlasEvent = {
+      id: rid("evt"),
+      seq: ++this.seq,
+      type: "message.sent",
+      mission_id: missionId,
+      agent_id: from === "human" ? null : from,
+      summary: from === "human" ? `Human → ATLAS: ${subject}` : `ATLAS → Human · ${type}: ${subject}`,
+      payload: { message: m },
+      ts: now(),
+    };
+    this.listener?.(e);
+    return m;
   }
 
   log(summary: string, agentId: string | null = "atlas") {
@@ -311,15 +444,39 @@ function scriptOpening(): Step[] {
     s(0.4, (e) => e.agent("oracle", "WAITING", "Waiting on SOFIA's market dataset", "model")),
     s(0.9, (e) => {
       e.phase("EXECUTION");
-      e.agent("sofia", "WORKING", "Pulling comparable projects within 3 km", "market");
+      e.agent("sofia", "WORKING", "Searching the web: Zapopan vertical housing comparables", "market");
       e.tupd("market", "IN_PROGRESS", 0.08);
+      e.ev("sofia", "market", "web_search", "Zapopan vertical housing comparables price per m2 2026", "9 results");
     }),
     s(0.5, (e) => { e.agent("argos", "MONITORING", "Watching Zapopan land-use plan & gazette", "zoning"); e.tupd("zoning", "IN_PROGRESS", 0.1); }),
-    s(0.5, (e) => { e.agent("eos-traction", "WORKING", "Reviewing Q3 Rocks and L10 cadence", "capacity"); e.tupd("capacity", "IN_PROGRESS", 0.15); }),
+    s(0.5, (e) => {
+      const rocks = e.mission?.attachments.find((a) => /rock/i.test(a.name))?.name ?? "Rocks_Q3.xlsx";
+      e.agent("eos-traction", "WORKING", `Reading ${rocks}`, "capacity");
+      e.tupd("capacity", "IN_PROGRESS", 0.15);
+      e.ev("eos-traction", "capacity", "file_read", `atlas-local/attachments/${e.mission!.id}/${rocks}`, "sheet 'Q3 Rocks' · 7 rows");
+    }),
     s(0.5, (e) => e.agent("atlas", "WAITING", "Supervising 3 active workstreams")),
-    s(1.2, (e) => e.tupd("market", undefined, 0.3)),
-    s(0.8, (e) => e.tupd("capacity", undefined, 0.45)),
-    s(0.8, (e) => e.tupd("zoning", undefined, 0.35)),
+    s(1.2, (e) => {
+      e.agent("sofia", "WORKING", "Reading Rocks_Q3.xlsx", "market");
+      e.ev("sofia", "market", "file_listed", "~/Documents/Corporate/Zapopan", "14 entries");
+      e.ev("sofia", "market", "file_read", "~/Documents/Corporate/Zapopan/Rocks_Q3.xlsx", "2 sheets · 7 rocks, 3 measurables");
+      e.tupd("market", undefined, 0.3);
+    }),
+    s(0.8, (e) => {
+      e.tupd("capacity", undefined, 0.45);
+      e.ev("sofia", "market", "web_fetch", "https://www.inmuebles24.com/desarrollos/zapopan-vertical.html", "HTTP 403 — blocked by the site", false);
+    }),
+    s(0.6, (e) => {
+      e.thread(e.mission!.id, "human", "atlas", "REQUEST", "Prioritize 2BR units", "Prioritize 2BR units in the market read, and use the Q3 Rocks file I attached for the capacity check.");
+    }),
+    s(1.0, (e) => {
+      e.tick();
+      e.thread(e.mission!.id, "atlas", "human", "ANSWER", "Noted", "Noted — SOFIA will weight 2BR comparables and EOS·TRACTION is already working from your Rocks_Q3.xlsx. Every task that starts from now on gets this guidance.");
+    }),
+    s(0.8, (e) => {
+      e.tupd("zoning", undefined, 0.35);
+      e.ev("argos", "zoning", "web_fetch", "https://www.zapopan.gob.mx/transparencia/gaceta-municipal/", "gazette index · last 90 days");
+    }),
     s(1.0, (e) => {
       e.msg("argos", "atlas", "ALERT", "Land-use amendment under public consultation", "Proposed amendment could cut max density (CUS) on the lot's corridor by ~20%. Consultation closes in 45 days.", "zoning");
       e.agent("argos", "COLLABORATING", "Escalated density-change alert to ATLAS", "zoning", ["atlas"]);
@@ -360,7 +517,7 @@ function scriptOpening(): Step[] {
       e.report("sofia", "market", {
         asked_to: "Build a comparables set and market read for vertical housing near the lot.",
         actions_taken: ["Collected 14 comparable projects within 3 km", "Normalized price/m² by delivery date", "Tagged 4 comps inside the amended corridor"],
-        inputs_used: ["Listing portals", "Developer brochures", "ARGOS corridor polygon"],
+        inputs_used: ["Listing portals", "Rocks_Q3.xlsx", "Developer_sales_2025.pdf", "ARGOS corridor polygon"],
         findings: [
           C("FACT", "Median asking price is MXN 58,400/m² across 14 comparable projects.", "HIGH", ["14 listings"]),
           C("FACT", "Average absorption is 3.1 units/month per project over the last 12 months.", "MEDIUM", ["Developer sales reports"]),
@@ -368,8 +525,8 @@ function scriptOpening(): Step[] {
         ],
         unresolved: ["Closing prices vs. asking prices (discount not observed)"],
         needs_agents: ["oracle"],
-        confidence: "HIGH",
-        limitations: ["Asking prices only; no notarized transactions"],
+        confidence: "LOW",
+        limitations: ["Asking prices only; no notarized transactions", "Unverified: Developer_sales_2025.pdf (no system record)"],
       });
       e.msg("sofia", "oracle", "RESULT", "Market dataset: 14 comps, 3.1 u/mo absorption", "Median MXN 58.4k/m²; 2BR 65–75 m² sweet spot. 4 comps in amended corridor flagged.", "market");
       e.agent("sofia", "COMPLETED", "Market study delivered to ORACLE");
@@ -379,10 +536,14 @@ function scriptOpening(): Step[] {
       e.agent("oracle", "WORKING", "Modeling base / density-cut / slow-absorption scenarios", "model");
       e.agent("atlas", "WAITING", "Waiting on ORACLE's scenarios");
     }),
-    s(1.2, (e) => e.tupd("model", undefined, 0.4)),
+    s(1.2, (e) => {
+      e.tupd("model", undefined, 0.4);
+      e.ev("oracle", "model", "file_read", "~/Documents/Corporate/Finance/Construction_cost_index_Q3.pdf", "4 pages");
+    }),
     s(0.8, (e) => {
       e.agent("oracle", "COLLABORATING", "Confirming 2BR price point with SOFIA", "model", ["sofia"]);
       e.msg("oracle", "sofia", "QUESTION", "Confirm price/m² for 2BR units", "Is the 2BR premium above the median?", "model", true);
+      e.ev("oracle", "model", "consult", "sofia", "Confirm price/m² for 2BR units");
     }),
     s(0.8, (e) => {
       e.msg("sofia", "oracle", "ANSWER", "2BR premium ≈ +4%", "MXN 60.7k/m² for 2BR vs 58.4k median.", "model");
@@ -436,7 +597,12 @@ function scriptOpening(): Step[] {
       e.tupd("loi", "IN_PROGRESS", 0.2);
       e.agent("alfred", "WORKING", "Drafting LOI with zoning condition precedent", "loi");
     }),
-    s(1.2, (e) => e.tupd("loi", undefined, 0.6)),
+    s(1.2, (e) => {
+      e.tupd("loi", undefined, 0.6);
+      e.agent("alfred", "WORKING", "Writing LOI_Zapopan_draft.md", "loi");
+      const d = e.deliverable("LOI_Zapopan_draft.md", LOI_TEXT);
+      e.ev("alfred", "loi", "file_written", `atlas-local/outputs/corporate/${e.mission!.id}/${d.name}`, `${d.size_bytes} bytes`);
+    }),
     s(1.0, (e) => {
       e.tupd("loi", "AWAITING_APPROVAL", 0.8);
       const a: ApprovalRequest = {
@@ -456,6 +622,7 @@ function scriptOpening(): Step[] {
       };
       e.pendingApproval = a;
       e.emit("approval.requested", { approval: a }, `ALFRED requests approval: ${a.title}`, "alfred");
+      e.ev("alfred", "loi", "approval", a.id, "EXTERNAL_COMMUNICATION · requested");
       e.agent("alfred", "BLOCKED", "Awaiting human approval to send LOI", "loi");
       e.agent("atlas", "WAITING", "Paused — human decision required");
       return "pause";
@@ -465,9 +632,14 @@ function scriptOpening(): Step[] {
 
 function scriptAfterDecision(decision: Decision): Step[] {
   const approved = decision === "APPROVED";
+  const loi = (e: MockEngine) => e.deliverables.filter((d) => d.name.startsWith("LOI_"));
   const steps: Step[] = approved
     ? [
-        s(0.6, (e) => { e.agent("alfred", "WORKING", "Sending LOI to seller's broker", "loi"); e.tupd("loi", "IN_PROGRESS", 0.9); }),
+        s(0.6, (e) => {
+          e.ev("alfred", "loi", "approval", e.lastApprovalId ?? "approval", "APPROVED by human");
+          e.agent("alfred", "WORKING", "Sending LOI to seller's broker", "loi");
+          e.tupd("loi", "IN_PROGRESS", 0.9);
+        }),
         s(1.0, (e) => {
           e.tupd("loi", "COMPLETED", 1);
           e.report("alfred", "loi", {
@@ -479,6 +651,7 @@ function scriptAfterDecision(decision: Decision): Step[] {
             needs_agents: [],
             confidence: "HIGH",
             limitations: [],
+            deliverables: loi(e),
           });
           e.msg("alfred", "atlas", "RESULT", "LOI sent", "Delivered to broker; follow-up scheduled in 10 business days.", "loi");
           e.agent("alfred", "COMPLETED", "LOI sent · follow-up scheduled");
@@ -486,6 +659,7 @@ function scriptAfterDecision(decision: Decision): Step[] {
       ]
     : [
         s(0.6, (e) => {
+          e.ev("alfred", "loi", "approval", e.lastApprovalId ?? "approval", "REJECTED by human");
           e.tupd("loi", "CANCELLED", 0.8);
           e.report("alfred", "loi", {
             asked_to: "Draft and send a non-binding LOI within the approved range.",
@@ -496,6 +670,7 @@ function scriptAfterDecision(decision: Decision): Step[] {
             needs_agents: [],
             confidence: "HIGH",
             limitations: [],
+            deliverables: loi(e),
           });
           e.msg("alfred", "atlas", "RESULT", "LOI held", "Draft kept on file; nothing sent externally.", "loi");
           e.agent("alfred", "COMPLETED", "LOI held per human decision");
@@ -544,10 +719,11 @@ function scriptAfterDecision(decision: Decision): Step[] {
         ],
         references: [],
         agent_report_ids: [],
+        version: m.round,
+        deliverables: [...e.deliverables],
         created_at: now(),
       };
-      e.mission = { ...m, final_report_id: report.id };
-      e.emit("mission.report_ready", { report }, "ATLAS published the mission report", "atlas");
+      e.publishReport(report);
       e.agent("atlas", "REVIEWING", "Presenting mission report");
     }),
     s(1.4, (e) => {
@@ -565,7 +741,177 @@ function scriptAfterDecision(decision: Decision): Step[] {
   ];
 }
 
+/** Round N (mock follow-up): ATLAS answers, delegates one task to ORACLE, and issues report vN. */
+function scriptFollowUp(question: string): Step[] {
+  const short = question.length > 60 ? `${question.slice(0, 57)}…` : question;
+  let ref = "";
+  return [
+    s(1.0, (e) => {
+      e.tick();
+      const m = e.mission!;
+      const round = m.round + 1;
+      ref = `followup-${round}`;
+      e.thread(m.id, "atlas", "human", "ANSWER", `Starting round ${round}`, `Good question. I'm opening round ${round}: ORACLE will rerun the offer sensitivity with your note and I'll issue report v${round}.`);
+      e.setMission({ ...m, round, phase: "DELEGATION", closed_at: null }, "mission.phase_changed", `Round ${round} started`);
+      e.agent("atlas", "WORKING", `Round ${round}: delegating follow-up`);
+      e.task(ref, { title: `Follow-up: ${short}`, description: question, assigned_to: "oracle", priority: "HIGH", depends_on: e.tasks.has("model") ? ["model"] : [] });
+    }),
+    s(0.8, (e) => {
+      e.phase("EXECUTION");
+      e.tupd(ref, "IN_PROGRESS", 0.2);
+      e.agent("oracle", "WORKING", "Reading Comparables_2026.xlsx", ref);
+      e.ev("oracle", ref, "file_read", "~/Documents/Corporate/Zapopan/Comparables_2026.xlsx", "sheet 'Comps' · 14 rows");
+    }),
+    s(1.0, (e) => {
+      e.ev("oracle", ref, "consult", "sofia", "Closing-price discount on recent comps");
+      e.tupd(ref, undefined, 0.6);
+      e.agent("oracle", "WORKING", "Writing Offer_sensitivity.csv", ref);
+    }),
+    s(1.0, (e) => {
+      const d = e.deliverable("Offer_sensitivity.csv", "offer_mxn_m,units,irr_pct\n52,120,24.1\n54,120,22.6\n56,120,21.0\n56,96,15.0\n58,120,19.4\n", "text/csv");
+      e.ev("oracle", ref, "file_written", `atlas-local/outputs/corporate/${e.mission!.id}/${d.name}`, `${d.size_bytes} bytes`);
+      e.tupd(ref, "COMPLETED", 1);
+      e.report("oracle", ref, {
+        asked_to: question,
+        actions_taken: ["Re-ran offer sensitivity (52–58M × 96/120 units)", "Consulted SOFIA on closing-price discount"],
+        inputs_used: ["Comparables_2026.xlsx", "SOFIA answer"],
+        findings: [
+          C("SCENARIO", "At MXN 54M the density-cut case still clears a 16.8% IRR.", "MEDIUM"),
+          C("RECOMMENDATION", "Open at MXN 54M and keep 56M as the ceiling.", "MEDIUM"),
+        ],
+        unresolved: [],
+        needs_agents: [],
+        confidence: "MEDIUM",
+        limitations: ["Closing-price discount estimated from 3 transactions"],
+        deliverables: [d],
+      });
+      e.agent("oracle", "COMPLETED", "Follow-up delivered");
+    }),
+    s(0.8, (e) => { e.phase("CONSOLIDATION"); e.agent("atlas", "WORKING", "Consolidating round results"); }),
+    s(1.0, (e) => {
+      e.phase("REPORTING");
+      const m = e.mission!;
+      const prev = e.lastReport;
+      const report: MissionReport = {
+        ...(prev ?? ({} as MissionReport)),
+        id: rid("rpt"),
+        mission_id: m.id,
+        executive_summary: `Round ${m.round}: ${prev?.executive_summary ?? ""} Follow-up: open at MXN 54M with 56M as the ceiling — the density-cut case still clears a 16.8% IRR at 54M.`,
+        objective_status: prev?.objective_status ?? "ACHIEVED",
+        key_findings: [C("RECOMMENDATION", "Open at MXN 54M; ceiling MXN 56M (ORACLE, round " + m.round + ").", "MEDIUM"), ...(prev?.key_findings ?? [])],
+        tasks_completed: [...e.tasks.values()].filter((t) => t.status === "COMPLETED").map((t) => t.id),
+        tasks_pending: [...e.tasks.values()].filter((t) => t.status !== "COMPLETED").map((t) => t.id),
+        conflicts: prev?.conflicts ?? [],
+        assumptions: prev?.assumptions ?? [],
+        needs_human_attention: prev?.needs_human_attention ?? [],
+        next_actions: prev?.next_actions ?? [],
+        references: [],
+        agent_report_ids: [],
+        version: m.round,
+        deliverables: [...e.deliverables],
+        created_at: now(),
+      };
+      e.publishReport(report);
+    }),
+    s(1.0, (e) => {
+      e.phase("CLOSED");
+      e.agent("atlas", "COMPLETED", `Round ${e.mission!.round} closed · report v${e.mission!.round}`);
+      e.agent("oracle", "IDLE", null);
+    }),
+  ];
+}
+
+const LOI_TEXT = `# Non-binding Letter of Intent — Zapopan lot (4,200 m²)
+
+**Offer:** MXN 56,000,000
+**Condition precedent:** final text of the land-use amendment does not reduce max density below 120 units.
+**Due diligence:** 60 days from acceptance.
+
+This letter is non-binding and is subject to a definitive purchase agreement.
+`;
+
+const ago = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+
+/** Past missions (as if replayed from SQLite after a restart) for the history drawer. */
+function seedHistory(): { missions: Mission[]; tasks: Task[] } {
+  const base = {
+    context: null,
+    priority: "MEDIUM" as Priority,
+    final_report_id: null,
+    attachments: [] as Attachment[],
+  };
+  const interrupted: Mission = {
+    ...base,
+    id: "msn_hist_cashflow",
+    objective: "Review the Q3 cash-flow forecast against budget and flag the three largest variances.",
+    node: "corporate",
+    mode: "live",
+    usage: { input_tokens: 48200, output_tokens: 6100, cache_read_tokens: 21000, llm_calls: 9, est_cost_usd: 0.24 },
+    phase: "EXECUTION",
+    task_ids: ["tsk_hist_cf1", "tsk_hist_cf2"],
+    round: 1,
+    interrupted: true,
+    attachments: [{ id: "att_hist_1", name: "Cashflow_Q3.xlsx", kind: "file", uri: null, content: null, size_bytes: 184_320, download_url: "/missions/msn_hist_cashflow/files/attachments/Cashflow_Q3.xlsx" }],
+    created_at: ago(26),
+    closed_at: null,
+  };
+  const closed: Mission = {
+    ...base,
+    id: "msn_hist_l10",
+    objective: "Prepare the agenda and issues list for next Monday's Level 10 meeting.",
+    node: "corporate",
+    mode: "simulated",
+    usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, llm_calls: 0, est_cost_usd: 0 },
+    phase: "CLOSED",
+    task_ids: [],
+    round: 1,
+    interrupted: false,
+    created_at: ago(50),
+    closed_at: ago(49.8),
+  };
+  const t = (id: string, title: string, agent: string): Task => ({
+    id,
+    mission_id: interrupted.id,
+    title,
+    description: title,
+    assigned_to: agent,
+    created_by: "atlas",
+    status: "CANCELLED",
+    priority: "MEDIUM",
+    depends_on: [],
+    requires_approval: false,
+    approval_reason: null,
+    progress: 0.4,
+    parent_task_id: null,
+    result_report_id: null,
+    round: 1,
+    created_at: ago(26),
+    started_at: ago(25.9),
+    completed_at: null,
+  });
+  return { missions: [interrupted, closed], tasks: [t("tsk_hist_cf1", "Variance analysis vs. budget", "oracle"), t("tsk_hist_cf2", "Pull actuals from Cashflow_Q3.xlsx", "sofia")] };
+}
+
 /* ---------------------------------------------------------------- transport */
+
+function checkFiles(files: File[], existing: number) {
+  if (existing + files.length > 20) throw new Error("ATLAS API 413: at most 20 files per mission");
+  const big = files.find((f) => f.size > 25 * 1024 * 1024);
+  if (big) throw new Error(`ATLAS API 413: ${big.name} is larger than 25 MB`);
+}
+
+function fileAttachment(missionId: string, f: File): Attachment {
+  return {
+    id: rid("att"),
+    name: f.name,
+    kind: "file",
+    uri: null,
+    content: null,
+    size_bytes: f.size,
+    // blob URL so the mock link really downloads what the user attached
+    download_url: typeof URL !== "undefined" ? URL.createObjectURL(f) : `/missions/${missionId}/files/attachments/${encodeURIComponent(f.name)}`,
+  };
+}
 
 export function mockTransport({ speed = 1 }: { speed?: number } = {}): Transport {
   const engine = new MockEngine(speed);
@@ -581,7 +927,7 @@ export function mockTransport({ speed = 1 }: { speed?: number } = {}): Transport
       };
     },
     scenarios: async () => SCENARIOS,
-    config: async () => CONFIG,
+    config: async () => mockConfig(),
     availability: async () => AVAILABILITY,
     async cancel(id: string) {
       const m = engine.mission;
@@ -599,21 +945,27 @@ export function mockTransport({ speed = 1 }: { speed?: number } = {}): Transport
         engine.emit("approval.decided", { approval: expired }, `Approval expired: ${a.title}`, null);
       }
       for (const ag of AGENTS) engine.agent(ag.id, "IDLE", null);
-      engine.mission = { ...engine.mission!, phase: "CLOSED", closed_at: now() };
-      engine.emit("mission.closed", { mission: engine.mission }, "Mission cancelled by human", "atlas");
-      return engine.mission;
+      engine.setMission({ ...engine.mission!, phase: "CLOSED", closed_at: now() }, "mission.closed", "Mission cancelled by human");
+      return engine.mission!;
     },
-    async launch(body: LaunchMissionBody) {
-      if (body.mode === "live") throw new Error("ATLAS API 422: live mode requires ANTHROPIC_API_KEY");
+    async launch(body: LaunchMissionBody, files?: File[]) {
+      if (body.mode === "live" && !mockConfig().live_available) throw new Error("ATLAS API 422: live mode requires ANTHROPIC_API_KEY");
+      checkFiles(files ?? [], 0);
       engine.stop();
       engine.paused = false;
       engine.tasks.clear();
+      engine.deliverables = [];
+      engine.lastReport = null;
       const scenario = SCENARIOS.find((x) => x.id === body.scenario_id) ?? SCENARIOS[0];
+      const id = rid("msn");
       const mission: Mission = {
-        id: rid("msn"),
+        id,
         objective: body.objective?.trim() || scenario.objective,
         node: body.node,
-        mode: "simulated",
+        mode: body.mode === "live" ? "live" : "simulated",
+        attachments: (files ?? []).map((f) => fileAttachment(id, f)),
+        round: 1,
+        interrupted: false,
         usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, llm_calls: 0, est_cost_usd: 0 },
         context: scenario.title,
         phase: "OBJECTIVE",
@@ -623,8 +975,7 @@ export function mockTransport({ speed = 1 }: { speed?: number } = {}): Transport
         created_at: now(),
         closed_at: null,
       };
-      engine.mission = mission;
-      engine.emit("mission.created", { mission }, `Mission received: ${mission.objective}`, "atlas");
+      engine.setMission(mission, "mission.created", `Mission received: ${mission.objective}`);
       engine.agent("atlas", "WORKING", "Analyzing objective");
       engine.push(scriptOpening());
       return mission;
@@ -634,9 +985,61 @@ export function mockTransport({ speed = 1 }: { speed?: number } = {}): Transport
       if (!a || a.id !== id) throw new Error("Approval not pending");
       const decided: ApprovalRequest = { ...a, state: decision, decision_note: note ?? null, decided_at: now() };
       engine.pendingApproval = null;
+      engine.lastApprovalId = a.id;
       engine.emit("approval.decided", { approval: decided }, `Human ${decision.toLowerCase()}: ${a.title}`, null);
       engine.resume(scriptAfterDecision(decision));
       return decided;
+    },
+    async sendMessage(missionId: string, text: string) {
+      const m = engine.missions.get(missionId);
+      if (!m) throw new Error("ATLAS API 404: mission not found");
+      const body = text.trim();
+      if (!body) throw new Error("ATLAS API 422: empty message");
+      const msg = engine.thread(m.id, "human", "atlas", "REQUEST", body.length > 60 ? `${body.slice(0, 57)}…` : body, body);
+      const reply = (answer: string) =>
+        setTimeout(() => engine.thread(m.id, "atlas", "human", "ANSWER", answer.slice(0, 60), answer), 900 / engine.speed);
+      const current = engine.mission?.id === m.id ? engine.mission : m;
+      if (current.mode !== "live") {
+        reply("This is a simulated mission; follow-ups need a live mission.");
+      } else if (current.phase !== "CLOSED" && engine.mission?.id === m.id && !current.interrupted) {
+        reply("Noted — I'll add this to the mission guidance. Every task that starts from now on gets it, and I'll use it in review and consolidation.");
+      } else if (engine.mission?.id === m.id && !engine.timer && !engine.paused) {
+        engine.push(scriptFollowUp(body));
+      } else {
+        reply("The simulated stream can't resume this mission; launch a new one to try follow-up rounds.");
+      }
+      return msg;
+    },
+    async attach(missionId: string, files: File[]) {
+      const m = engine.missions.get(missionId);
+      if (!m) throw new Error("ATLAS API 404: mission not found");
+      const current = engine.mission?.id === m.id ? engine.mission : m;
+      checkFiles(files, current.attachments.length);
+      const next: Mission = { ...current, attachments: [...current.attachments, ...files.map((f) => fileAttachment(m.id, f))] };
+      if (engine.mission?.id === m.id) engine.setMission(next, "mission.updated", `${files.length} file${files.length === 1 ? "" : "s"} attached`);
+      else {
+        engine.missions.set(m.id, next);
+        engine.emit("mission.updated", { mission: next }, `${files.length} file${files.length === 1 ? "" : "s"} attached`, "atlas");
+      }
+      return next;
+    },
+    async missions(node: string | null): Promise<MissionSummary[]> {
+      return [...engine.missions.values()]
+        .filter((m) => !node || m.node === node)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        .map((m) => ({
+          id: m.id,
+          objective: m.objective,
+          node: m.node,
+          mode: m.mode,
+          phase: m.phase,
+          round: m.round,
+          interrupted: m.interrupted,
+          created_at: m.created_at,
+          closed_at: m.closed_at,
+          report_versions: engine.reportVersions.get(m.id) ?? 0,
+          usage: m.usage,
+        }));
     },
   };
 }

@@ -50,6 +50,7 @@ from .executor import Validator, invalid_input_message
 from .llm import LLMError, UsageLimitError
 from .prompts import (
     CONSULT_PROTOCOL,
+    FILE_TOOLS,
     PROTOCOL,
     REQUEST_APPROVAL_TOOL,
     SUBMIT_REPORT_TOOL,
@@ -57,7 +58,6 @@ from .prompts import (
     consult_tool,
     context_block,
     plan_errors_message,
-    task_message,
 )
 from .runtime import AgentRun, MissionScope, _short
 
@@ -85,9 +85,11 @@ EXTRA_ARGS: dict[str, str | None] = {"no-chrome": None, "no-session-persistence"
 MCP_TOOL_TIMEOUT_MS = str(24 * 3600 * 1000)
 
 SDK_TASK_NOTE = """# Runtime (Claude Code session)
-Your ATLAS tools are mcp__atlas__consult, mcp__atlas__request_approval and mcp__atlas__submit_report{web}.
-You have no file system, shell or any other tool. Finish by calling mcp__atlas__submit_report; once it
-succeeds, stop (reply with one short line)."""
+Your ATLAS tools are mcp__atlas__consult, mcp__atlas__request_approval, mcp__atlas__list_files,
+mcp__atlas__search_files, mcp__atlas__read_file, mcp__atlas__write_deliverable and mcp__atlas__submit_report{web}.
+Your ONLY file access is through those mcp__atlas__ file tools (read-only on the user's files; write_deliverable
+creates new files in the mission outputs). You have no shell and no other tool. Finish by calling
+mcp__atlas__submit_report; once it succeeds, stop (reply with one short line)."""
 
 SDK_STEP_NOTE = """# Runtime (Claude Code session)
 Deliver your answer ONLY by calling the tool mcp__atlas__{name} (no other tools exist). If it returns an
@@ -416,9 +418,20 @@ class SdkAgentRun(AgentRun):
         if self._consultable() and cfg.max_consults > 0:
             spec = consult_tool(self._consultable())
             tools.append(ex.tool(spec["name"], spec["description"], spec["input_schema"], self._on_consult))
+        for spec in FILE_TOOLS:
+            tools.append(ex.tool(spec["name"], spec["description"], spec["input_schema"], self._file_handler(spec["name"])))
         for spec, handler in ((REQUEST_APPROVAL_TOOL, self._on_approval), (SUBMIT_REPORT_TOOL, self._on_submit)):
             tools.append(ex.tool(spec["name"], spec["description"], spec["input_schema"], handler))
         return tools
+
+    def _file_handler(self, name: str) -> Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]:
+        async def handler(args: dict[str, Any]) -> dict[str, Any]:
+            if self.report is not None:
+                return _mcp_result("Your report is already submitted. Stop now.", error=True)
+            text, ok = await self._file_tool(name, args)
+            return _mcp_result(text, error=not ok)
+
+        return handler
 
     async def _on_consult(self, args: dict[str, Any]) -> dict[str, Any]:
         if self.report is not None:
@@ -452,11 +465,7 @@ class SdkAgentRun(AgentRun):
             SDK_TASK_NOTE.format(web=", plus WebSearch and WebFetch for research" if web else ""),
             context_block(sc.context_for(self.agent.agent)),
         ]
-        prompt = task_message(
-            sc.objective, sc.node, task, self.dep_reports,
-            consultable=[f"{a} ({sc.name(a)})" for a in self._consultable()],
-            approval_required=task.requires_approval,
-        )
+        prompt = self._task_message()
         last_text = ""
         async with aclosing(self.executor.session(
             sc, model=self.agent.model, system=system, prompt=prompt, tools=self._mcp_tools(), web=web,
@@ -468,23 +477,15 @@ class SdkAgentRun(AgentRun):
                 self._message_id = msg.message_id
                 text = "\n".join(b.text for b in msg.content if isinstance(b, TextBlock) and b.text).strip()
                 last_text = text or last_text
-                for b in msg.content:
+                for b in msg.content:  # evidence for the CLI's built-in web tools, from their tool-use blocks
                     if isinstance(b, ToolUseBlock) and b.name in WEB_TOOLS:
-                        await self._log_web(b.name, b.input or {})
+                        await self._web_evidence(b.name, b.input or {})
                 if self.report is None and s.task(task.id).status == TaskStatus.IN_PROGRESS.value:
                     progress = round(min(0.9, 0.05 + 0.85 * self.turns / cfg.max_turns), 2)
                     await s.update_task(task.id, progress=progress)
         if self.report is not None:
             return self.report
         return await self._fallback(last_text)
-
-    async def _log_web(self, tool: str, data: dict[str, Any]) -> None:
-        what = str(data.get("query") or data.get("url") or "")
-        verb = "searched the web" if tool == "WebSearch" else "read a web page"
-        await self._activity(f"{'Searching the web' if tool == 'WebSearch' else 'Reading'} · {_short(what, 60)}"
-                             if what else "Searching the web")
-        await self.store.log(f"{self.agent.agent.name} {verb} · {_short(what)}",
-                             mission_id=self.scope.mission_id, agent_id=self.aid)
 
 
 # ---------------------------------------------------------------------------

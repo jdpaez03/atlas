@@ -8,6 +8,7 @@ low-confidence report).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -21,6 +22,7 @@ from ..core.models import (
     AgentStatus,
     ApprovalReason,
     ApprovalState,
+    Attachment,
     Claim,
     ClaimKind,
     Confidence,
@@ -32,15 +34,19 @@ from ..core.models import (
 from ..core.store import StoreError, WorldStore
 from .agent_loader import ModelConfig, ResolvedAgent
 from .context import NodeContext
+from .evidence import apply_claim_check, record
+from .files import FileSandbox, FileTools
 from .llm import LLMError, Meter, block_to_param, response_text, tool_uses
 from .prompts import (
     CONSULT_PROTOCOL,
+    FILE_TOOLS,
     PROTOCOL,
     REQUEST_APPROVAL_TOOL,
     SUBMIT_REPORT_TOOL,
     consult_message,
     consult_tool,
     context_block,
+    files_note,
     render_report,
     system_blocks,
     task_message,
@@ -198,6 +204,8 @@ class AgentRun:
         self.agent: ResolvedAgent = scope.agents[task.assigned_to or ""]
         self.consults = 0
         self.approval_requested = False
+        self.deliverables: list[Attachment] = []
+        self._files: FileTools | None = None
 
     @property
     def aid(self) -> str:
@@ -215,13 +223,54 @@ class AgentRun:
         tools: list[dict[str, Any]] = []
         if self._consultable() and cfg.max_consults > 0:
             tools.append(consult_tool(self._consultable()))
-        tools += [REQUEST_APPROVAL_TOOL, SUBMIT_REPORT_TOOL]
+        tools += [*FILE_TOOLS, REQUEST_APPROVAL_TOOL, SUBMIT_REPORT_TOOL]
         if cfg.web_search and "web_search" in self.agent.agent.tools:
             tools.append(web_search_tool(cfg.web_search_tool, cfg.web_search_max_uses))
         return tools
 
     async def _activity(self, text: str, status: AgentStatus = AgentStatus.WORKING) -> None:
         await self.scope.set_agent(self.aid, status, activity=text, task_id=self.task.id)
+
+    async def _evidence(self, kind: str, ref: str, detail: str = "", ok: bool = True,
+                        summary: str | None = None) -> None:
+        await record(self.store, mission_id=self.scope.mission_id, task_id=self.task.id, agent_id=self.aid,
+                     kind=kind, ref=ref, detail=detail, ok=ok, summary=summary)
+
+    # -- files -----------------------------------------------------------------
+
+    @property
+    def files(self) -> FileTools:
+        if self._files is None:
+            self._files = FileTools(FileSandbox.for_mission(self.scope.node, self.scope.mission_id))
+        return self._files
+
+    def _files_note(self) -> str:
+        sb = self.files.sb
+        return files_note([str(r) for r in sb.user_roots], str(sb.attachments), str(sb.outputs))
+
+    def _task_message(self) -> str:
+        sc = self.scope
+        return task_message(
+            sc.objective, sc.node, self.task, self.dep_reports,
+            consultable=[f"{a} ({sc.name(a)})" for a in self._consultable()],
+            approval_required=self.task.requires_approval, files_note=self._files_note(),
+        )
+
+    async def _file_tool(self, name: str, data: dict[str, Any]) -> tuple[str, bool]:
+        """Run a file tool in a worker thread; the activity line and the evidence come from this real call."""
+        await self._activity(self.files.activity(name, data))
+        try:
+            res = await asyncio.to_thread(self.files.run, name, data)
+        except Exception as exc:
+            log.exception("file tool %s failed", name)
+            await self._evidence("file_written" if name == "write_deliverable" else
+                                 "file_read" if name == "read_file" else "file_listed",
+                                 str(data.get("path") or data.get("filename") or ""), str(exc), ok=False)
+            return f"Error: {type(exc).__name__}: {exc}", False
+        await self._evidence(res.kind, res.ref, res.detail, res.ok)
+        if res.attachment is not None:
+            self.deliverables.append(res.attachment)
+        return res.text, res.ok
 
     # -- the loop ------------------------------------------------------------
 
@@ -233,22 +282,14 @@ class AgentRun:
             self.agent.role_prompt, PROTOCOL, context_block(self.scope.context_for(self.agent.agent))
         )
         tools = self._tools()
-        messages: list[dict[str, Any]] = [{
-            "role": "user",
-            "content": task_message(
-                self.scope.objective, self.scope.node, task, self.dep_reports,
-                consultable=[f"{a} ({self.scope.name(a)})" for a in self._consultable()],
-                approval_required=task.requires_approval,
-            ),
-        }]
+        messages: list[dict[str, Any]] = [{"role": "user", "content": self._task_message()}]
         force = False
         nudged = False
         last_text = ""
         for turn in range(cfg.max_turns):
             final = turn == cfg.max_turns - 1
-            if turn:
+            if turn:  # the activity line only changes on real tool calls (never from model text)
                 await s.update_task(task.id, progress=round(min(0.9, 0.05 + 0.85 * turn / cfg.max_turns), 2))
-                await self._activity("Drafting report" if (final or force) else f"Working on '{task.title}'")
             kwargs: dict[str, Any] = {
                 "model": self.agent.model,
                 "max_tokens": cfg.max_tokens,
@@ -263,7 +304,7 @@ class AgentRun:
             if content:
                 messages.append({"role": "assistant", "content": content})
             last_text = response_text(resp) or last_text
-            await self._log_searches(resp)
+            await self._record_server_tools(resp)
             if resp.stop_reason == "pause_turn" and content:
                 continue  # a server tool (web search) paused the turn: send it back to resume
             uses = tool_uses(resp)
@@ -287,20 +328,46 @@ class AgentRun:
                     results.append(await self._consult(tu.id, data))
                 elif name == "request_approval":
                     results.append(await self._request_approval(tu.id, data))
+                elif name in FileTools.NAMES:
+                    out, ok = await self._file_tool(name, data)
+                    results.append(_tool_result(tu.id, out, error=not ok))
                 else:
                     results.append(_tool_result(tu.id, f"Unknown tool '{name}'.", error=True))
             _add_user(messages, results)
         return await self._fallback(last_text)
 
-    async def _log_searches(self, resp: Any) -> None:
+    async def _record_server_tools(self, resp: Any) -> None:
+        """Evidence for the API's server tools (web_search / web_fetch), from the server_tool_use blocks and
+        their result blocks (an error result marks the evidence as failed)."""
+        errors: dict[str, str] = {}
         for b in resp.content:
-            if getattr(b, "type", None) == "server_tool_use" and getattr(b, "name", "") == "web_search":
-                query = (getattr(b, "input", None) or {}).get("query", "")
-                await self._activity(f"Searching the web · {_short(query, 60)}" if query else "Searching the web")
-                await self.store.log(
-                    f"{self.agent.agent.name} searched the web · {_short(query)}",
-                    mission_id=self.scope.mission_id, agent_id=self.aid,
-                )
+            btype = str(getattr(b, "type", "") or "")
+            if btype.endswith("_tool_result"):
+                content = getattr(b, "content", None)
+                ctype = content.get("type") if isinstance(content, dict) else getattr(content, "type", None)
+                if ctype and str(ctype).endswith("_error"):
+                    code = content.get("error_code") if isinstance(content, dict) else getattr(
+                        content, "error_code", None)
+                    errors[str(getattr(b, "tool_use_id", ""))] = str(code or ctype)
+        for b in resp.content:
+            if getattr(b, "type", None) != "server_tool_use":
+                continue
+            name = getattr(b, "name", "")
+            data = getattr(b, "input", None) or {}
+            if name in ("web_search", "web_fetch"):
+                err = errors.get(str(getattr(b, "id", "")))
+                await self._web_evidence("WebSearch" if name == "web_search" else "WebFetch", data, err)
+
+    async def _web_evidence(self, tool: str, data: dict[str, Any], error: str | None = None) -> None:
+        """Activity + evidence for one web search or fetch (both backends)."""
+        search = tool == "WebSearch"
+        what = str(data.get("query") or data.get("url") or "")
+        await self._activity((f"Searching the web · {_short(what, 60)}" if search else f"Fetching {_short(what, 70)}")
+                             if what else ("Searching the web" if search else "Fetching a web page"))
+        verb = "searched the web ·" if search else "fetched"
+        summary = f"{self.agent.agent.name} {verb} {_short(what)}" + (f" · failed: {error}" if error else "")
+        await self._evidence("web_search" if search else "web_fetch", what, error or "", ok=error is None,
+                             summary=summary)
 
     # -- tools ---------------------------------------------------------------
 
@@ -342,6 +409,7 @@ class AgentRun:
                 sc.mission_id, target_id, self.aid, MessageType.ANSWER, f"Re: {_short(question, 70)}", answer,
                 task_id=task.id, in_reply_to=request.id,
             )
+        await self._evidence("consult", target_id, _short(question, 200) if ok else answer, ok=ok)
         await self._activity(f"Working on '{task.title}'")
         return _tool_result(tool_id, answer, error=not ok)
 
@@ -385,6 +453,11 @@ class AgentRun:
         await self._activity("Awaiting human approval", AgentStatus.WAITING)
         decided = await s.wait_for_decision(approval.id)
         approved = decided.state == ApprovalState.APPROVED.value
+        await self._evidence(
+            "approval", approval.id, f"{decided.state}: {title}" + (f" · {decided.decision_note}"
+                                                                    if decided.decision_note else ""),
+            ok=decided.state in (ApprovalState.APPROVED.value, ApprovalState.REJECTED.value),
+        )
         if s.task(task.id).status == TaskStatus.AWAITING_APPROVAL.value:
             await s.update_task(task.id, status=TaskStatus.IN_PROGRESS)
         await self._activity(f"{'Approved' if approved else 'Rejected'} · {title}")
@@ -404,16 +477,26 @@ class AgentRun:
         limitations = _str_list(data.get("limitations"))
         if task.requires_approval and not self.approval_requested:
             limitations.append("The task required human approval but the agent did not request it.")
+        actions, inputs = _str_list(data.get("actions_taken")), _str_list(data.get("inputs_used"))
+        evidence = s.evidence_for(self.scope.mission_id, task.id)
+        # claim check: files the report mentions must have a system record
+        limitations, confidence = apply_claim_check(
+            actions, inputs, limitations, _enum(data.get("confidence"), Confidence, Confidence.MEDIUM),
+            task_evidence=evidence, mission_evidence=s.evidence_for(self.scope.mission_id),
+            provided=self.scope.context_for(self.agent.agent),
+        )
         report = await s.submit_report(
             self.scope.mission_id, task.id, self.aid,
             str(data.get("asked_to") or task.title).strip(),
-            actions_taken=_str_list(data.get("actions_taken")),
-            inputs_used=_str_list(data.get("inputs_used")),
+            actions_taken=actions,
+            inputs_used=inputs,
             findings=to_claims(data.get("findings")),
             unresolved=_str_list(data.get("unresolved")),
             needs_agents=_str_list(data.get("needs_agents")),
-            confidence=_enum(data.get("confidence"), Confidence, Confidence.MEDIUM),
+            confidence=confidence,
             limitations=limitations,
+            evidence=evidence,
+            deliverables=list(self.deliverables),
         )
         await s.update_task(task.id, status=TaskStatus.COMPLETED)
         return report
@@ -432,6 +515,8 @@ class AgentRun:
             unresolved=["The agent's output was not structured into tagged findings"],
             confidence=Confidence.LOW,
             limitations=["Auto-wrapped: the agent did not call submit_report"],
+            evidence=s.evidence_for(self.scope.mission_id, task.id),
+            deliverables=list(self.deliverables),
         )
         await s.update_task(task.id, status=TaskStatus.COMPLETED)
         return report

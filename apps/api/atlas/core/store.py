@@ -18,6 +18,10 @@ mutation so clients never have to derive anything):
     mission.report_ready                       {report, mission} mission.final_report_id was set
     approval.requested / approval.decided      {approval}
     log                                        {}                or {reset: true, agent_states: [...]}
+
+Persistence (docs/PHASE3.md B): when the bus has an `EventLog`, every event is stored; `restore()` folds
+the stored events back into the state on startup and `recover_interrupted()` closes the missions that
+were running when the server stopped (interrupted=true, open tasks CANCELLED, pending approvals EXPIRED).
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from pydantic import BaseModel
 
 from .events import EventBus
 from .models import (
+    HUMAN,
     AgentMessage,
     AgentReport,
     AgentState,
@@ -38,6 +43,7 @@ from .models import (
     ApprovalRequest,
     ApprovalState,
     AtlasEvent,
+    Attachment,
     Claim,
     Confidence,
     EventType,
@@ -93,8 +99,8 @@ _COLLECTIONS: dict[str, tuple[str, type[BaseModel], str]] = {
 
 def _upsert(items: list[Any], obj: Any, key: str = "id") -> None:
     ident = getattr(obj, key)
-    for i, existing in enumerate(items):
-        if getattr(existing, key) == ident:
+    for i in range(len(items) - 1, -1, -1):  # newest first: updates usually touch recent objects
+        if getattr(items[i], key) == ident:
             items[i] = obj
             return
     items.append(obj)
@@ -120,6 +126,12 @@ def apply_event(state: WorldState, event: AtlasEvent) -> WorldState:
     `agent_states`. `last_seq` becomes the event's seq.
     """
     s = state.model_copy(deep=True)
+    _apply(s, event)
+    return s
+
+
+def _apply(s: WorldState, event: AtlasEvent) -> None:
+    """`apply_event` in place (no copy)."""
     p = event.payload or {}
     etype = EventType(event.type)
 
@@ -140,13 +152,13 @@ def apply_event(state: WorldState, event: AtlasEvent) -> WorldState:
             _upsert(getattr(s, collection), model.model_validate(value), ident)
 
     s.last_seq = max(s.last_seq, event.seq)
-    return s
 
 
 def fold(state: WorldState, events: Iterable[AtlasEvent]) -> WorldState:
+    s = state.model_copy(deep=True)
     for e in events:
-        state = apply_event(state, e)
-    return state
+        _apply(s, e)
+    return s
 
 
 def _dump(obj: BaseModel) -> dict[str, Any]:
@@ -206,6 +218,60 @@ class WorldStore:
     def reports_for(self, mission_id: str) -> list[AgentReport]:
         return [r for r in self._state.agent_reports if r.mission_id == mission_id]
 
+    def messages_for(self, mission_id: str) -> list[AgentMessage]:
+        return [m for m in self._state.messages if m.mission_id == mission_id]
+
+    def mission_reports_for(self, mission_id: str) -> list[MissionReport]:
+        return sorted((r for r in self._state.mission_reports if r.mission_id == mission_id),
+                      key=lambda r: r.version)
+
+    # -- persistence ---------------------------------------------------------
+
+    def restore(self) -> int:
+        """Fold the persisted event log (if any) into the state and seed the bus. Call once, at startup,
+        before anything is published. Returns the number of events replayed."""
+        db = self.bus.log
+        if db is None:
+            return 0
+        events = list(db.events())
+        if not events:
+            return 0
+        state = fold(self._state, events)
+        known = {a.id for a in self.registry.all()}
+        states = {st.agent_id: st for st in state.agent_states if st.agent_id in known}
+        state.agent_states = [states.get(a.id) or AgentState(agent_id=a.id, status=self.default_status(a.id))
+                              for a in self.registry.all()]
+        state.nodes, state.divisions, state.agents = self.registry.nodes(), self.registry.divisions(), \
+            self.registry.all()
+        self._state = state
+        self.bus.seed(events[-(self.bus._history.maxlen or len(events)):])
+        return len(events)
+
+    async def recover_interrupted(self, reason: str = "the server stopped while it was running") -> list[str]:
+        """Close every mission that is not CLOSED (nothing drives it after a restart): interrupted=true,
+        open tasks CANCELLED, pending approvals EXPIRED, busy agents back to their default status."""
+        ids: list[str] = []
+        for mission in list(self._state.missions):
+            if mission.phase == MissionPhase.CLOSED.value:
+                continue
+            ids.append(mission.id)
+            for t in self.tasks_for(mission.id):
+                if t.status not in _TERMINAL:
+                    await self.update_task(t.id, status=TaskStatus.CANCELLED)
+            await self._expire_approvals(mission.id, f"expired · {reason}")
+            await self.log(f"Mission interrupted · {reason}", mission_id=mission.id,
+                           agent_id=self.registry.orchestrator.id)
+            mission = self._replace(self._state.missions, self.mission(mission.id), {
+                "interrupted": True, "phase": MissionPhase.CLOSED.value, "closed_at": _now()})
+            await self._emit(
+                EventType.MISSION_CLOSED, "Mission closed (interrupted)", {"mission": mission},
+                mission_id=mission.id, agent_id=self.registry.orchestrator.id,
+            )
+        for st in list(self._state.agent_states):
+            if st.status != self.default_status(st.agent_id).value or st.current_task_id:
+                await self.reset_agent(st.agent_id)
+        return ids
+
     # -- missions ------------------------------------------------------------
 
     async def create_mission(
@@ -216,9 +282,15 @@ class WorldStore:
         context: str | None = None,
         priority: Priority | str = Priority.MEDIUM,
         mode: str = "simulated",
+        mission_id: str | None = None,
+        attachments: list[Attachment] | None = None,
     ) -> Mission:
         self._check_node(node)
-        mission = Mission(objective=objective, node=node, context=context, priority=priority, mode=mode)
+        extra: dict[str, Any] = {"id": mission_id} if mission_id else {}
+        if mission_id and any(m.id == mission_id for m in self._state.missions):
+            raise ConflictError(f"mission '{mission_id}' already exists")
+        mission = Mission(objective=objective, node=node, context=context, priority=priority, mode=mode,
+                          attachments=list(attachments or []), **extra)
         self._state.missions.append(mission)
         node_name = self._node_name(node)
         await self._emit(
@@ -271,6 +343,33 @@ class WorldStore:
         )
         return mission
 
+    async def add_attachments(self, mission_id: str, attachments: list[Attachment]) -> Mission:
+        """Append files the user attached; emits mission.updated."""
+        mission = self.mission(mission_id)
+        mission = self._replace(self._state.missions, mission, {
+            "attachments": [*(a.model_dump() for a in mission.attachments), *(a.model_dump() for a in attachments)]
+        })
+        names = ", ".join(a.name for a in attachments)
+        await self._emit(
+            EventType.MISSION_UPDATED, f"Human attached {len(attachments)} file(s) · {names}",
+            {"mission": mission}, mission_id=mission.id,
+        )
+        return mission
+
+    async def begin_round(self, mission_id: str) -> Mission:
+        """Reopen a mission for a follow-up round from the mission thread: round += 1, phase DELEGATION,
+        closed_at cleared, interrupted cleared. Emits mission.phase_changed."""
+        mission = self.mission(mission_id)
+        mission = self._replace(self._state.missions, mission, {
+            "round": mission.round + 1, "phase": MissionPhase.DELEGATION.value, "closed_at": None,
+            "interrupted": False,
+        })
+        await self._emit(
+            EventType.MISSION_PHASE_CHANGED, f"Round {mission.round} started · Mission phase → DELEGATION",
+            {"mission": mission}, mission_id=mission.id, agent_id=self.registry.orchestrator.id,
+        )
+        return mission
+
     async def cancel_mission(self, mission_id: str, reason: str = "cancelled by the user") -> Mission:
         """Cancel every open task, expire pending approvals (waking their waiters) and close the
         mission. Stopping the engine that drives the mission is the caller's job."""
@@ -280,6 +379,12 @@ class WorldStore:
         for t in self.tasks_for(mission_id):
             if t.status not in _TERMINAL:
                 await self.update_task(t.id, status=TaskStatus.CANCELLED)
+        await self._expire_approvals(mission_id, reason)
+        await self.log(f"Mission cancelled · {reason}", mission_id=mission_id,
+                       agent_id=self.registry.orchestrator.id)
+        return await self.set_phase(mission_id, MissionPhase.CLOSED)
+
+    async def _expire_approvals(self, mission_id: str, reason: str) -> None:
         for a in list(self._state.approvals):
             if a.mission_id == mission_id and a.state == ApprovalState.PENDING.value:
                 a = self._replace(
@@ -289,16 +394,13 @@ class WorldStore:
                 )
                 await self._emit(
                     EventType.APPROVAL_DECIDED,
-                    f"Approval '{a.title}' expired · mission cancelled",
+                    f"Approval '{a.title}' expired · {'mission cancelled' if 'cancel' in reason else reason}",
                     {"approval": a},
                     mission_id=mission_id,
                     agent_id=a.requested_by,
                 )
                 if ev := self._decisions.get(a.id):
                     ev.set()
-        await self.log(f"Mission cancelled · {reason}", mission_id=mission_id,
-                       agent_id=self.registry.orchestrator.id)
-        return await self.set_phase(mission_id, MissionPhase.CLOSED)
 
     async def release_agents(self, mission_id: str, agent_ids: Iterable[str]) -> None:
         """Return agents touched by a finished mission to their default status, unless they are
@@ -355,6 +457,7 @@ class WorldStore:
             requires_approval=requires_approval,
             approval_reason=approval_reason,
             parent_task_id=parent_task_id,
+            round=mission.round,
         )
         self._state.tasks.append(task)
         mission = self._replace(self._state.missions, mission, {"task_ids": [*mission.task_ids, task.id]})
@@ -485,8 +588,9 @@ class WorldStore:
         in_reply_to: str | None = None,
     ) -> AgentMessage:
         mission = self.mission(mission_id)
-        self._check_agent(from_agent, mission)
-        self._check_agent(to_agent, mission)
+        for a in (from_agent, to_agent):
+            if a != HUMAN:  # the user writes and reads the mission thread
+                self._check_agent(a, mission)
         if task_id is not None:
             self.task(task_id)
         message = AgentMessage(
@@ -507,7 +611,7 @@ class WorldStore:
             f"{self._name(from_agent)} → {self._name(to_agent)} · {message.type} · {subject}",
             {"message": message},
             mission_id=mission_id,
-            agent_id=from_agent,
+            agent_id=None if from_agent == HUMAN else from_agent,
         )
         return message
 
@@ -527,6 +631,8 @@ class WorldStore:
         needs_agents: list[str] | None = None,
         confidence: Confidence | str = Confidence.MEDIUM,
         limitations: list[str] | None = None,
+        evidence: list[Evidence] | None = None,  # F: system-recorded actions of the task (PHASE3 A)
+        deliverables: list[Attachment] | None = None,  # F: files the task wrote
     ) -> AgentReport:
         mission = self.mission(mission_id)
         self._check_agent(agent_id, mission)
@@ -543,6 +649,8 @@ class WorldStore:
             needs_agents=needs_agents or [],
             confidence=confidence,
             limitations=limitations or [],
+            evidence=list(evidence or []),  # F:
+            deliverables=list(deliverables or []),  # F:
         )
         self._state.agent_reports.append(report)
         task = self._replace(self._state.tasks, task, {"result_report_id": report.id})
@@ -673,7 +781,9 @@ class WorldStore:
         return await self._emit(EventType.LOG, text, {}, mission_id=mission_id, agent_id=agent_id)
 
     async def reset(self) -> None:
-        """Clear every mission (dev only). Emits a `log` event with `payload.reset`."""
+        """Clear every mission (dev only) and the persisted history. Emits a `log` event with `payload.reset`."""
+        if self.bus.log is not None:
+            self.bus.log.clear()
         _clear(self._state)
         self._state.agent_states = self._initial_agent_states()
         for ev in self._decisions.values():
@@ -762,6 +872,8 @@ class WorldStore:
     def _name(self, agent_id: str | None) -> str:
         if not agent_id:
             return "—"
+        if agent_id == HUMAN:
+            return "Human"
         try:
             return self.registry.get(agent_id).name
         except RegistryError:

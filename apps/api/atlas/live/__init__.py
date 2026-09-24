@@ -8,6 +8,8 @@
     agent_loader.py  role prompt + model per agent (YAML / claude_md), availability
     context.py       private node context from ATLAS_LOCAL_DIR (node-isolated)
     prompts.py       ATLAS protocol, orchestrator prompts, tool schemas
+    files.py         file sandbox (ATLAS_FILE_ROOTS_<NODE>), read/list/search tools, extraction, deliverables
+    evidence.py      system-recorded evidence, claim check, mission deliverables
     runtime.py       one agent run (tool-use loop), LiveConfig, MissionScope
     orchestrator.py  LiveMission (plan → execute → review → consolidate) and LiveEngine
 """

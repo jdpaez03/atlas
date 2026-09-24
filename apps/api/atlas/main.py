@@ -9,8 +9,13 @@
   GET  /config                      {live_available, backend, cost_basis, live_hint, models, web_search,
                                      context_nodes}
   GET  /agents/availability         {agent_id: {available, reason?}} for live missions
-  POST /missions                    {objective, node, mode?, scenario_id?, speed?} -> Mission
+  GET  /missions?node=&limit=       mission history, newest first
+  POST /missions                    JSON {objective, node, mode?, scenario_id?, speed?} or multipart
+                                    (same fields + files[]) -> Mission
   POST /missions/{id}/cancel        stop a running mission (live or simulated) -> Mission
+  POST /missions/{id}/attachments   multipart files[] -> Mission
+  GET  /missions/{id}/files/{attachments|outputs}/{name}   download a stored file
+  POST /missions/{id}/messages      {text} mission thread (guidance, follow-up rounds) -> AgentMessage
   POST /approvals/{id}/decision     {decision: APPROVED|REJECTED, note?} -> ApprovalRequest
   POST /reset                       clear all missions (dev only)
   WS   /ws?since=<seq>              replay events with seq > since, then live
@@ -32,6 +37,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
+from .core import paths
+from .core.db import EventLog
 from .core.events import EventBus
 from .core.models import AgentDefinition
 from .core.registry import DEFAULT_AGENTS_DIR, AgentRegistry
@@ -66,8 +73,10 @@ def _default_speed() -> float:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    bus = EventBus()
+    db = EventLog(paths.db_path())
+    bus = EventBus(log=db)
     store = WorldStore(registry, bus)
+    replayed = store.restore()  # mission history (docs/PHASE3.md B)
     library = ScenarioLibrary(registry)
     sim = Simulator(store, library, default_speed=_default_speed())
     live_engine = LiveEngine(store)
@@ -86,11 +95,21 @@ async def lifespan(app: FastAPI):
         f"ATLAS online with {len(registry.all())} agents · {n_scenarios} simulated scenarios · {live_line}.",
         agent_id=registry.orchestrator.id,
     )
+    if replayed:
+        interrupted = await store.recover_interrupted()
+        n_missions = len(store.snapshot().missions)
+        await store.log(
+            f"Mission history restored · {n_missions} missions from {replayed} events"
+            + (f" · {len(interrupted)} interrupted" if interrupted else ""),
+            agent_id=registry.orchestrator.id,
+        )
     try:
         yield
     finally:
-        await live_engine.cancel_all()
+        # stop the engines without closing their missions: on the next start they come back interrupted
+        await live_engine.stop_all()
         await sim.cancel_all()
+        db.close()
 
 
 app = FastAPI(

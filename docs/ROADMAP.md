@@ -8,8 +8,8 @@ work in parallel against it without colliding.
 |---|---|---|---|
 | **0 · Contracts** | Data models (Mission, Task, AgentStatus, AgentMessage, AgentReport, MissionReport, ApprovalRequest, AtlasEvent), agent registry with external-agent adapters, event bus + WebSocket, JSON Schema → TypeScript generation, CI | API + Agent Board reading the live registry | ✅ done |
 | **1 · Command Center (simulated)** | Mission panel, Agent Board with live statuses, Task Board with dependencies, collaboration graph, activity feed, reports view, human-intervention queue. A scripted "real-estate investment" mission replays through the real event stream (mock adapter). | Full experience, clickable, fake agents | ✅ done |
-| **2 · Live orchestrator** | ATLAS decomposes objectives with Claude into a task DAG, delegates, runs SOFIA/ORACLE/ALFRED on the Claude API, structured messages between agents | Type an objective → real agents work live | ✅ built · first real run needs API key |
-| **3 · Human-in-the-loop & reporting** | Approval gates (external comms, money, irreversible, conflicting info), agent reports, ATLAS executive report, persistent mission history (SQLite) | Approve/reject from UI; finished missions produce reports | |
+| **2 · Live orchestrator** | ATLAS decomposes objectives with Claude into a task DAG, delegates, runs SOFIA/ORACLE/ALFRED on the Claude API, structured messages between agents | Type an objective → real agents work live | ✅ done (Max plan or API key) |
+| **3 · Files, evidence, thread, history** | Sandboxed read access to your folders per node, attachments, real deliverables (md/csv/xlsx/docx), system-recorded evidence + unverified-claim check, mission thread with follow-up rounds and report versions, SQLite history that survives restarts | Attach a file → agents read it, write a deliverable, prove it; follow up in the thread | ✅ done |
 | **4 · Tools** | SOFIA web search/fetch, ARGOS scheduled checks + alerts, ALFRED document/spreadsheet generation | Real information in, real deliverables out | |
 | **5 · Modularity & quality** | External agents (http / mcp / cli adapters) live, AUDITOR agent, cost/token tracking, retries & error recovery | Add an agent = add a YAML file | |
 
@@ -39,3 +39,9 @@ work in parallel against it without colliding.
   model; first real-API run pending the key.
 - 2026-09-23 · **MERCATO** (Corporate): the user's `estudio-mercado-vivienda-vertical` skill joins as the market-
   studies agent via `claude_md`; its prompt lives in `atlas-local/agents/` (private).
+- 2026-09-24 · **Max plan backend**: live missions run on the user's Claude Max plan through the Claude Agent SDK
+  (Claude Code), locked down: no local tools except ATLAS's own sandboxed ones, no user settings loaded, no transcripts.
+- 2026-09-24 · **Phase 3 re-scoped from first real use**: agents had no file access and described actions they never
+  took → sandboxed file tools per node, attachments, deliverables, and *evidence written by the system, not the agent*
+  (reports carry it; unverified claims are flagged). Plus a mission thread (follow-up rounds, report versions) and
+  persistent history. Corporate agents read `~/Documents` by default (`ATLAS_FILE_ROOTS_CORPORATE`).

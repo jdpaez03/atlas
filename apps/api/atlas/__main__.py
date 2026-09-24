@@ -28,6 +28,8 @@ def main(argv: list[str] | None = None) -> None:
         reload=args.reload,
         reload_dirs=[str(Path(__file__).resolve().parent)] if args.reload else None,
         loop=loop,
+        # The Command Center keeps a WebSocket open; without a timeout Ctrl+C would wait for the browser.
+        timeout_graceful_shutdown=3,
     )
 
 

@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { NO_LIVE_CONFIG, api, wsUrl, type AtlasConfig, type Availability, type Decision, type LaunchMissionBody, type Scenario } from "./api";
+import { NO_LIVE_CONFIG, api, wsUrl, type AtlasConfig, type Availability, type Decision, type LaunchMissionBody, type MissionSummary, type Scenario } from "./api";
 import type {
   AgentMessage,
   AgentReport,
   AgentState,
   ApprovalRequest,
   AtlasEvent,
+  Evidence,
   Mission,
   MissionReport,
   Task,
@@ -31,6 +32,7 @@ export function emptyWorld(): WorldState {
     agent_reports: [],
     mission_reports: [],
     approvals: [],
+    evidence: [],
     last_seq: 0,
   };
 }
@@ -55,7 +57,7 @@ export function applyEvent(s: WorldState, e: AtlasEvent): WorldState {
   if (e.type === "log" && p.reset) {
     return {
       ...next,
-      missions: [], tasks: [], messages: [], agent_reports: [], mission_reports: [], approvals: [],
+      missions: [], tasks: [], messages: [], agent_reports: [], mission_reports: [], approvals: [], evidence: [],
       agent_states: (p.agent_states as AgentState[] | undefined) ?? s.agent_states,
     };
   }
@@ -64,6 +66,7 @@ export function applyEvent(s: WorldState, e: AtlasEvent): WorldState {
   if (p.mission) next.missions = upsertBy(s.missions, p.mission as Mission, byId);
   if (p.task) next.tasks = upsertBy(s.tasks, p.task as Task, byId);
   if (p.state) next.agent_states = upsertBy(s.agent_states, p.state as AgentState, (x) => x.agent_id);
+  if (p.evidence) next.evidence = upsertBy(s.evidence ?? [], p.evidence as Evidence, byId);
   if (p.approval) next.approvals = upsertBy(s.approvals, p.approval as ApprovalRequest, byId);
   if (p.message) {
     const m = p.message as AgentMessage;
@@ -97,7 +100,13 @@ export interface Transport {
   mode: "live" | "mock";
   connect(h: TransportHandlers): () => void;
   scenarios(): Promise<Scenario[]>;
-  launch(body: LaunchMissionBody): Promise<Mission>;
+  launch(body: LaunchMissionBody, files?: File[]): Promise<Mission>;
+  /** POST /missions/{id}/messages — a note from the human to ATLAS (mission thread). */
+  sendMessage(missionId: string, text: string): Promise<unknown>;
+  /** POST /missions/{id}/attachments */
+  attach(missionId: string, files: File[]): Promise<unknown>;
+  /** GET /missions?node= — null when the backend has no history endpoint. */
+  missions(node: string | null): Promise<MissionSummary[] | null>;
   decide(id: string, decision: Decision, note?: string): Promise<ApprovalRequest>;
   cancel(id: string): Promise<Mission>;
   config(): Promise<AtlasConfig>;
@@ -111,6 +120,9 @@ export function liveTransport(): Transport {
     launch: api.launch,
     decide: api.decide,
     cancel: api.cancel,
+    sendMessage: api.sendMessage,
+    attach: api.attach,
+    missions: (node) => api.missions(node),
     config: api.config,
     availability: api.availability,
     connect(h) {
@@ -208,7 +220,8 @@ function mergeFeed(feed: AtlasEvent[], events: AtlasEvent[]): AtlasEvent[] {
 function storeReducer(s: StoreState, a: Action): StoreState {
   switch (a.type) {
     case "snapshot":
-      return { ...s, world: a.world, loaded: true };
+      // Tolerate a pre-Phase-3 snapshot without `evidence`.
+      return { ...s, world: { ...a.world, evidence: a.world.evidence ?? [] }, loaded: true };
     case "event":
       return { ...s, world: applyEvent(s.world, a.event), feed: mergeFeed(s.feed, [a.event]) };
     case "backfill":
@@ -257,10 +270,25 @@ export function useAtlas() {
     };
   }, []);
 
-  const launch = useCallback((body: LaunchMissionBody) => {
+  const launch = useCallback((body: LaunchMissionBody, files?: File[]) => {
     const t = transportRef.current;
     if (!t) return Promise.reject(new Error("not connected"));
-    return t.launch(body);
+    return t.launch(body, files);
+  }, []);
+  const sendMessage = useCallback((missionId: string, text: string) => {
+    const t = transportRef.current;
+    if (!t) return Promise.reject(new Error("not connected"));
+    return t.sendMessage(missionId, text);
+  }, []);
+  const attach = useCallback((missionId: string, files: File[]) => {
+    const t = transportRef.current;
+    if (!t) return Promise.reject(new Error("not connected"));
+    return t.attach(missionId, files);
+  }, []);
+  const missionHistory = useCallback((node: string | null) => {
+    const t = transportRef.current;
+    if (!t) return Promise.resolve(null);
+    return t.missions(node).catch(() => null);
   }, []);
   const decide = useCallback((id: string, decision: Decision, note?: string) => {
     const t = transportRef.current;
@@ -302,8 +330,11 @@ export function useAtlas() {
       cancel,
       config,
       availability,
+      sendMessage,
+      attach,
+      missionHistory,
     }),
-    [state, conn, transport, launch, decide, scenarios, cancel, config, availability],
+    [state, conn, transport, launch, decide, scenarios, cancel, config, availability, sendMessage, attach, missionHistory],
   );
 }
 

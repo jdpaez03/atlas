@@ -7,6 +7,12 @@
 
 A failed task (LLM/API error after the retry) goes FAILED, its agent ERROR, and the mission goes on;
 the mission report lists the failures. `LiveEngine` owns the running missions and can cancel them.
+
+Mission thread (docs/PHASE3.md B): `LiveEngine.post_message` records the human's note. While the mission
+runs, the note becomes "human guidance" for every task / review / consolidation that starts afterwards and
+ATLAS acknowledges it (fast model). On a closed (or interrupted) mission it opens a follow-up: ATLAS calls
+`respond_to_followup {answer?, tasks?}`; tasks start round N (DELEGATION → … → CLOSED, Task.round = N) and
+end with MissionReport version N (earlier versions stay).
 """
 
 from __future__ import annotations
@@ -16,14 +22,19 @@ import logging
 from typing import Any
 
 from ..core.models import (
+    HUMAN,
+    AgentMessage,
     AgentStatus,
     ApprovalReason,
+    Attachment,
     Claim,
     ClaimKind,
+    MessageType,
     Mission,
     MissionPhase,
     MissionReport,
     Priority,
+    Task,
     TaskStatus,
 )
 from ..core.store import WorldStore
@@ -34,15 +45,22 @@ from .executor import ApiExecutor, Executor
 from .llm import LLMClient, LLMError, Meter, UsageLimitError
 from .pricing import PriceTable
 from .prompts import (
+    ACKNOWLEDGE_TOOL,
     ORCHESTRATOR,
     SUBMIT_MISSION_REPORT_TOOL,
+    acknowledge_message,
     consolidation_message,
     context_block,
     create_plan_tool,
+    followup_consolidation_note,
+    followup_message,
     followups_tool,
     planning_message,
+    render_mission_report,
     render_report,
+    respond_to_followup_tool,
     review_message,
+    with_mission_notes,
 )
 from .runtime import (
     LiveConfig,
@@ -60,6 +78,8 @@ _TERMINAL = {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.CAN
 _DEAD = {TaskStatus.FAILED.value, TaskStatus.CANCELLED.value}
 _PRIO_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 MAX_FOLLOWUPS = 3
+MAX_ROUND_TASKS = 6  # tasks ATLAS may open for one follow-up round from the mission thread
+ACK_FALLBACK = "Noted. I'll apply this to the work that starts from now on."
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +200,10 @@ class LiveMission:
             orchestrator=orchestrator,
         )
         self.refs: dict[str, str] = {}  # plan ref -> task id
+        for i, tid in enumerate(mission.task_ids):  # earlier rounds (follow-ups): T1, T2...
+            self.refs[f"T{i + 1}"] = tid
+        self.round = mission.round
+        self.followup_request: str | None = None  # the human's message that opened this round
         self.failures: list[str] = []
         self.limited: str | None = None  # plan usage limit hit: no more LLM calls in this mission
         self._active: dict[str, list[str]] = {}  # agent id -> running task ids
@@ -308,7 +332,10 @@ class LiveMission:
 
     async def _plan(self) -> list[dict[str, Any]] | None:
         allowed = set(self.scope.agents)
-        prompt = planning_message(self.scope.objective, self.scope.node, [_roster_entry(r) for r in self.roster])
+        prompt = with_mission_notes(
+            planning_message(self.scope.objective, self.scope.node, [_roster_entry(r) for r in self.roster]),
+            self._notes(), self._attachment_names(),
+        )
         errors: list[str] = []
         tasks: list[dict[str, Any]] = []
         attempts = 0
@@ -421,7 +448,8 @@ class LiveMission:
                 return
             self._active.setdefault(agent_id, []).append(task_id)
             try:
-                await self.executor.run_task(self.scope, task, dependency_inputs(self.scope, task, self.refs))
+                await self.executor.run_task(self.scope, self._briefed(task),
+                                             dependency_inputs(self.scope, task, self.refs))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -491,9 +519,9 @@ class LiveMission:
             await self.store.log(f"Review skipped · {self.limited}", mission_id=self.mission_id, agent_id=self.atlas)
             return []
         try:
-            data = await self._atlas_step(followups_tool(sorted(allowed)), review_message(
+            data = await self._atlas_step(followups_tool(sorted(allowed)), with_mission_notes(review_message(
                 self.scope.objective, self._tasks_text(), self._reports_text(), self.failures,
-                [_roster_entry(r) for r in self.roster]))
+                [_roster_entry(r) for r in self.roster]), self._notes()))
         except LLMError as exc:
             if isinstance(exc, UsageLimitError):
                 await self._on_limit(str(exc))
@@ -521,8 +549,11 @@ class LiveMission:
         for f in self.failures:
             if f not in attention:
                 attention.append(f)
+        reports = s.reports_for(self.mission_id)
+        fields.setdefault("deliverables", [d for r in reports for d in getattr(r, "deliverables", [])])
         return MissionReport(
             mission_id=self.mission_id,
+            version=self.round,
             tasks_completed=[t.title for t in tasks if t.status == done],
             tasks_pending=[t.title for t in tasks if t.status != done],
             agent_report_ids=[r.id for r in s.reports_for(self.mission_id)],
@@ -534,8 +565,12 @@ class LiveMission:
         try:
             if self.limited:
                 raise LLMError(self.limited)
-            data = await self._atlas_step(SUBMIT_MISSION_REPORT_TOOL, consolidation_message(
-                self.scope.objective, self._tasks_text(), self._reports_text(), self.failures))
+            prompt = consolidation_message(
+                self.scope.objective, self._tasks_text(), self._reports_text(), self.failures)
+            if self.followup_request is not None:
+                prompt = prompt.replace("Call submit_mission_report now.", followup_consolidation_note(
+                    self.followup_request, self.round) + "\n\nCall submit_mission_report now.")
+            data = await self._atlas_step(SUBMIT_MISSION_REPORT_TOOL, with_mission_notes(prompt, self._notes()))
             if data is None:
                 raise LLMError("ATLAS did not call submit_mission_report")
         except LLMError as exc:
@@ -573,6 +608,162 @@ class LiveMission:
             key_findings=findings[:10],
             needs_human_attention=[f"Consolidation failed: {why}"],
         )
+
+    # -- mission thread (docs/PHASE3.md B) -----------------------------------
+
+    def _notes(self) -> list[str]:
+        """Human guidance: every note the human wrote in this mission's thread, oldest first."""
+        return [m.body for m in self.store.messages_for(self.mission_id)
+                if m.from_agent == HUMAN and m.type == MessageType.REQUEST.value]
+
+    def _attachment_names(self) -> list[str]:
+        return [a.name for a in self.store.mission(self.mission_id).attachments]
+
+    def _briefed(self, task: Task) -> Task:
+        """The task as the agent sees it: its description plus the attachments and the human guidance so far
+        (the stored task is unchanged)."""
+        notes, names = self._notes(), self._attachment_names()
+        if not notes and not names:
+            return task
+        return task.model_copy(update={"description": with_mission_notes(task.description, notes, names)})
+
+    def acknowledge(self, message: AgentMessage) -> None:
+        """Reply to a note sent while the mission runs (fast model, in the background)."""
+        child = asyncio.create_task(self._acknowledge(message), name=f"live-ack:{message.id}")
+        self._children.add(child)
+        child.add_done_callback(self._children.discard)
+
+    async def _acknowledge(self, message: AgentMessage) -> None:
+        text = ACK_FALLBACK
+        if not self.limited:
+            try:
+                data = await self.executor.structured(
+                    self.scope, model=self.config.models.fast, system=self._system(),
+                    prompt=acknowledge_message(self.scope.objective, message.body,
+                                               self.store.mission(self.mission_id).phase),
+                    tool=ACKNOWLEDGE_TOOL, max_tokens=400,
+                )
+                text = str((data or {}).get("text") or "").strip() or ACK_FALLBACK
+            except LLMError as exc:
+                log.info("acknowledgement fell back: %s", exc)
+        await self.store.send_message(self.mission_id, self.atlas, HUMAN, MessageType.ANSWER,
+                                      "Re: " + _short(message.body, 70), text, in_reply_to=message.id)
+
+    async def run_followup(self, message: AgentMessage) -> None:
+        """A follow-up on a closed or interrupted mission: answer and/or run one more round."""
+        try:
+            await self._followup_flow(message)
+        except asyncio.CancelledError:
+            await self._cancel_children()
+            raise
+        except Exception as exc:
+            log.exception("follow-up of mission %s failed", self.mission_id)
+            await self._cancel_children()
+            try:
+                if self.store.mission(self.mission_id).phase == MissionPhase.CLOSED.value:
+                    await self._reply(message, f"I could not process the follow-up: {exc}")
+                else:
+                    await self._abort(f"Unexpected error in round {self.round}: {exc}")
+            except Exception:  # pragma: no cover
+                log.exception("could not close the follow-up of mission %s", self.mission_id)
+        await self.store.release_agents(self.mission_id, self.scope.touched)
+
+    async def _reply(self, message: AgentMessage, text: str, kind: MessageType = MessageType.ANSWER) -> None:
+        await self.store.send_message(self.mission_id, self.atlas, HUMAN, kind, "Re: " + _short(message.body, 70),
+                                      text, in_reply_to=message.id)
+
+    def _followup_tasks_text(self) -> str:
+        ref_of = {v: k for k, v in self.refs.items()}
+        return "\n".join(
+            f"- {ref_of.get(t.id, t.id)} · {t.title} · {self.scope.name(t.assigned_to or '')} · {t.status} · "
+            f"round {t.round}"
+            for t in self.store.tasks_for(self.mission_id)
+        )
+
+    def _thread_text(self, exclude: str) -> list[str]:
+        out = []
+        for m in self.store.messages_for(self.mission_id):
+            if m.id == exclude or HUMAN not in (m.from_agent, m.to_agent):
+                continue
+            who = "Human" if m.from_agent == HUMAN else self.scope.name(m.from_agent)
+            out.append(f"[{who}] {_short(m.body, 600)}")
+        return out
+
+    async def _followup_flow(self, message: AgentMessage) -> None:
+        s = self.store
+        mission = s.mission(self.mission_id)
+        allowed = set(self.scope.agents)
+        await self._atlas(AgentStatus.WORKING, "Reading your follow-up")
+        reports = s.mission_reports_for(self.mission_id)
+        prompt = followup_message(
+            self.scope.objective, self.scope.node, request=message.body, round_no=mission.round,
+            interrupted=mission.interrupted,
+            latest_report=render_mission_report(reports[-1]) if reports else "",
+            tasks_text=self._followup_tasks_text(), reports=self._reports_text(),
+            thread=self._thread_text(exclude=message.id), attachments=self._attachment_names(),
+            roster=[_roster_entry(r) for r in self.roster],
+        )
+        tasks: list[dict[str, Any]] = []
+        errors: list[str] = []
+
+        async def validate(data: dict[str, Any] | None) -> list[str]:
+            nonlocal tasks, errors
+            if data is None:
+                tasks, errors = [], ["you must call respond_to_followup"]
+            elif not data.get("tasks"):
+                tasks = []
+                errors = [] if str(data.get("answer") or "").strip() else ["give an answer, tasks, or both"]
+            else:
+                tasks, errors = validate_plan(data, allowed, existing_refs=set(self.refs), min_tasks=0,
+                                              max_tasks=MAX_ROUND_TASKS)
+            return errors
+
+        try:
+            data = await self._atlas_step(respond_to_followup_tool(sorted(allowed)), prompt,
+                                          validate=validate, attempts=2)
+        except LLMError as exc:
+            await self._reply(message, f"I could not process the follow-up: {exc}")
+            await self._atlas(AgentStatus.ERROR, _short(f"Follow-up failed: {exc}", 120))
+            return
+        if data is None or errors:
+            await self._reply(message, "I could not turn this follow-up into valid work: "
+                              + "; ".join(errors or ["no response"]))
+            await self._atlas(AgentStatus.COMPLETED, "Follow-up not processed")
+            return
+        answer = str(data.get("answer") or "").strip()
+        if answer:
+            await self._reply(message, answer)
+        if not tasks:
+            await self._atlas(AgentStatus.COMPLETED, "Answered your follow-up")
+            return
+
+        self.followup_request = message.body
+        mission = await s.begin_round(self.mission_id)
+        self.round = mission.round
+        await s.log(f"ATLAS opened round {self.round} with {len(tasks)} task(s)", mission_id=self.mission_id,
+                    agent_id=self.atlas)
+        await self._atlas(AgentStatus.WORKING, f"Delegating {len(tasks)} tasks (round {self.round})")
+        ids = await self._create_tasks(tasks)
+        await self._mark_waiting(ids)
+
+        await self._phase(MissionPhase.EXECUTION)
+        await self._atlas(AgentStatus.REVIEWING, f"Supervising {len(ids)} tasks (round {self.round})")
+        await self._execute(ids)
+
+        await self._phase(MissionPhase.VALIDATION)
+        await self._phase(MissionPhase.CONSOLIDATION)
+        await self._atlas(AgentStatus.WORKING, f"Consolidating round {self.round}")
+        report = await self._consolidate()
+
+        await self._phase(MissionPhase.REPORTING)
+        await self._atlas(AgentStatus.WORKING, f"Writing executive report v{report.version}")
+        await s.submit_mission_report(report)
+        await self._phase(MissionPhase.FOLLOW_UP)
+        await self._reply(message, f"Round {self.round} complete · report v{report.version} "
+                          f"({report.objective_status}): {_short(report.executive_summary, 400)}",
+                          MessageType.RESULT)
+        await self._atlas(AgentStatus.COMPLETED, f"Mission report v{report.version} delivered")
+        await self._phase(MissionPhase.CLOSED)
 
 
 # ---------------------------------------------------------------------------
@@ -668,9 +859,11 @@ class LiveEngine:
             self._agent_slots[agent_id] = asyncio.Semaphore(limit)
         return self._agent_slots[agent_id]
 
-    async def start(self, objective: str, node: str, backend: str | None = None) -> Mission:
+    async def start(self, objective: str, node: str, backend: str | None = None, *,
+                    mission_id: str | None = None, attachments: list[Attachment] | None = None) -> Mission:
         chosen = backend or self.backend_info().backend or "api"
-        mission = await self.store.create_mission(objective, node, mode="live")
+        mission = await self.store.create_mission(objective, node, mode="live", mission_id=mission_id,
+                                                  attachments=attachments)
         live = LiveMission(self, mission, chosen)
         await self.store.log(
             f"Live mission on {'your Claude plan (Claude Code)' if chosen == 'subscription' else 'the Claude API'}",
@@ -680,6 +873,28 @@ class LiveEngine:
         self._running[mission.id] = (live, task)
         task.add_done_callback(lambda _t, mid=mission.id: self._running.pop(mid, None))
         return mission
+
+    async def post_message(self, mission_id: str, text: str, backend: str | None = None) -> AgentMessage:
+        """The human writes in a live mission's thread (docs/PHASE3.md B). Running: guidance + acknowledgement.
+        Closed or interrupted: a follow-up (answer and/or a new round) on `backend`."""
+        s = self.store
+        mission = s.mission(mission_id)
+        if mission.mode != "live":
+            raise ValueError("follow-ups need a live mission")
+        atlas = s.registry.orchestrator.id
+        message = await s.send_message(mission_id, HUMAN, atlas, MessageType.REQUEST, _short(text, 80), text)
+        live = self.mission(mission_id)
+        if live is not None:
+            await s.log("Human guidance added · it applies to the work that starts from now on",
+                        mission_id=mission_id, agent_id=atlas)
+            live.acknowledge(message)
+            return message
+        chosen = backend or self.backend_info().backend or "api"
+        live = LiveMission(self, s.mission(mission_id), chosen)
+        task = asyncio.create_task(live.run_followup(message), name=f"live-followup:{mission_id}")
+        self._running[mission_id] = (live, task)
+        task.add_done_callback(lambda _t, mid=mission_id: self._running.pop(mid, None))
+        return message
 
     def mission(self, mission_id: str) -> LiveMission | None:
         entry = self._running.get(mission_id)
@@ -709,6 +924,21 @@ class LiveEngine:
             await self.store.cancel_mission(mission_id, reason)
         await self.store.release_agents(mission_id, live.scope.touched)
         return True
+
+    async def stop_all(self) -> None:
+        """Server shutdown: stop every running mission WITHOUT closing it, so the next start restores it
+        as interrupted (store.recover_interrupted)."""
+        entries = list(self._running.values())
+        for _, task in entries:
+            task.cancel()
+        for _, task in entries:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # pragma: no cover
+                log.exception("live mission raised while stopping")
+        self._running.clear()
 
     async def cancel_all(self) -> None:
         for mid in list(self._running):

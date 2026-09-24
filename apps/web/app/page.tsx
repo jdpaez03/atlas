@@ -1,19 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { AgentBoard, type DivisionGroup } from "@/components/AgentBoard";
 import { ApprovalQueue } from "@/components/ApprovalQueue";
 import { CollabGraph } from "@/components/CollabGraph";
 import { Header } from "@/components/Header";
+import { MissionHistory } from "@/components/MissionHistory";
 import { MissionPanel } from "@/components/MissionPanel";
+import { MissionThread } from "@/components/MissionThread";
 import { Emblem } from "@/components/primitives";
 import { Reports } from "@/components/Reports";
 import { TaskBoard } from "@/components/TaskBoard";
-import { API_URL, type AtlasConfig, type Availability } from "@/lib/api";
+import { API_URL, type AtlasConfig, type Availability, type MissionSummary } from "@/lib/api";
 import type { AgentDefinition, Task } from "@/lib/contracts";
 import { useAtlas } from "@/lib/store";
-import { STATUS } from "@/lib/ui";
+import { STATUS, msgFrom, msgTo } from "@/lib/ui";
 
 export default function CommandCenter() {
   const atlas = useAtlas();
@@ -77,8 +79,29 @@ export default function CommandCenter() {
       .sort((a, b) => (order.get(a.id) ?? 1e9) - (order.get(b.id) ?? 1e9) || a.created_at.localeCompare(b.created_at));
   }, [world.tasks, mission]);
   const messages = useMemo(() => world.messages.filter((m) => m.mission_id === mid), [world.messages, mid]);
+  // The human ↔ ATLAS thread lives in its own panel; the graph shows agent-to-agent traffic only.
+  const agentMessages = useMemo(() => messages.filter((m) => msgFrom(m) !== "human" && msgTo(m) !== "human"), [messages]);
   const agentReports = useMemo(() => world.agent_reports.filter((r) => r.mission_id === mid), [world.agent_reports, mid]);
-  const missionReport = world.mission_reports.find((r) => r.mission_id === mid || (mission?.final_report_id && r.id === mission.final_report_id));
+  const missionReports = useMemo(() => world.mission_reports.filter((r) => r.mission_id === mid), [world.mission_reports, mid]);
+
+  /* ---- Phase 3: mission history (GET /missions?node=; null → endpoint missing, hide the drawer) */
+  const { missionHistory } = atlas;
+  const [history, setHistory] = useState<MissionSummary[] | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const refreshHistory = useCallback(() => {
+    if (!ready) return;
+    setHistoryLoading(true);
+    missionHistory(nodeId)
+      .then(setHistory)
+      .finally(() => setHistoryLoading(false));
+  }, [ready, nodeId, missionHistory]);
+  // Probe on connect / node change, and whenever a mission appears or changes phase.
+  const missionsKey = nodeMissions.map((m) => `${m.id}:${m.phase}:${m.round}`).join("|");
+  useEffect(() => {
+    refreshHistory();
+  }, [refreshHistory, missionsKey, conn]);
+  const knownMissions = useMemo(() => new Set(world.missions.map((m) => m.id)), [world.missions]);
 
   const nodeMissionIds = useMemo(() => new Set(nodeMissions.map((m) => m.id)), [nodeMissions]);
   const approvals = useMemo(
@@ -114,7 +137,26 @@ export default function CommandCenter() {
           onLaunched={(m) => setPicked(m.id)}
           config={config}
           cancelMission={atlas.cancel}
+          historyCount={history ? history.length : null}
+          onOpenHistory={() => {
+            setHistoryOpen(true);
+            refreshHistory();
+          }}
         />
+        {history && (
+          <MissionHistory
+            open={historyOpen}
+            onClose={() => setHistoryOpen(false)}
+            items={history}
+            loading={historyLoading}
+            error={null}
+            currentId={mid}
+            known={knownMissions}
+            onSelect={setPicked}
+            onRefresh={refreshHistory}
+            nodeName={node?.name ?? "—"}
+          />
+        )}
 
         {/* Three independent columns: each stretches to the tallest; the feed fills what's left. */}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-[minmax(340px,380px)_minmax(0,1fr)_minmax(310px,350px)]">
@@ -136,23 +178,39 @@ export default function CommandCenter() {
               core={org.core}
               divisions={org.divisions}
               states={states}
-              messages={messages}
+              messages={agentMessages}
               agents={agents}
             />
             <TaskBoard className="flex-1" tasks={tasks} agents={agents} />
           </div>
           <div className={`flex min-w-0 flex-col gap-4 lg:col-span-2 xl:order-none xl:col-span-1 ${pendingCount > 0 ? "order-first" : ""}`}>
             <ApprovalQueue approvals={approvals} agents={agents} decide={atlas.decide} />
-            {/* absolutely positioned so the (long) feed never drives the row height */}
-            <div className="relative h-[420px] xl:h-auto xl:min-h-[280px] xl:flex-1">
-              <div className="absolute inset-0 flex flex-col">
-                <ActivityFeed events={events} agents={agents} className="min-h-0 flex-1" />
+            {/* thread + feed share what's left; absolutely positioned so they never drive the row height */}
+            <div className="relative h-[460px] xl:h-auto xl:min-h-[600px] xl:flex-1">
+              <div className="absolute inset-0 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-1 xl:grid-rows-[minmax(0,1.1fr)_minmax(0,1fr)]">
+                <MissionThread
+                  mission={mission}
+                  messages={messages}
+                  tasks={tasks}
+                  agents={agents}
+                  send={atlas.sendMessage}
+                  attach={atlas.attach}
+                  className="min-h-0"
+                />
+                <ActivityFeed events={events} agents={agents} className="min-h-0" />
               </div>
             </div>
           </div>
         </div>
 
-        <Reports missionReport={missionReport} agentReports={agentReports} agents={agents} tasks={tasksById} missionActive={!!mission} />
+        <Reports
+          missionReports={missionReports}
+          agentReports={agentReports}
+          agents={agents}
+          tasks={tasksById}
+          missionActive={!!mission}
+          missionClosed={mission?.phase === "CLOSED" || !!mission?.interrupted}
+        />
 
         <footer className="flex items-center justify-between py-2 font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
           <span>ATLAS · Task → Delegate → Collaborate → Review → Report</span>

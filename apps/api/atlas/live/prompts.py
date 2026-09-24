@@ -34,8 +34,21 @@ Tools:
   action (sending, publishing, contacting anyone), any financial commitment, any irreversible step, and when the
   information is ambiguous, conflicting or insufficient to continue responsibly. The human's decision and note come
   back as the tool result; a note may also answer a question you asked. If rejected, do not perform the action.
+- list_files(path?, pattern?, recursive?), search_files(query, under?), read_file(path, offset?, max_chars?,
+  sheet?): read-only access to the user's files, limited to the folders this node allows plus the mission's
+  attachments. list_files with no path shows those folders. read_file extracts text (txt/md/csv/json, PDF, Excel
+  with one block per sheet, Word, PowerPoint); long files come in pages: continue with the offset it tells you.
+  You can never modify, move or delete the user's files.
+- write_deliverable(filename, format, content?, sheets?): create a file for the human (md, txt, csv, json, xlsx
+  with sheets {{name: rows[][]}}, docx from markdown-style content). It goes to the mission's outputs folder and
+  never overwrites anything. It is the ONLY way to produce a file.
 - submit_report(...): deliver your result. It ends your work on the task. Always finish by calling it.
 - Role tools (e.g. web_search) when available.
+
+Evidence: the system records every tool call you make (files listed, read and written, web searches, consultations,
+approvals) and attaches that log to your report. Never claim an action you didn't take through a tool: do not say
+you read, opened, exported, saved or sent a file unless a tool call did it. Claims without a record are flagged as
+unverified and lower your report's confidence.
 
 Rules:
 - Never present an assumption as a fact. Tag every finding: FACT (verified, with its source), ASSUMPTION (believed
@@ -242,6 +255,79 @@ SUBMIT_MISSION_REPORT_TOOL: dict[str, Any] = {
 }
 
 
+LIST_FILES_TOOL: dict[str, Any] = {
+    "name": "list_files",
+    "description": (
+        "List a folder you are allowed to read (read-only): name, size, modified date; at most 500 entries. "
+        "Without a path, shows the readable folders, the mission attachments and your deliverables folder."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "folder path (absolute, or relative to a readable folder)"},
+            "pattern": {"type": "string", "description": "optional name filter, e.g. '*.xlsx'"},
+            "recursive": {"type": "boolean", "description": "include subfolders (limited depth)"},
+        },
+    },
+}
+
+SEARCH_FILES_TOOL: dict[str, Any] = {
+    "name": "search_files",
+    "description": "Find files by name under the readable folders (at most 100 matches).",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "words in the file name, or a glob like '*rocks*.xlsx'"},
+            "under": {"type": "string", "description": "optional folder to search in"},
+        },
+        "required": ["query"],
+    },
+}
+
+READ_FILE_TOOL: dict[str, Any] = {
+    "name": "read_file",
+    "description": (
+        "Read a file's text (read-only): txt/md/csv/json/code, PDF, Excel (xlsx/xlsm: one block per sheet), "
+        "Word (docx: paragraphs and tables), PowerPoint (pptx). Long files are paged: use `offset`."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "offset": {"type": "integer", "minimum": 0, "description": "character offset to start from"},
+            "max_chars": {"type": "integer", "minimum": 1, "description": "characters to return (capped)"},
+            "sheet": {"type": "string", "description": "Excel only: read just this sheet"},
+        },
+        "required": ["path"],
+    },
+}
+
+WRITE_DELIVERABLE_TOOL: dict[str, Any] = {
+    "name": "write_deliverable",
+    "description": (
+        "Create a deliverable file for the human in the mission outputs folder (never overwrites; returns its "
+        "download link). md/txt/csv/json take `content`; xlsx takes `sheets` {sheet name: rows[][]}; docx takes "
+        "markdown-style `content` (# headings, - bullets, 1. lists, | tables |, **bold**)."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "filename": {"type": "string", "description": "file name, e.g. 'resumen_q3'"},
+            "format": {"type": "string", "enum": ["md", "txt", "csv", "json", "xlsx", "docx"]},
+            "content": {"type": "string"},
+            "sheets": {
+                "type": "object",
+                "description": "xlsx: {sheet name: rows}, each row an array of cell values",
+                "additionalProperties": {"type": "array", "items": {"type": "array"}},
+            },
+        },
+        "required": ["filename", "format"],
+    },
+}
+
+FILE_TOOLS: list[dict[str, Any]] = [LIST_FILES_TOOL, SEARCH_FILES_TOOL, READ_FILE_TOOL, WRITE_DELIVERABLE_TOOL]
+
+
 def web_search_tool(tool_type: str, max_uses: int = 5) -> dict[str, Any]:
     return {"type": tool_type, "name": "web_search", "max_uses": max_uses}
 
@@ -294,7 +380,7 @@ def plan_errors_message(errors: list[str]) -> str:
 
 
 def task_message(objective: str, node: str, task: Task, dep_reports: list[str], *,
-                 consultable: list[str], approval_required: bool) -> str:
+                 consultable: list[str], approval_required: bool, files_note: str | None = None) -> str:
     parts = [
         f"Mission objective ({node} node):\n{objective}",
         f"Your task: {task.title}\n{task.description}",
@@ -309,6 +395,8 @@ def task_message(objective: str, node: str, task: Task, dep_reports: list[str], 
         parts.append("Inputs from the tasks you depend on:\n\n" + "\n\n".join(dep_reports))
     else:
         parts.append("You have no inputs from other tasks.")
+    if files_note:
+        parts.append(files_note)
     parts.append(
         "Agents you may consult: " + (", ".join(consultable) if consultable else "none")
         + "\nWork on the task, then call submit_report."
@@ -346,3 +434,135 @@ def consolidation_message(objective: str, tasks_text: str, reports: list[str], f
 
 def consult_message(objective: str, from_name: str, question: str) -> str:
     return f"Mission objective:\n{objective}\n\n{from_name} asks you:\n{question}"
+
+
+# ---------------------------------------------------------------------------
+# Mission thread (docs/PHASE3.md B) — builder P
+# ---------------------------------------------------------------------------
+
+
+def guidance_block(notes: list[str]) -> str:
+    """Notes the human wrote in the mission thread, for every task / ATLAS step that starts afterwards."""
+    if not notes:
+        return ""
+    return (
+        "# Human guidance (from the mission thread, oldest first)\n"
+        "The human who owns this mission added these notes. Follow them when they apply to your work; they take "
+        "precedence over earlier instructions where they conflict.\n- " + "\n- ".join(notes)
+    )
+
+
+def attachments_block(names: list[str]) -> str:
+    if not names:
+        return ""
+    return "Files the human attached to this mission (mission attachments folder): " + ", ".join(names)
+
+
+def with_mission_notes(prompt: str, notes: list[str], attachments: list[str] | None = None) -> str:
+    extra = [b for b in (attachments_block(attachments or []), guidance_block(notes)) if b]
+    return "\n\n".join([prompt, *extra]) if extra else prompt
+
+
+ACKNOWLEDGE_TOOL: dict[str, Any] = {
+    "name": "acknowledge",
+    "description": "Acknowledge the human's note in one or two short sentences.",
+    "input_schema": {
+        "type": "object",
+        "properties": {"text": {"type": "string", "description": "short acknowledgement (max ~40 words)"}},
+        "required": ["text"],
+    },
+}
+
+
+def acknowledge_message(objective: str, note: str, phase: str) -> str:
+    return (
+        "STAGE: ACKNOWLEDGE\n"
+        f"Mission objective:\n{objective}\n\nCurrent phase: {phase}\n\n"
+        f"The human just wrote in the mission thread:\n{note}\n\n"
+        "It will be passed to every task that starts from now on and to your review and consolidation. "
+        "Call acknowledge with a short reply saying how it will be applied. Do not start any work."
+    )
+
+
+def respond_to_followup_tool(agent_ids: list[str]) -> dict[str, Any]:
+    return {
+        "name": "respond_to_followup",
+        "description": (
+            "Reply to the human's follow-up on a finished mission: answer directly from what the mission already "
+            "produced, and/or open a new round of 1-6 tasks for the roster agents."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "answer": {"type": "string", "description": "your reply to the human (always say what happens next)"},
+                "tasks": {
+                    "type": "array",
+                    "maxItems": 6,
+                    "items": _task_schema(
+                        agent_ids, ref_help="refs of earlier tasks (T1, T2...) or of other new tasks it needs"
+                    ),
+                },
+            },
+        },
+    }
+
+
+FOLLOWUP_RULES = """Decide:
+- If the existing reports already answer it, reply with `answer` only (no tasks).
+- If new work is needed, open a new round with `tasks` (1-6, one agent each, roster ids only). Tasks may depend on
+  earlier tasks by their ref (T1, T2...) to receive those reports as inputs, or on each other. Also give a short
+  `answer` telling the human what you are doing.
+Call respond_to_followup now."""
+
+
+def followup_message(objective: str, node: str, *, request: str, round_no: int, interrupted: bool,
+                     latest_report: str, tasks_text: str, reports: list[str], thread: list[str],
+                     attachments: list[str], roster: list[dict[str, Any]]) -> str:
+    parts = [
+        "STAGE: FOLLOW-UP",
+        f"Node: {node}",
+        f"Mission objective:\n{objective}",
+    ]
+    if interrupted:
+        parts.append("NOTE: this mission was interrupted (the server stopped) before it finished; its open tasks "
+                     "were cancelled. The human may want it resumed.")
+    parts += [
+        f"Latest mission report:\n{latest_report or '(none yet)'}",
+        f"Tasks so far (ref · title · agent · status · round):\n{tasks_text or '(none)'}",
+        "Agent reports:\n\n" + ("\n\n".join(reports) if reports else "(no reports)"),
+        "Mission thread (oldest first):\n" + ("\n".join(thread) if thread else "(empty)"),
+    ]
+    if attachments:
+        parts.append(attachments_block(attachments))
+    parts += [
+        f"Roster (the ONLY agents you may assign):\n{roster_text(roster)}",
+        f"The human's new message (round {round_no + 1} if you open tasks):\n{request}",
+        FOLLOWUP_RULES,
+    ]
+    return "\n\n".join(parts)
+
+
+def followup_consolidation_note(request: str, round_no: int) -> str:
+    return (f"This is follow-up round {round_no}, opened for the human's request:\n{request}\n"
+            "Write the mission report as the updated, complete version: integrate the new reports with the earlier "
+            "findings and answer the request.")
+
+
+def render_mission_report(report: Any) -> str:
+    lines = [f"v{report.version} · {report.objective_status}", report.executive_summary]
+    for c in report.key_findings:
+        lines.append(f"- [{c.kind}] {c.statement}")
+    if report.next_actions:
+        lines.append("Next actions: " + "; ".join(report.next_actions))
+    if report.needs_human_attention:
+        lines.append("Needs attention: " + "; ".join(report.needs_human_attention))
+    return "\n".join(lines)
+
+
+def files_note(readable: list[str], attachments_dir: str, outputs: str) -> str:
+    """What the agent may read and where its deliverables go (part of the task message)."""
+    lines = ["Files (read-only, through list_files / search_files / read_file):"]
+    lines += [f"- {r}" for r in readable] or ["- (no folders are configured for this node)"]
+    lines.append(f"- the mission attachments folder: {attachments_dir} (a bare attachment name also works)")
+    lines.append(f"Deliverables you create with write_deliverable go to: {outputs}")
+    return "\n".join(lines)

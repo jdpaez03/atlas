@@ -14,8 +14,12 @@ from pathlib import Path
 import yaml
 
 from ..core.models import (
+    HUMAN,
+    AgentMessage,
     AgentStatus,
     ApprovalState,
+    Attachment,
+    MessageType,
     Mission,
     MissionReport,
     TaskStatus,
@@ -39,6 +43,8 @@ from .scenario import (
 )
 
 log = logging.getLogger("atlas.sim")
+
+SIMULATED_REPLY = "This is a simulated mission; follow-ups need a live mission."
 
 
 class ScenarioLibrary:
@@ -283,6 +289,8 @@ class Simulator:
         objective: str | None = None,
         node: str | None = None,
         speed: float | None = None,
+        mission_id: str | None = None,
+        attachments: list[Attachment] | None = None,
     ) -> Mission:
         node = node or scenario.node
         if node != scenario.node:
@@ -290,12 +298,22 @@ class Simulator:
         speed = speed if speed is not None else self.default_speed
         if speed <= 0:
             raise ValueError("speed must be > 0")
-        mission = await self.store.create_mission(objective or scenario.objective, node)
+        mission = await self.store.create_mission(objective or scenario.objective, node, mission_id=mission_id,
+                                                  attachments=attachments)
         runner = MissionRunner(self.store, scenario, mission, speed)
         task = asyncio.create_task(runner.run(), name=f"mission:{mission.id}")
         self._running[mission.id] = (runner, task)
         task.add_done_callback(lambda _t, mid=mission.id: self._running.pop(mid, None))
         return mission
+
+    async def post_message(self, mission_id: str, text: str) -> AgentMessage:
+        """Mission thread on a simulated mission: record the note, ATLAS explains follow-ups need live."""
+        atlas = self.store.registry.orchestrator.id
+        message = await self.store.send_message(
+            mission_id, HUMAN, atlas, MessageType.REQUEST, text[:80], text)
+        await self.store.send_message(mission_id, atlas, HUMAN, MessageType.ANSWER, "Re: " + text[:70],
+                                      SIMULATED_REPLY, in_reply_to=message.id)
+        return message
 
     def runner(self, mission_id: str) -> MissionRunner | None:
         entry = self._running.get(mission_id)

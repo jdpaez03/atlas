@@ -15,10 +15,10 @@ from typing import Any
 
 os.environ.setdefault("ANTHROPIC_API_KEY", "fake-key-for-demo")  # makes /config report live_available
 
-import uvicorn  # noqa: E402
+import uvicorn
 
-from atlas.live.llm import call_text, text, tool_use  # noqa: E402
-from atlas.main import app  # noqa: E402
+from atlas.live.llm import call_text, text, tool_use
+from atlas.main import app
 
 PLAN = [
     {"ref": "research", "title": "Market comparables", "assigned_to": "sofia", "priority": "HIGH",
@@ -60,9 +60,26 @@ def _report(summary: str) -> Any:
     })
 
 
+def _latest_attachment() -> str | None:
+    from atlas.core import paths
+    files = sorted((paths.local_dir() / "missions").glob("*/attachments/*"), key=lambda f: f.stat().st_mtime)
+    return str(files[-1]) if files else None
+
+
 async def brain(**kw: Any) -> Any:
     await asyncio.sleep(random.uniform(1.0, 2.5))
     tools, prompt = _tools(kw), call_text(kw)
+    if "acknowledge" in tools:
+        return tool_use("acknowledge", {"text": "Noted — I'll pass this to the agents still working."})
+    if "respond_to_followup" in tools:
+        last = prompt.lower()
+        if "profundiza" in last or "deeper" in last or "más detalle" in last:
+            return tool_use("respond_to_followup", {
+                "answer": "Opening a second round: ORACLE will stress-test the downside case.",
+                "tasks": [{"ref": "stress", "title": "Downside stress test", "assigned_to": "oracle",
+                           "priority": "HIGH", "description": "Run -15% price / +6 months absorption."}]})
+        return tool_use("respond_to_followup", {
+            "answer": "From round 1: base-case IRR is 15-18%; the main risk is the developer's absorption assumption."})
     if "create_plan" in tools:
         return tool_use("create_plan", {"rationale": "Research and verify in parallel, then analyze, then package.",
                                         "tasks": PLAN})
@@ -85,6 +102,16 @@ async def brain(**kw: Any) -> Any:
     if agent == "ORACLE" and not _had_tool_result(kw, "consult"):
         return tool_use("consult", {"agent_id": "sofia", "question": "Absorption by unit type?"},
                         say="Checking unit-type absorption with SOFIA.")
+    if agent == "SOFIA" and "read_file" in tools and not _had_tool_result(kw, "read_file"):
+        path = _latest_attachment()
+        if path:
+            return tool_use("read_file", {"path": path}, say="Reading the attached file.")
+    if agent == "ALFRED" and _had_tool_result(kw, "request_approval") and not _had_tool_result(kw, "write_deliverable"):
+        return tool_use("write_deliverable", {
+            "filename": "Investment memo.docx", "format": "docx",
+            "content": "# Investment memo\n\n**Recommendation:** negotiate a preferred return.\n\n"
+                       "- Base-case IRR 15-18%\n- Absorption risk: developer 2x market\n\n"
+                       "| Scenario | IRR |\n|---|---|\n| Base | 15-18% |\n| Downside | 7-10% |"})
     if agent == "ALFRED" and not _had_tool_result(kw, "request_approval"):
         return tool_use("request_approval", {
             "reason": "EXTERNAL_COMMUNICATION", "title": "Send memo to partners",
@@ -115,4 +142,4 @@ def _lifespan(a):
 app.router.lifespan_context = _lifespan
 
 if __name__ == "__main__":
-    uvicorn.run(app, port=int(os.getenv("PORT", "8000")))
+    uvicorn.run(app, port=int(os.getenv("PORT", "8000")), timeout_graceful_shutdown=3)

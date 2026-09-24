@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { AtlasConfig, LaunchMissionBody, MissionMode, Scenario } from "@/lib/api";
 import type { Mission, MissionPhase, NodeDefinition, Task, Usage } from "@/lib/contracts";
 import { PHASES, PRIORITY, cx, elapsed, human, useNow } from "@/lib/ui";
+import { DropZone, PendingFiles, acceptFiles } from "./Files";
 import { Tag } from "./primitives";
 
 /* ---------------------------------------------------------------- phase rail */
@@ -49,7 +50,7 @@ export function PhaseRail({ phase, dim }: { phase: MissionPhase | null; dim?: bo
 
 /* ---------------------------------------------------------------- launch form */
 
-type LaunchFn = (b: LaunchMissionBody) => Promise<Mission>;
+type LaunchFn = (b: LaunchMissionBody, files?: File[]) => Promise<Mission>;
 
 const shortModel = (m?: string | null) => (m ? m.replace(/^claude-/, "").replace(/-\d{8}$/, "") : "—");
 
@@ -125,6 +126,14 @@ export function LaunchForm({
   const [objective, setObjective] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [fileErr, setFileErr] = useState<string[]>([]);
+
+  function addFiles(list: File[]) {
+    const { accepted, errors } = acceptFiles(list, files);
+    setFiles((cur) => [...cur, ...accepted]);
+    setFileErr(errors);
+  }
 
   // Follow /config until the user picks a mode themselves.
   useEffect(() => {
@@ -165,8 +174,10 @@ export function LaunchForm({
       const body: LaunchMissionBody = isLive
         ? { objective: obj, node: node.id, mode: "live" }
         : { objective: obj, node: node.id, mode: "simulated", scenario_id: scenarioId || undefined };
-      const m = await launch(body);
+      const m = await launch(body, files.length ? files : undefined);
       setObjective("");
+      setFiles([]);
+      setFileErr([]);
       onLaunched(m);
     } catch (x) {
       setErr(x instanceof Error ? x.message : "Launch failed");
@@ -235,6 +246,19 @@ export function LaunchForm({
           }}
         />
       </label>
+      <div className="flex flex-col gap-1.5">
+        <span className="label flex items-center justify-between">
+          <span>Attachments</span>
+          <span className="normal-case tracking-[0.04em] text-mute">agents can read these files</span>
+        </span>
+        <DropZone onFiles={addFiles} hint="up to 20 · 25 MB each" />
+        <PendingFiles files={files} onRemove={(i) => setFiles((cur) => cur.filter((_, j) => j !== i))} />
+        {fileErr.map((m) => (
+          <p key={m} className="font-mono text-[10px] text-amber-300/90">
+            {m}
+          </p>
+        ))}
+      </div>
       <div className="flex flex-wrap items-end gap-3">
         {isLive ? (
           <p className="min-w-0 flex-1 self-center font-mono text-[9.5px] tracking-[0.06em] text-mute">
@@ -299,6 +323,8 @@ export function MissionPanel({
   onLaunched,
   config,
   cancelMission,
+  historyCount,
+  onOpenHistory,
 }: {
   mission: Mission | null;
   missions: Mission[];
@@ -313,6 +339,9 @@ export function MissionPanel({
   onLaunched: (m: Mission) => void;
   config: AtlasConfig | null;
   cancelMission: (id: string) => Promise<Mission>;
+  /** null = no history endpoint (fallback to the in-state mission picker). */
+  historyCount: number | null;
+  onOpenHistory: () => void;
 }) {
   const [composing, setComposing] = useState(false);
   const now = useNow(1000);
@@ -349,6 +378,8 @@ export function MissionPanel({
 
   const done = tasks.filter((t) => t.status === "COMPLETED").length;
   const closed = mission.phase === "CLOSED";
+  const interrupted = !!mission.interrupted && !closed;
+  const round = mission.round ?? 1;
   const pr = PRIORITY[mission.priority];
 
   return (
@@ -358,12 +389,32 @@ export function MissionPanel({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <ModeBadge mode={mission.mode} closed={closed} />
-            <span className="label !text-signal/70">{closed ? "Mission" : "Active mission"}</span>
+            <span className="label !text-signal/70">{closed || interrupted ? "Mission" : "Active mission"}</span>
             <span className="font-mono text-[10px] text-mute">{mission.id}</span>
             <Tag color={node?.color ?? "#7dd3fc"}>{node?.name ?? mission.node}</Tag>
             <Tag color={pr.color}>{pr.label}</Tag>
-            {closed ? <Tag color="#cbd5e1">Closed</Tag> : <Tag color="#22c55e">In flight</Tag>}
-            {missions.length > 1 && (
+            {round > 1 && <Tag color="#c4b5fd">Round {round}</Tag>}
+            {interrupted ? (
+              <span title="The server stopped while this mission was running. Send a message in the thread to resume it.">
+                <Tag color="#f87171">Interrupted</Tag>
+              </span>
+            ) : closed ? (
+              <Tag color="#cbd5e1">Closed</Tag>
+            ) : (
+              <Tag color="#22c55e">In flight</Tag>
+            )}
+            {historyCount !== null && (
+              <button
+                onClick={onOpenHistory}
+                className="ml-1 flex h-[19px] items-center gap-1.5 rounded border border-edge-2 px-1.5 font-mono text-[9.5px] uppercase tracking-[0.16em] text-dim transition hover:border-signal/40 hover:text-slate-200"
+                title="Mission history"
+              >
+                <HistoryIcon />
+                History
+                {historyCount > 0 && <span className="tracking-normal text-slate-400">· {historyCount}</span>}
+              </button>
+            )}
+            {historyCount === null && missions.length > 1 && (
               <select
                 value={mission.id}
                 onChange={(e) => onSelectMission(e.target.value)}
@@ -387,11 +438,15 @@ export function MissionPanel({
 
         {/* stats + action */}
         <div className="flex shrink-0 items-stretch gap-2">
-          <Stat label="Elapsed" value={now ? elapsed(mission.created_at, closed && mission.closed_at ? new Date(mission.closed_at).getTime() : now) : "--:--"} />
+          <Stat
+            label="Elapsed"
+            value={interrupted ? "—" : now ? elapsed(mission.created_at, closed && mission.closed_at ? new Date(mission.closed_at).getTime() : now) : "--:--"}
+          />
           <Stat label="Tasks" value={`${done}/${tasks.length}`} />
           <Stat label="Agents active" value={`${activeAgents}/${totalAgents}`} />
           <Stat label="Approvals" value={String(pendingApprovals)} alert={pendingApprovals > 0} />
-          {!closed && <CancelMission key={mission.id} onConfirm={() => cancelMission(mission.id)} />}
+          {!closed && !interrupted && <CancelMission key={mission.id} onConfirm={() => cancelMission(mission.id)} />}
+
           <button
             onClick={() => setComposing((v) => !v)}
             className={cx(
@@ -421,13 +476,22 @@ export function MissionPanel({
       )}
 
       <div className="border-t border-edge/70 bg-black/15 px-5 pt-3.5 pb-3">
-        <PhaseRail phase={mission.phase} />
+        <PhaseRail phase={mission.phase} dim={interrupted} />
       </div>
     </section>
   );
 }
 
-function ModeBadge({ mode, closed }: { mode: Mission["mode"] | undefined; closed: boolean }) {
+function HistoryIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+      <path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.6h2.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8 5v3.2l2.2 1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function ModeBadge({ mode, closed }: { mode: Mission["mode"] | undefined; closed: boolean }) {
   if (mode === "live") {
     return (
       <span className="inline-flex items-center gap-1.5 rounded border border-emerald-400/50 bg-emerald-500/15 px-1.5 py-[1px] font-mono text-[9.5px] font-semibold tracking-[0.22em] text-emerald-300">

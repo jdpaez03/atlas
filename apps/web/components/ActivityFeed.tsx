@@ -17,6 +17,7 @@ const KIND: Record<EventType, { tag: string; color: string }> = {
   "mission.report_ready": { tag: "RPT", color: "#22c55e" },
   "approval.requested": { tag: "HMN", color: "#f59e0b" },
   "approval.decided": { tag: "HMN", color: "#f59e0b" },
+  "evidence.recorded": { tag: "EVD", color: "#2dd4bf" },
   log: { tag: "LOG", color: "#64748b" },
 };
 

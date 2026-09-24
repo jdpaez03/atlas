@@ -1,4 +1,4 @@
-import type { AgentDefinition, ApprovalRequest, AtlasEvent, Mission, WorldState } from "./contracts";
+import type { AgentDefinition, ApprovalRequest, AtlasEvent, Mission, MissionPhase, Usage, WorldState } from "./contracts";
 
 export const API_URL = (process.env.NEXT_PUBLIC_ATLAS_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
@@ -19,6 +19,36 @@ export interface LaunchMissionBody {
 }
 
 export type MissionMode = "simulated" | "live";
+
+/** GET /missions?node= entries (docs/PHASE3.md §B), newest first. */
+export interface MissionSummary {
+  id: string;
+  objective: string;
+  node: string;
+  mode: MissionMode;
+  phase: MissionPhase;
+  round: number;
+  interrupted: boolean;
+  created_at: string;
+  closed_at: string | null;
+  report_versions: number;
+  usage: Usage | null;
+}
+
+/** Upload limits enforced by the API (docs/PHASE3.md §B). */
+export const MAX_FILE_BYTES = 25 * 1024 * 1024;
+export const MAX_FILES = 20;
+
+/** Resolve an Attachment.download_url (an API path) to a clickable href. */
+export const fileHref = (url: string | null | undefined): string | undefined =>
+  !url ? undefined : /^(https?:|blob:|data:)/.test(url) ? url : `${API_URL}${url.startsWith("/") ? "" : "/"}${url}`;
+
+export function fmtBytes(n: number | null | undefined): string {
+  if (n == null) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
 
 /** GET /config (docs/LIVE.md). A 404 (Phase 1 backend) is treated as "live not available". */
 export interface AtlasConfig {
@@ -60,12 +90,52 @@ export const api = {
     return Array.isArray(wrapped) ? wrapped : [];
   },
   scenarios: () => fetch(`${API_URL}/scenarios`, { cache: "no-store" }).then((r) => json<Scenario[]>(r)),
-  launch: (body: LaunchMissionBody) =>
-    fetch(`${API_URL}/missions`, {
+  launch: (body: LaunchMissionBody, files?: File[]) => {
+    if (!files?.length) {
+      return fetch(`${API_URL}/missions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }).then((r) => json<Mission>(r));
+    }
+    // multipart/form-data: objective, node, mode, scenario_id?, files (docs/PHASE3.md §B)
+    const fd = new FormData();
+    fd.append("objective", body.objective);
+    fd.append("node", body.node);
+    if (body.mode) fd.append("mode", body.mode);
+    if (body.scenario_id) fd.append("scenario_id", body.scenario_id);
+    if (body.speed != null) fd.append("speed", String(body.speed));
+    for (const f of files) fd.append("files", f, f.name);
+    return fetch(`${API_URL}/missions`, { method: "POST", body: fd }).then((r) => json<Mission>(r));
+  },
+  attach: (id: string, files: File[]) => {
+    const fd = new FormData();
+    for (const f of files) fd.append("files", f, f.name);
+    return fetch(`${API_URL}/missions/${encodeURIComponent(id)}/attachments`, { method: "POST", body: fd }).then((r) => json<unknown>(r));
+  },
+  sendMessage: (id: string, text: string) =>
+    fetch(`${API_URL}/missions/${encodeURIComponent(id)}/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }).then((r) => json<Mission>(r)),
+      body: JSON.stringify({ text }),
+    }).then((r) => json<unknown>(r)),
+  /** null = the backend has no history endpoint (404). */
+  missions: async (node?: string | null, limit = 100): Promise<MissionSummary[] | null> => {
+    const q = new URLSearchParams();
+    if (node) q.set("node", node);
+    q.set("limit", String(limit));
+    const res = await fetch(`${API_URL}/missions?${q}`, { cache: "no-store" });
+    if (res.status === 404 || res.status === 405) return null;
+    const body = await json<unknown>(res);
+    const raw = Array.isArray(body) ? body : (body as { missions?: unknown[] })?.missions;
+    if (!Array.isArray(raw)) return [];
+    // The API sends report_versions as the list of versions ([1, 2]); the UI uses the latest number.
+    return raw.map((m) => {
+      const r = m as MissionSummary & { report_versions: number | number[] };
+      const v = Array.isArray(r.report_versions) ? Math.max(0, ...r.report_versions) : r.report_versions ?? 0;
+      return { ...r, report_versions: v };
+    });
+  },
   decide: (id: string, decision: Decision, note?: string) =>
     fetch(`${API_URL}/approvals/${encodeURIComponent(id)}/decision`, {
       method: "POST",
