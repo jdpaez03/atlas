@@ -159,7 +159,11 @@ def _validate(
 
 _ENV = re.compile(r"\$\{([A-Z0-9_]+)\}")
 # Defaults used when the variable is not set (Claude Code keeps user agents in ~/.claude/agents).
-ENV_DEFAULTS = {"ATLAS_CLAUDE_AGENTS_DIR": "~/.claude/agents"}
+ENV_DEFAULTS = {
+    "ATLAS_CLAUDE_AGENTS_DIR": "~/.claude/agents",
+    # private material next to the repo: <repo>/../atlas-local
+    "ATLAS_LOCAL_DIR": str(DEFAULT_AGENTS_DIR.parent.parent / "atlas-local"),
+}
 
 
 def resolve_path(value: str) -> Path:

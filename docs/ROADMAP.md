@@ -8,7 +8,7 @@ work in parallel against it without colliding.
 |---|---|---|---|
 | **0 · Contracts** | Data models (Mission, Task, AgentStatus, AgentMessage, AgentReport, MissionReport, ApprovalRequest, AtlasEvent), agent registry with external-agent adapters, event bus + WebSocket, JSON Schema → TypeScript generation, CI | API + Agent Board reading the live registry | ✅ done |
 | **1 · Command Center (simulated)** | Mission panel, Agent Board with live statuses, Task Board with dependencies, collaboration graph, activity feed, reports view, human-intervention queue. A scripted "real-estate investment" mission replays through the real event stream (mock adapter). | Full experience, clickable, fake agents | ✅ done |
-| **2 · Live orchestrator** | ATLAS decomposes objectives with Claude into a task DAG, delegates, runs SOFIA/ORACLE/ALFRED on the Claude API, structured messages between agents | Type an objective → real agents work live | next · needs API key |
+| **2 · Live orchestrator** | ATLAS decomposes objectives with Claude into a task DAG, delegates, runs SOFIA/ORACLE/ALFRED on the Claude API, structured messages between agents | Type an objective → real agents work live | ✅ built · first real run needs API key |
 | **3 · Human-in-the-loop & reporting** | Approval gates (external comms, money, irreversible, conflicting info), agent reports, ATLAS executive report, persistent mission history (SQLite) | Approve/reject from UI; finished missions produce reports | |
 | **4 · Tools** | SOFIA web search/fetch, ARGOS scheduled checks + alerts, ALFRED document/spreadsheet generation | Real information in, real deliverables out | |
 | **5 · Modularity & quality** | External agents (http / mcp / cli adapters) live, AUDITOR agent, cost/token tracking, retries & error recovery | Add an agent = add a YAML file | |
@@ -34,3 +34,8 @@ work in parallel against it without colliding.
 - 2026-09-23 · **EOS division** (Corporate): the six existing Claude Code EOS agents (Vision, People, Data, Issues,
   Process, Traction) join via the `claude_md` adapter. Their prompts stay on the local machine
   (`ATLAS_CLAUDE_AGENTS_DIR`), never in the public repo.
+- 2026-09-23 · **Phase 2 done**: live agents on the Claude API (plan → parallel tasks → consult → approvals →
+  reports → follow-ups → consolidation), with usage/cost tracking and cancel. Verified end-to-end with a scripted
+  model; first real-API run pending the key.
+- 2026-09-23 · **MERCATO** (Corporate): the user's `estudio-mercado-vivienda-vertical` skill joins as the market-
+  studies agent via `claude_md`; its prompt lives in `atlas-local/agents/` (private).

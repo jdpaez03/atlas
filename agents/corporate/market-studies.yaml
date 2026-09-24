@@ -1,0 +1,12 @@
+id: market-studies
+name: MERCATO
+title: Market Studies
+description: Bank-grade market studies for vertical housing in Mexico — demand funnel, competing supply, absorption, price ladder, product mix, stress scenarios and a go / no-go with conditions.
+color: "#2dd4bf"
+kind: external
+adapter: claude_md
+adapter_config:
+  # Prompt = the user's "estudio-mercado-vivienda-vertical" skill, kept locally (never in this repo)
+  path: ${ATLAS_LOCAL_DIR}/agents/market-studies.md
+nodes: [corporate]
+capabilities: [market_study, absorption, pricing, product_mix, demand_analysis, bank_underwriting]
