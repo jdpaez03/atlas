@@ -39,6 +39,8 @@ If option A fails with *"Your organization requires admin approval for this app"
    client secret, because ATLAS uses the *device code* sign-in.
 5. Open **API permissions → + Add a permission → Microsoft Graph → Delegated permissions**. Tick
    **Mail.Read** and **Mail.ReadWrite**, then click **Add permissions**. Keep the default **User.Read**.
+   On a Linux server (docs/SERVER_LINUX.md) also tick **Files.Read.All** and **Sites.Read.All**: agents then
+   read OneDrive/SharePoint through the same app (`onedrive:` / `sharepoint:` file roots).
    - **Mail.ReadWrite** is only used to save drafts in Outlook. If you don't want that, skip it and set
      `ATLAS_MS_DRAFTS=0`.
    - If you are an admin, or IT is doing this, click **Grant admin consent for <your org>** so nobody sees a consent

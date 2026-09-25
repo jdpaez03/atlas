@@ -30,6 +30,8 @@ a real-estate investment analysis, and an EOS quarterly Rocks diagnosis run by t
 
 **Agent browser** (new): an agent can work a signed-in site that has no API, such as a market-data platform, through its own dedicated browser profile. It never uses your everyday Chrome. See [docs/BROWSER.md](docs/BROWSER.md).
 
+**Linux server** (new): run ATLAS 24/7 on a spare laptop with Ubuntu Server, reach it from your phone over Tailscale, and read OneDrive/SharePoint through Microsoft 365. See [docs/SERVER_LINUX.md](docs/SERVER_LINUX.md).
+
 See the [roadmap](docs/ROADMAP.md).
 
 Agents are grouped into **nodes** (Corporate, Personal…), which are isolated contexts. Node-bound agents
@@ -94,6 +96,7 @@ agents/          agent definitions (one YAML per agent)
 apps/api/        FastAPI backend: contracts, registry, event bus, orchestrator
 apps/web/        Next.js Command Center
 contracts/       generated JSON Schema (shared by api and web)
+deploy/          Linux server installer + systemd units, PC -> server transfer (docs/SERVER_LINUX.md)
 docs/            roadmap, contracts, architecture notes
 scripts/         codegen and utilities
 ```

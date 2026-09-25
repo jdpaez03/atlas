@@ -29,6 +29,7 @@ dependencies = [
 
 [project.scripts]
 atlas-browser = "atlas.live.browser:main"
+atlas-graph = "atlas.live.graphfiles:main"
 
 [dependency-groups]
 dev = [

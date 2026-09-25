@@ -1,0 +1,16 @@
+[Unit]
+Description=ATLAS Command Center (Next.js production server)
+After=network-online.target atlas-api.service
+Wants=network-online.target
+
+[Service]
+User=@USER@
+WorkingDirectory=@ATLAS_DIR@/apps/web
+Environment=NODE_ENV=production
+Environment=PATH=@HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=@NPM@ run start -- -H 127.0.0.1 -p @WEB_PORT@
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

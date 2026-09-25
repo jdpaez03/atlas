@@ -120,9 +120,15 @@ def build_token_cache(location: Path):
 
         persistence = FilePersistenceWithDataProtection(str(location))
     else:
-        log.warning(
-            "Microsoft token cache stored UNENCRYPTED at %s (DPAPI is Windows-only). Protect this folder.", location
-        )
+        # No DPAPI off Windows: the cache is a plain file readable only by the ATLAS user (folder 700, file 600).
+        try:
+            os.chmod(location.parent, 0o700)
+            if not location.exists():
+                location.touch(mode=0o600)
+            os.chmod(location, 0o600)
+        except OSError:
+            log.warning("could not restrict the permissions of %s", location)
+        log.info("Microsoft token cache at %s (plain file, owner-only permissions)", location)
         persistence = FilePersistence(str(location))
     return PersistedTokenCache(persistence)
 
@@ -224,6 +230,13 @@ class GraphSource:
     def _scopes(self) -> list[str]:
         return READ_SCOPES + ([] if self.read_only else DRAFT_SCOPES)
 
+    def _login_scopes(self) -> list[str]:
+        """Scopes asked at sign-in: mail, plus OneDrive/SharePoint read when a node has onedrive:/sharepoint: file
+        roots (one sign-in serves both; silent calls then ask each for its own scopes)."""
+        from atlas.live.graphfiles import FILE_SCOPES, remote_roots_configured
+
+        return self._scopes() + (FILE_SCOPES if remote_roots_configured() else [])
+
     def _account(self) -> dict | None:
         accounts = self.app.get_accounts()
         if not accounts:
@@ -281,12 +294,12 @@ class GraphSource:
         current = asyncio.current_task()
         if self._flow_task and not self._flow_task.done() and self._flow_task is not current:
             self._flow_task.cancel()
-        flow = await asyncio.to_thread(self.app.initiate_device_flow, scopes=self._scopes())
+        flow = await asyncio.to_thread(self.app.initiate_device_flow, scopes=self._login_scopes())
         if "user_code" not in flow:
             err = _err_text(flow)
             if not self.read_only and _is_consent_error(err):
                 self._go_read_only("your organization did not allow Mail.ReadWrite")
-                flow = await asyncio.to_thread(self.app.initiate_device_flow, scopes=self._scopes())
+                flow = await asyncio.to_thread(self.app.initiate_device_flow, scopes=self._login_scopes())
             if "user_code" not in flow:
                 err = _err_text(flow)
                 self._flow_state = "failed"

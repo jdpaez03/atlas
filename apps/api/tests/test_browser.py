@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -395,3 +396,40 @@ def test_configured_but_unusable_browser_is_explained(monkeypatch):
     assert not run.has_browser and run.max_turns == 5
     assert not any(t["name"].startswith("browser_") for t in run._tools())
     assert "configured but unavailable" in run._files_note() and "allowed_domains" in run._files_note()
+
+
+def test_session_export_import_moves_the_login_to_another_profile(site, browser_env, tmp_path, monkeypatch):
+    """Windows -> Linux server: a Chrome profile can't be copied, the session (cookies + localStorage) can."""
+    from types import SimpleNamespace
+
+    from playwright.sync_api import sync_playwright
+
+    human_login("pc", site)
+    with sync_playwright() as pw:  # a cookie of another site in the same profile must not travel
+        ctx = B.launch_context(pw, "pc", show=False)
+        ctx.add_cookies([{"name": "other", "value": "x", "domain": "example.org", "path": "/"}])
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.goto(f"{site}/estudio")
+        page.evaluate("localStorage.setItem('filtro', 'San Pedro')")
+        ctx.close()
+    agent = SimpleNamespace(id="market-studies", name="MERCATO", browser=BrowserConfig(
+        profile="pc", start_url=f"{site}/estudio", allowed_domains=["127.0.0.1"]))
+    monkeypatch.setattr(B, "_find", lambda _id: agent)
+    out = tmp_path / "session.json"
+    assert B.export_session("mercato", str(out)) == 0
+    state = __import__("json").loads(out.read_text())
+    assert [c["name"] for c in state["cookies"]] == ["sid"] and state["origins"][0]["localStorage"]
+    if os.name != "nt":
+        assert (out.stat().st_mode & 0o777) == 0o600
+
+    agent.browser = BrowserConfig(profile="server", start_url=f"{site}/estudio", allowed_domains=["127.0.0.1"])
+    assert B.import_session("mercato", str(out)) == 0
+    with sync_playwright() as pw:
+        ctx = B.launch_context(pw, "server", show=False)
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.goto(f"{site}/estudio")
+        assert "Estudio de mercado" in page.content()
+        assert page.evaluate("localStorage.getItem('filtro')") == "San Pedro"
+        ctx.close()
+    assert B._cookie_for(".4srealestate.com", ["redi.4srealestate.com"])
+    assert not B._cookie_for("evil.com", ["redi.4srealestate.com"])

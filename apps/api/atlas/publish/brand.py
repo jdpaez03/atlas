@@ -38,11 +38,14 @@ NEUTRAL_COLORS = {
 
 # PDF fonts: first existing file wins. Segoe UI ships with every Windows (Light / Semilight / Semibold);
 # DejaVu is the Linux fallback; the PDF core fonts are the last resort.
+_SELAWIK = "/usr/local/share/fonts/selawik/"  # Segoe UI metric-compatible (OFL), installed by install-server.sh
 _FONT_CANDIDATES = {
-    "light": ["C:/Windows/Fonts/segoeuil.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-ExtraLight.ttf"],
-    "regular": ["C:/Windows/Fonts/segoeuisl.ttf", "C:/Windows/Fonts/segoeui.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
-    "semibold": ["C:/Windows/Fonts/seguisb.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"],
+    "light": ["C:/Windows/Fonts/segoeuil.ttf", _SELAWIK + "selawkl.ttf",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans-ExtraLight.ttf"],
+    "regular": ["C:/Windows/Fonts/segoeuisl.ttf", "C:/Windows/Fonts/segoeui.ttf", _SELAWIK + "selawksl.ttf",
+                _SELAWIK + "selawk.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
+    "semibold": ["C:/Windows/Fonts/seguisb.ttf", _SELAWIK + "selawksb.ttf",
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"],
     "italic": ["C:/Windows/Fonts/seguili.ttf", "C:/Windows/Fonts/segoeuii.ttf",
                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf"],
 }

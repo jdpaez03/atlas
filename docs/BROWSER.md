@@ -37,6 +37,12 @@ the site logs it out. Claude in Chrome stays switched off for every ATLAS agent 
 Do this on the machine that runs ATLAS. The profile is local, just like the Outlook token cache. If the site logs
 the session out, the agent stops and reports that it needs a login. Run step 3 again.
 
+To move a login to another machine (e.g. to the Linux server, where you can't easily open a window): a Chrome
+profile can't be copied between Windows and Linux, but the session can. `uv run atlas-browser export-session
+market-studies --out redi.json` writes the cookies and localStorage of the agent's allowed sites only; on the
+other machine `uv run atlas-browser import-session market-studies redi.json` loads them into its profile. The file
+IS the login: delete it after the import (docs/SERVER_LINUX.md § Agents' browser).
+
 ## What the agent can do
 
 | Tool | What it does |

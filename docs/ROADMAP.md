@@ -95,3 +95,11 @@ work in parallel against it without colliding.
   ASSUMPTION, and AUDITOR flags stale ones. "Ask ATLAS" is a conversation with the orchestrator grounded in
   that memory and the live state. It cites its sources, proposes facts to remember only from what the human
   said, and suggests a mission when new work is needed (docs/MEMORY.md).
+- 2026-09-25 · **Linux server**: ATLAS moves to a spare laptop (Ubuntu Server 24.04 LTS; Windows 10 support ends
+  and the i5-7200U can't run Windows 11). No OneDrive client there, so file roots can be `onedrive:/…` /
+  `sharepoint:…`, read through Microsoft Graph with the Outlook Entra app (Files.Read.All, Sites.Read.All,
+  read-only; downloaded to a cache keyed by eTag; same sandbox rules and evidence). Browser logins move as
+  sessions (`atlas-browser export-session` / `import-session`), Chrome runs headed on Xvfb, PDFs use Selawik.
+  `deploy/linux/install-server.sh` sets up everything (systemd services, lid/sleep, battery conservation) and
+  publishes ATLAS on the tailnet only (`tailscale serve`, HTTPS); `pack-for-server.ps1` + `import-from-pc.sh`
+  move the data from the PC (docs/SERVER_LINUX.md).

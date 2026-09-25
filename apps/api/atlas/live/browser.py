@@ -26,6 +26,7 @@ import argparse
 import asyncio
 import concurrent.futures
 import contextlib
+import json
 import os
 import re
 import sys
@@ -192,6 +193,9 @@ def launch_context(pw: Any, profile: str, *, show: bool) -> Any:
         kwargs["no_viewport"] = True
     else:
         kwargs["viewport"] = {"width": 1440, "height": 900}
+    if sys.platform.startswith("linux"):
+        # no desktop keyring on the server (Xvfb): keep Chrome from waiting on one; cookies stay in the profile
+        kwargs["args"] = ["--password-store=basic"]
     exe = os.getenv("ATLAS_BROWSER_EXECUTABLE", "").strip()
     if exe:  # an explicit browser binary (portable Chrome, a pinned Chromium)
         kwargs["executable_path"] = os.path.expanduser(exe)
@@ -875,11 +879,18 @@ def _load_env() -> None:
     load_dotenv(paths.REPO_ROOT / ".env", override=False)
 
 
-def login(agent_id: str, url: str | None = None) -> int:
+def _find(agent_id: str) -> Any:
     agents = {a.id: a for a in _agents()}
     agent = agents.get(agent_id) or next((a for a in agents.values() if a.name.lower() == agent_id.lower()), None)
     if agent is None or agent.browser is None:
         print(f"No agent '{agent_id}' with a browser. Agents with one: {', '.join(agents) or 'none'}")
+        return None
+    return agent
+
+
+def login(agent_id: str, url: str | None = None) -> int:
+    agent = _find(agent_id)
+    if agent is None:
         return 2
     cfg = resolve(agent.id, agent.browser)
     target = url or cfg.start_url or (f"https://{cfg.domains[0]}" if cfg.domains else "")
@@ -907,6 +918,117 @@ def login(agent_id: str, url: str | None = None) -> int:
     return 0
 
 
+def _cookie_for(domain: str, domains: list[str]) -> bool:
+    """A cookie the agent's sites receive: set for one of them, a subdomain, or a parent domain of one."""
+    cd = domain.lower().lstrip(".")
+    return bool(cd) and any(cd == d or cd.endswith("." + d) or d.endswith("." + cd) for d in domains)
+
+
+def _session_parts(state: dict[str, Any], domains: list[str]) -> tuple[list[dict], list[dict]]:
+    cookies = [c for c in state.get("cookies", []) if _cookie_for(str(c.get("domain", "")), domains)]
+    origins = [o for o in state.get("origins", []) if host_allowed(str(o.get("origin", "")), domains)]
+    return cookies, origins
+
+
+def export_session(agent_id: str, out: str | None = None) -> int:
+    """Write the signed-in session (cookies + localStorage) of an agent's profile to a file, to carry it to
+    another machine (a Chrome profile can't be copied between Windows and Linux). The file IS the login: keep it
+    private and delete it after the import."""
+    agent = _find(agent_id)
+    if agent is None:
+        return 2
+    if not playwright_installed():
+        print("Playwright is not installed: run `uv sync` in apps/api")
+        return 2
+    from playwright.sync_api import sync_playwright
+
+    cfg = resolve(agent.id, agent.browser)
+    target = Path(out).expanduser() if out else paths.local_dir() / "browser" / f"{cfg.profile}-session.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _proactor_on_windows()
+    with sync_playwright() as pw:
+        try:
+            ctx = launch_context(pw, cfg.profile, show=False)
+        except BrowserError as exc:
+            print(f"Error: {exc}")
+            return 1
+        try:  # the site's localStorage is only reported for origins opened in this run
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            for url in [cfg.start_url] if cfg.start_url else [f"https://{d}" for d in cfg.domains[:3]]:
+                with contextlib.suppress(PWError):
+                    page.goto(url, wait_until="load", timeout=30_000)
+            state = ctx.storage_state()
+        finally:
+            ctx.close()
+    keep, origins = _session_parts(state, cfg.domains)
+    if not keep and not origins:
+        print(f"No session for {', '.join(cfg.domains) or 'its sites'} in profile '{cfg.profile}': "
+              f"run `atlas-browser login {agent.id}` first.")
+        return 1
+    target.write_text(json.dumps({"agent": agent.id, "profile": cfg.profile, "cookies": keep, "origins": origins},
+                                 ensure_ascii=False, indent=1), encoding="utf-8")
+    with contextlib.suppress(OSError):
+        os.chmod(target, 0o600)
+    print(f"Saved {len(keep)} cookies and {len(origins)} site storage(s) to {target}")
+    print("Copy it to the server and run `atlas-browser import-session "
+          f"{agent.id} <file>` there, then DELETE both copies (the file is the login).")
+    return 0
+
+
+def export_all(folder: str) -> int:
+    """Every agent whose profile has a saved login -> <folder>/<agent id>.json (for pack-for-server.ps1)."""
+    out = Path(folder).expanduser()
+    done = 0
+    for a in _agents():
+        assert a.browser is not None
+        cfg = resolve(a.id, a.browser)
+        if cfg.profile_dir.exists() and any(cfg.profile_dir.iterdir()):
+            done += export_session(a.id, str(out / f"{a.id}.json")) == 0
+    print(f"{done} session(s) exported to {out}")
+    return 0
+
+
+def import_session(agent_id: str, file: str) -> int:
+    """Load an exported session into this machine's profile of the agent (headless: works over SSH)."""
+    agent = _find(agent_id)
+    if agent is None:
+        return 2
+    if not playwright_installed():
+        print("Playwright is not installed: run `uv sync` in apps/api")
+        return 2
+    from playwright.sync_api import sync_playwright
+
+    cfg = resolve(agent.id, agent.browser)
+    try:
+        state = json.loads(Path(file).expanduser().read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"Cannot read {file}: {exc}")
+        return 1
+    cookies, origins = _session_parts(state, cfg.domains)
+    _proactor_on_windows()
+    with sync_playwright() as pw:
+        try:
+            ctx = launch_context(pw, cfg.profile, show=False)
+        except BrowserError as exc:
+            print(f"Error: {exc}")
+            return 1
+        try:
+            if cookies:
+                ctx.add_cookies(cookies)
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            for o in origins:
+                items = o.get("localStorage") or []
+                if not items:
+                    continue
+                page.goto(str(o["origin"]), wait_until="domcontentloaded")
+                page.evaluate("items => { for (const it of items) localStorage.setItem(it.name, it.value); }", items)
+        finally:
+            ctx.close()
+    print(f"Imported {len(cookies)} cookies and {len(origins)} site storage(s) into profile '{cfg.profile}'.")
+    print(f"Check with a mission, or `atlas-browser status`. Now delete {file}.")
+    return 0
+
+
 def status() -> int:
     agents = _agents()
     if not agents:
@@ -931,9 +1053,26 @@ def main(argv: list[str] | None = None) -> int:
     p_login.add_argument("agent", help="agent id (e.g. market-studies) or name (MERCATO)")
     p_login.add_argument("--url", help="page to open instead of the start_url")
     sub.add_parser("status", help="agents with a browser and whether their profile is signed in")
+    p_exp = sub.add_parser("export-session", help="save the agent's signed-in session to a file (to move it to "
+                                                  "another machine)")
+    p_exp.add_argument("agent", nargs="?", help="agent id or name (or --all)")
+    p_exp.add_argument("--out", help="file to write (default atlas-local/browser/<profile>-session.json)")
+    p_exp.add_argument("--all", dest="dir", help="export every agent with a saved profile into this folder, "
+                                                "as <agent id>.json")
+    p_imp = sub.add_parser("import-session", help="load a session exported on another machine")
+    p_imp.add_argument("agent")
+    p_imp.add_argument("file")
     args = parser.parse_args(argv)
     if args.cmd == "login":
         return login(args.agent, args.url)
+    if args.cmd == "export-session":
+        if args.dir:
+            return export_all(args.dir)
+        if not args.agent:
+            parser.error("export-session needs an agent or --all <folder>")
+        return export_session(args.agent, args.out)
+    if args.cmd == "import-session":
+        return import_session(args.agent, args.file)
     return status()
 
 

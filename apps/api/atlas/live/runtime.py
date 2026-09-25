@@ -305,7 +305,7 @@ class AgentRun:
 
     def _files_note(self) -> str:
         sb = self.files.sb
-        note = files_note([str(r) for r in sb.user_roots], str(sb.attachments), str(sb.outputs))
+        note = files_note(sb.readable_labels, str(sb.attachments), str(sb.outputs))
         if self.has_browser and self.browser_cfg is not None:
             note += "\n\n" + browser_mod.browser_note(self.browser_cfg)
         elif self.browser_cfg is not None:
@@ -367,6 +367,8 @@ class AgentRun:
             except Exception:
                 log.exception("closing the browser failed")
             self._browser = None
+        if self._files is not None:
+            self._files.close()
 
     # -- the loop ------------------------------------------------------------
 

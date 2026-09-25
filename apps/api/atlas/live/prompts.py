@@ -619,6 +619,9 @@ def files_note(readable: list[str], attachments_dir: str, outputs: str) -> str:
     """What the agent may read and where its deliverables go (part of the task message)."""
     lines = ["Files (read-only, through list_files / search_files / read_file):"]
     lines += [f"- {r}" for r in readable] or ["- (no folders are configured for this node)"]
+    if any(r.startswith(("onedrive:", "sharepoint:")) for r in readable):
+        lines.append("  (onedrive:/sharepoint: folders are read through Microsoft 365: use those labels as paths, e.g. "
+                     "onedrive:/Folder/file.xlsx; search_files there also matches file contents)")
     lines.append(f"- the mission attachments folder: {attachments_dir} (a bare attachment name also works)")
     lines.append(f"Deliverables you create with write_deliverable go to: {outputs}")
     return "\n".join(lines)

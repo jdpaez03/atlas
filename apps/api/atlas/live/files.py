@@ -3,7 +3,8 @@
 Agents read the user's files ONLY through these tools, and only inside the read roots of their mission's node:
 
     ATLAS_FILE_ROOTS_<NODE>   read roots, separated by ';' (default: corporate -> work OneDrive, else ~/Documents;
-                              others -> none)
+                              others -> none). Remote roots (onedrive:/..., sharepoint:...) are read through
+                              Microsoft Graph (graphfiles.py): same rules, paths addressed by their label.
     + the mission's attachments folder and its own outputs folder (always readable)
 
 `FileSandbox.resolve()` is the single policy function: real path (symlinks followed) inside an allowed root, the
@@ -41,6 +42,8 @@ from urllib.parse import quote
 
 from ..core import paths
 from ..core.models import Attachment
+from . import graphfiles as gf
+from .graphfiles import GraphFiles, GraphFilesError, RemotePath
 
 MAX_FILE_BYTES = 25 * 1024 * 1024
 DEFAULT_MAX_CHARS = 60_000
@@ -83,12 +86,8 @@ def max_chars() -> int:
 
 
 def _split_roots(raw: str) -> list[Path]:
-    out = []
-    for part in raw.split(";"):
-        part = part.strip().strip('"')
-        if part:
-            out.append(Path(os.path.expanduser(_seps(part))))
-    return out
+    """Local roots of an ATLAS_FILE_ROOTS_<NODE> value (remote onedrive:/sharepoint: entries are skipped)."""
+    return [Path(os.path.expanduser(_seps(part))) for part in gf.split_roots(raw)[0]]
 
 
 def default_corporate_roots() -> list[Path]:
@@ -109,6 +108,18 @@ def node_roots(node: str) -> list[Path]:
     if raw is None:
         return default_corporate_roots() if node == "corporate" else []
     return _split_roots(raw)
+
+
+def node_remote_roots(node: str) -> list[RemotePath]:
+    """onedrive: / sharepoint: roots of a node (docs/SERVER_LINUX.md § Files)."""
+    return gf.split_roots(os.environ.get(env_key(node), ""))[1]
+
+
+def _other_node_remote_roots(node: str) -> list[tuple[RemotePath, str]]:
+    mine = env_key(node)
+    prefix = "ATLAS_FILE_ROOTS_"
+    return [(r, key[len(prefix):].lower()) for key, value in sorted(os.environ.items())
+            if key.startswith(prefix) and key != mine for r in gf.split_roots(value)[1]]
 
 
 def _other_node_roots(node: str) -> list[tuple[Path, str]]:
@@ -166,6 +177,8 @@ class FileSandbox:
     attachments: Path
     home_claude: Path
     max_chars: int = DEFAULT_MAX_CHARS
+    remote: list[RemotePath] = field(default_factory=list)  # onedrive: / sharepoint: roots of this node
+    remote_others: list[tuple[RemotePath, str]] = field(default_factory=list)
 
     @classmethod
     def for_mission(cls, node: str, mission_id: str) -> FileSandbox:
@@ -179,11 +192,39 @@ class FileSandbox:
             others=[(_real(r), owner) for r, owner in _other_node_roots(node)],
             local=local, outputs=outputs, attachments=attachments,
             home_claude=_real(Path.home() / ".claude"), max_chars=max_chars(),
+            remote=node_remote_roots(node), remote_others=_other_node_remote_roots(node),
         )
 
     @property
     def user_roots(self) -> list[Path]:
         return [r for r in self.roots if r not in (self.attachments, self.outputs)]
+
+    @property
+    def readable_labels(self) -> list[str]:
+        """Every read root as the agent should write it (local folders, then remote labels)."""
+        return [str(r) for r in self.user_roots] + [r.label for r in self.remote]
+
+    def check_remote(self, path: RemotePath) -> str | None:
+        """Why a remote path is not readable, or None when it is (same rules as local paths)."""
+        if any(_denied_part(p) for p in path.parts):
+            return "access to this path is denied (protected file or folder)"
+        matches = [(len(r.parts), True) for r in self.remote if path.within(r)]
+        matches += [(len(r.parts), False) for r, _ in self.remote_others if path.within(r)]
+        if not any(mine for _, mine in matches):
+            return "the path is outside the allowed folders"
+        if not max(matches)[1]:
+            return "the path belongs to another node's folders"
+        return None
+
+    def resolve_remote(self, raw: str) -> RemotePath:
+        try:
+            path = gf.parse(raw)
+        except GraphFilesError as exc:
+            raise FileAccessError(str(exc)) from exc
+        reason = self.check_remote(path)
+        if reason:
+            raise FileAccessError(f"'{raw}': {reason}")
+        return path
 
     def check(self, path: Path, *, traverse: bool = False) -> str | None:
         """Why the (already resolved) path is not readable, or None when it is. With `traverse`, the ATLAS
@@ -684,8 +725,19 @@ def download_url(mission_id: str, name: str) -> str:
 class FileTools:
     NAMES = ("list_files", "search_files", "read_file", "write_deliverable")
 
-    def __init__(self, sandbox: FileSandbox):
+    def __init__(self, sandbox: FileSandbox, graph: GraphFiles | None = None):
         self.sb = sandbox
+        self._graph = graph
+
+    @property
+    def graph(self) -> GraphFiles:
+        if self._graph is None:
+            self._graph = GraphFiles()
+        return self._graph
+
+    def close(self) -> None:
+        if self._graph is not None:
+            self._graph.close()
 
     # -- activity lines (shown while the tool runs; derived from the tool call only) --
 
@@ -715,7 +767,7 @@ class FileTools:
         try:
             params = inspect.signature(fn).parameters
             return fn(**{k: v for k, v in args.items() if k in params and v is not None})
-        except FileAccessError as exc:
+        except (FileAccessError, GraphFilesError) as exc:
             ref = str(args.get("path") or args.get("filename") or args.get("under") or args.get("query") or "")
             return FileResult(f"Error: {exc}", False, kind, ref, str(exc))
         except OSError as exc:
@@ -759,18 +811,123 @@ class FileTools:
         lines = ["Readable folders (read-only):"]
         for r in self.sb.user_roots:
             lines.append(f"- {r}" + ("" if r.is_dir() else "  (not found)"))
-        if not self.sb.user_roots:
+        for rr in self.sb.remote:
+            lines.append(f"- {rr.label}  (OneDrive/SharePoint through Microsoft 365)")
+        if not self.sb.user_roots and not self.sb.remote:
             lines.append("- (none configured for this node)")
         att = self.sb.attachments
         names = sorted(p.name for p in att.iterdir()) if att.is_dir() else []
         lines.append(f"Mission attachments: {att}" + (f" ({len(names)} files)" if names else " (none)"))
         lines += [f"  - {n}" for n in names[:50]]
         lines.append(f"Your deliverables folder: {self.sb.outputs}")
-        return FileResult("\n".join(lines), True, "file_listed", "(readable folders)", f"{len(self.sb.roots)} roots")
+        return FileResult("\n".join(lines), True, "file_listed", "(readable folders)",
+                          f"{len(self.sb.roots) + len(self.sb.remote)} roots")
+
+    # -- remote (OneDrive / SharePoint) --
+
+    def _remote_target(self, raw: str | None) -> tuple[RemotePath, gf.Item | None] | None:
+        """The remote path an argument names: a onedrive:/sharepoint: label, or a relative path that exists in no
+        local root but in one of the remote roots. None = a local path."""
+        text = (raw or "").strip().strip('"').strip("'")
+        if gf.is_remote(text):
+            return self.sb.resolve_remote(text), None
+        local = os.path.expanduser(_seps(text))
+        if not text or not self.sb.remote or Path(local).is_absolute() or _DRIVE.match(text):
+            return None
+        if any((r / local).exists() for r in self.sb.roots):
+            return None
+        try:
+            parts = gf._parts(text)
+        except GraphFilesError:
+            return None
+        for root in self.sb.remote:
+            cand = RemotePath(root.drive, (*root.parts, *parts))
+            if self.sb.check_remote(cand) is None:
+                item = self.graph.item(cand)
+                if item is not None:
+                    return cand, item
+        return None
+
+    def _remote_item(self, rp: RemotePath, item: gf.Item | None) -> gf.Item:
+        item = item or self.graph.item(rp)
+        if item is None:
+            raise FileAccessError(f"'{rp.label}' does not exist")
+        return item
+
+    def _remote_list(self, rp: RemotePath, item: gf.Item | None, pattern: str, rec: bool) -> FileResult:
+        g = self.graph
+        top = self._remote_item(rp, item)
+        if not top.is_dir:
+            raise FileAccessError(f"'{rp.label}' is not a folder")
+        first = g.requests
+        queue: list[tuple[gf.Item, RemotePath, int]] = [(top, rp, 0)]
+        lines: list[str] = []
+        truncated = ""
+        while queue and not truncated:
+            if g.requests - first > gf.MAX_REQUESTS:
+                truncated = "too many folders"
+                break
+            folder, fpath, depth = queue.pop(0)
+            for c in sorted(g.children(folder), key=lambda x: x.name.lower()):
+                cp = fpath.child(c.name)
+                if self.sb.check_remote(cp):
+                    continue
+                if c.is_dir and (c.name.lower() in SKIP_DIRS or c.name.startswith(".")):
+                    continue
+                if not (pattern and (c.is_dir or not fnmatch.fnmatch(c.name.lower(), pattern))):
+                    rel = "/".join(cp.parts[len(rp.parts):])
+                    lines.append(f"{rel}/\t\t{c.mtime}" if c.is_dir else f"{rel}\t{_size(c.size)}\t{c.mtime}")
+                    if len(lines) >= MAX_LIST:
+                        truncated = f"truncated at {MAX_LIST}"
+                        break
+                if c.is_dir and rec and depth + 1 < MAX_DEPTH:
+                    queue.append((c, cp, depth + 1))
+        head = f"Folder: {rp.label} · {len(lines)} entries" + (f" ({truncated})" if truncated else "")
+        return FileResult(head + "\n" + ("\n".join(lines) if lines else "(empty)"), True, "file_listed", rp.label,
+                          f"{len(lines)} entries")
+
+    def _remote_search(self, rp: RemotePath, query: str) -> list[str]:
+        """Microsoft search under a remote folder (names AND contents). Hits as agent-facing lines."""
+        g = self.graph
+        folder = self._remote_item(rp, None)
+        if not folder.is_dir:
+            raise FileAccessError(f"'{rp.label}' is not a folder")
+        q = query.strip().lower()
+        glob = any(c in q for c in "*?[")
+        words = gf.glob_words(query) if glob else query.strip()
+        if not words:
+            return []
+        if folder.raw.get("root") is not None:
+            base: tuple[str, ...] | None = ()
+        else:
+            base = gf.rel_from_parent(g.parent_path(folder), folder.name)
+        if base is None:
+            return []
+        hits: list[str] = []
+        lookups = 0
+        for it in g.search(folder, words, limit=MAX_HITS * 2):
+            if glob and not fnmatch.fnmatch(it.name.lower(), q):
+                continue
+            rel = gf.rel_from_parent(it.parent_path, it.name)
+            if rel is None and lookups < gf.MAX_PATH_LOOKUPS:
+                lookups += 1
+                rel = gf.rel_from_parent(g.parent_path(it), it.name)
+            if rel is None or gf._fold(rel[:len(base)]) != gf._fold(base):
+                continue
+            path = RemotePath(rp.drive, (*rp.parts, *rel[len(base):]))
+            if self.sb.check_remote(path):
+                continue
+            hits.append(f"{path.label}{'/' if it.is_dir else ''}\t{'' if it.is_dir else _size(it.size)}\t{it.mtime}")
+            if len(hits) >= MAX_HITS:
+                break
+        return hits
 
     def list_files(self, path: str | None = None, pattern: str | None = None, recursive: Any = False) -> FileResult:
         if not (path or "").strip():
             return self._roots_listing()
+        remote = self._remote_target(path)
+        if remote is not None:
+            return self._remote_list(remote[0], remote[1], (pattern or "").strip().lower(), _bool(recursive))
         folder = self.sb.resolve(path)
         if not folder.is_dir():
             raise FileAccessError(f"'{path}' is not a folder")
@@ -795,6 +952,12 @@ class FileTools:
         q = (query or "").strip().lower()
         if not q:
             raise FileAccessError("empty query")
+        remote = self._remote_target(under) if (under or "").strip() else None
+        if remote is not None:
+            hits = self._remote_search(remote[0], query)
+            head = f"Search '{query}' in {remote[0].label}: {len(hits)} match(es) (names and contents)"
+            return FileResult(head + ("\n" + "\n".join(hits) if hits else ""), True, "file_listed", remote[0].label,
+                              f"search '{_short(query, 60)}': {len(hits)} hits")
         starts = [self.sb.resolve(under)] if (under or "").strip() else [r for r in self.sb.roots if r.is_dir()]
         glob = any(c in q for c in "*?[")
         words = q.split()
@@ -813,32 +976,65 @@ class FileTools:
                         break
             if len(hits) >= MAX_HITS:
                 break
-        ref = str(starts[0]) if len(starts) == 1 else "(readable folders)"
+        notes: list[str] = []
+        if not (under or "").strip():
+            for rr in self.sb.remote:
+                if len(hits) >= MAX_HITS:
+                    break
+                try:
+                    hits += self._remote_search(rr, query)[: MAX_HITS - len(hits)]
+                except (GraphFilesError, FileAccessError) as exc:
+                    notes.append(f"[{rr.label} not searched: {exc}]")
+        ref = str(starts[0]) if len(starts) == 1 and not self.sb.remote else "(readable folders)"
         head = f"Search '{query}': {len(hits)} match(es)" + (f" (first {MAX_HITS})" if len(hits) >= MAX_HITS else "")
-        return FileResult(head + ("\n" + "\n".join(hits) if hits else ""), True, "file_listed", ref,
-                          f"search '{_short(query, 60)}': {len(hits)} hits")
+        body = "".join("\n" + x for x in hits + notes)
+        return FileResult(head + body, True, "file_listed", ref, f"search '{_short(query, 60)}': {len(hits)} hits")
 
     # -- read --
 
     def read_file(self, path: str = "", offset: Any = 0, max_chars: Any = None, sheet: str | None = None
                   ) -> FileResult:
+        remote = self._remote_target(path)
+        if remote is not None:
+            return self._remote_read(remote[0], remote[1], offset, max_chars, sheet)
         p = self.sb.resolve(path)
         if p.is_dir():
             raise FileAccessError(f"'{path}' is a folder (use list_files)")
         text, kind = extract_text(p, sheet or None)
+        return self._page(str(p), p.stat().st_size, text, kind, offset, max_chars, sheet)
+
+    def _remote_read(self, rp: RemotePath, item: gf.Item | None, offset: Any, max_chars: Any,
+                     sheet: str | None) -> FileResult:
+        item = self._remote_item(rp, item)
+        if item.is_dir:
+            raise FileAccessError(f"'{rp.label}' is a folder (use list_files)")
+        ext = Path(item.name).suffix.lower()
+        if ext in UNSUPPORTED:
+            raise FileAccessError(UNSUPPORTED[ext])
+        local = self.graph.download(item)
+        try:
+            text, kind = extract_text(local, sheet or None)
+        except FileAccessError as exc:
+            raise FileAccessError(str(exc).replace(local.name, item.name)) from exc
+        res = self._page(rp.label, item.size or local.stat().st_size, text, kind, offset, max_chars, sheet)
+        res.extra["web_url"] = item.web_url
+        return res
+
+    def _page(self, label: str, size: int, text: str, kind: str, offset: Any, max_chars: Any,
+              sheet: str | None) -> FileResult:
         total = len(text)
         start = max(0, _int(offset, 0))
         limit = self.sb.max_chars
         n = max(1, min(limit, _int(max_chars, limit) if max_chars else limit))
         chunk = text[start:start + n]
         end = start + len(chunk)
-        head = f"File: {p} ({kind}, {_size(p.stat().st_size)}) · characters {start:,}–{end:,} of {total:,}"
+        head = f"File: {label} ({kind}, {_size(size)}) · characters {start:,}–{end:,} of {total:,}"
         if end < total:
             head += f"\n[more text: call read_file with offset={end} to continue]"
         elif start >= total and total:
             head += "\n[offset is past the end of the text]"
         detail = f"chars {start}-{end} of {total}" + (f", sheet {sheet}" if sheet else "")
-        return FileResult(head + "\n\n" + chunk, True, "file_read", str(p), detail)
+        return FileResult(head + "\n\n" + chunk, True, "file_read", label, detail)
 
     # -- write --
 
