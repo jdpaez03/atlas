@@ -49,11 +49,13 @@ from ..core.models import (
 from ..core.registry import RegistryError
 from ..core.store import WorldStore
 from . import auditor as audit_mod
+from . import memory as memory_mod
 from . import publisher as publisher_mod
 from .agent_loader import AgentLoader, ResolvedAgent
 from .backend import BackendInfo, detect_backend
 from .context import NodeContext
 from .executor import ApiExecutor, Executor
+from .lessons import with_lessons
 from .llm import LLMClient, LLMError, Meter, UsageLimitError, current_agent
 from .pricing import PriceTable
 from .prompts import (
@@ -267,6 +269,7 @@ class LiveMission:
         self._active: dict[str, list[str]] = {}  # agent id -> running task ids
         self._children: set[asyncio.Task[None]] = set()
         self.audit_skipped: str | None = None  # why the audit of this round didn't run, if it didn't
+        self.recall(mission.objective)
 
     @property
     def atlas(self) -> str:
@@ -278,7 +281,9 @@ class LiveMission:
 
     def _system(self) -> list[str]:
         o = self.scope.orchestrator
-        return [o.role_prompt, ORCHESTRATOR, context_block(self.scope.context_for(o.agent))]
+        system = with_lessons([o.role_prompt, ORCHESTRATOR, context_block(self.scope.context_for(o.agent))],
+                              self.store, o.id, self.scope.node)
+        return [*system, self.scope.memory] if self.scope.memory else system
 
     async def _atlas_step(self, tool: dict[str, Any], prompt: str, **kw: Any) -> dict[str, Any] | None:
         token = current_agent.set(self.atlas)
@@ -328,6 +333,7 @@ class LiveMission:
     async def _flow(self) -> None:
         s = self.store
         await self._atlas(AgentStatus.WORKING, "Analyzing the objective")
+        await self._log_recall()
         await self._phase(MissionPhase.DECOMPOSITION)
         if not self.roster:
             await self._abort(f"No agents are available for node '{self.scope.node}'.")
@@ -777,6 +783,7 @@ class LiveMission:
             needs_human_attention=_str_list(data.get("needs_human_attention")),
             next_actions=_str_list(data.get("next_actions")),
             references=_str_list(data.get("references")),
+            topics=[_short(t, 60) for t in _str_list(data.get("topics"))][:10],
         ))
 
     async def _publish(self, report: MissionReport) -> MissionReport:
@@ -966,7 +973,19 @@ class LiveMission:
             out.append(f"[{who}] {_short(m.body, 600)}")
         return out
 
+    def recall(self, query: str) -> None:
+        """Prior knowledge for this mission (docs/MEMORY.md): related earlier work in the node + the human's notes."""
+        self.scope.memory, self.recalled = memory_mod.recall(self.store, self.scope.node, query,
+                                                              exclude={self.mission_id})
+
+    async def _log_recall(self) -> None:
+        if self.recalled:
+            await self.store.log(
+                "ATLAS recalls " + ", ".join(f"{e.id} ({_short(e.title, 50)})" for e in self.recalled[:4])
+                + (" …" if len(self.recalled) > 4 else ""), mission_id=self.mission_id, agent_id=self.atlas)
+
     async def _followup_flow(self, message: AgentMessage) -> None:
+        self.recall(f"{self.scope.objective} {message.body}")
         s = self.store
         mission = s.mission(self.mission_id)
         allowed = set(self.scope.agents)

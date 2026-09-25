@@ -41,6 +41,7 @@ from ..core.models import (
 )
 from ..core.store import _clip, _person
 from ..live.evidence import record
+from ..live.lessons import with_lessons
 from ..live.llm import LLMError
 from .prompts import DIGEST_NOTE, SUMMARIZE_THREADS_TOOL, digest_message
 from .sources.base import MailMessage, address_of, my_addresses, trim_quoted
@@ -504,7 +505,7 @@ async def _summarize(engine: InboxEngine, scope: MissionScope, batch: list[dict[
         return errors
 
     data = await engine.live.executor(engine._backend(scope)).structured(
-        scope, model=hermes.model, system=[hermes.role_prompt, DIGEST_NOTE],
+        scope, model=hermes.model, system=with_lessons([hermes.role_prompt, DIGEST_NOTE], scope.store, hermes.id, scope.node),
         prompt=digest_message(batch, today=engine.today(), tz=engine.tz), tool=SUMMARIZE_THREADS_TOOL,
         max_tokens=scope.config.max_tokens, validate=validate, attempts=2,
     )

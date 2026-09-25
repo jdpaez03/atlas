@@ -53,8 +53,9 @@ from .core.store import WorldStore
 from .inbox.engine import InboxEngine
 from .inbox.scheduler import InboxScheduler
 from .inbox.sources import make_source
+from .live.lessons import LessonBook
 from .live.orchestrator import LiveEngine
-from .routes import approvals, argos, inbox, live, missions, stream, usage, world
+from .routes import approvals, argos, inbox, lessons, live, memory, missions, stream, usage, world
 from .sim.runner import ScenarioLibrary, Simulator
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -87,6 +88,7 @@ async def lifespan(app: FastAPI):
     bus = EventBus(log=db)
     store = WorldStore(registry, bus)
     replayed = store.restore()  # mission history (docs/PHASE3.md B)
+    app.state.lessons = LessonBook(store)  # docs/LESSONS.md (the file wins over replayed events)
     library = ScenarioLibrary(registry)
     sim = Simulator(store, library, default_speed=_default_speed())
     live_engine = LiveEngine(store)
@@ -166,4 +168,6 @@ app.include_router(approvals.router)
 app.include_router(inbox.router)
 app.include_router(argos.router)
 app.include_router(usage.router)
+app.include_router(lessons.router)
+app.include_router(memory.router)
 app.include_router(stream.router)

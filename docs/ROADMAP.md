@@ -83,3 +83,15 @@ work in parallel against it without colliding.
 - 2026-09-25 · **Briefs through SCRIBE**: the Monday L10 brief becomes a branded PDF plus a deck to project in
   the meeting, and the CC digest becomes a branded PDF. Both are laid out from their already-validated content
   without another model call. The L10 brief's .docx stays.
+- 2026-09-25 · **Lessons**: every agent follows short rules the human approves. The human writes a comment in
+  the Lessons tray, ATLAS drafts rules (fast model, aware of the agent's current lessons and which ones a new
+  rule replaces), and the human approves, edits or discards them. Active lessons are appended to that agent's
+  instructions at every call site (missions, consults, briefs, digest, drafts, audits, SCRIBE) and never
+  override the evidence and honesty rules. SCRIBE gained per-document style settings so layout lessons change
+  the files, and any built-in agent can take a private prompt from atlas-local/agents/<id>.md (docs/LESSONS.md).
+- 2026-09-25 · **Corporate memory + Ask ATLAS**: missions recall related earlier work in the node (lexical search
+  over mission reports, briefs and digests, with topics tagged at consolidation and a recency boost) plus the
+  human's knowledge notes. This is prior knowledge, not evidence: figures are re-verified or labelled
+  ASSUMPTION, and AUDITOR flags stale ones. "Ask ATLAS" is a conversation with the orchestrator grounded in
+  that memory and the live state. It cites its sources, proposes facts to remember only from what the human
+  said, and suggests a mission when new work is needed (docs/MEMORY.md).

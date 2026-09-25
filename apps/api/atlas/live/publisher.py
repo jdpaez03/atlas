@@ -25,6 +25,7 @@ from ..publish.spec import SUBMIT_DOCUMENTS_TOOL, normalize, plain, spec_text
 from . import auditor as audit_mod
 from .evidence import record
 from .files import FileAccessError, _size, download_url, extract_text
+from .lessons import with_lessons
 from .llm import LLMError, current_agent
 from .prompts import render_mission_report
 
@@ -142,7 +143,7 @@ async def publish(live: Any, report: MissionReport) -> list[Attachment]:
     token = current_agent.set(pub.id)
     try:
         data = await live.executor.structured(
-            scope, model=pub.model, system=[pub.role_prompt], prompt=prompt, tool=SUBMIT_DOCUMENTS_TOOL,
+            scope, model=pub.model, system=with_lessons([pub.role_prompt], store, pub.id, scope.node), prompt=prompt, tool=SUBMIT_DOCUMENTS_TOOL,
             max_tokens=cfg.publish_max_tokens, validate=validate, attempts=2,
         )
     finally:

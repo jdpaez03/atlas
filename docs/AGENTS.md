@@ -146,3 +146,8 @@ security notes are in [CONTRACTS.md](CONTRACTS.md#external-agents-bring-your-own
 
 Runnable example: [`examples/external-agents/echo_agent.py`](../examples/external-agents/echo_agent.py) with
 [`agents/_example.cli.yaml`](../agents/_example.cli.yaml) (copy it to `agents/echo.yaml` and enable it).
+
+## Private prompts and lessons
+
+A built-in agent's prompt can be replaced privately with `<ATLAS_LOCAL_DIR>/agents/<agent-id>.md`, and every
+agent follows the lessons you approve in the Lessons tray (docs/LESSONS.md).

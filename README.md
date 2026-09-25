@@ -22,6 +22,10 @@ agents you already run** (via http, cli or mcp adapters). See [docs/CONTRACTS.md
 
 **Inbox follow-ups** (new): ATLAS can read your work Outlook and keep a follow-up board with drafted reminders — see [docs/INBOX_SETUP.md](docs/INBOX_SETUP.md). **Phase 3 is done**: agents can read your files (sandboxed, per node), take attachments, write real deliverables, and every action they take is recorded as evidence; each mission has a follow-up thread and history survives restarts. **Phase 2**: live missions run on Claude, either on your **Claude Max/Pro plan** (through Claude Code, no API key) or on an API key. Simulated missions still work without either. Two scenarios are included:
 a real-estate investment analysis, and an EOS quarterly Rocks diagnosis run by the EOS division.
+**Ask ATLAS & memory** (new): talk with ATLAS about what happened. It remembers every mission, brief and digest, plus what you tell it, and new missions build on earlier work. See [docs/MEMORY.md](docs/MEMORY.md).
+
+**Lessons** (new): tell any agent what to improve in the Lessons tray; you approve the rules and it follows them from its next run. See [docs/LESSONS.md](docs/LESSONS.md).
+
 **Institutional documents** (new): when a mission closes, SCRIBE hands you the result as a branded PDF report and an editable committee deck. See [docs/PUBLISHING.md](docs/PUBLISHING.md).
 
 **Agent browser** (new): an agent can work a signed-in site that has no API, such as a market-data platform, through its own dedicated browser profile. It never uses your everyday Chrome. See [docs/BROWSER.md](docs/BROWSER.md).

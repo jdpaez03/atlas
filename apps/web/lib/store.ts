@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { NO_LIVE_CONFIG, api, argosApi, inboxApi, wsUrl, type ArgosApi, type InboxApi, type AtlasConfig, type Availability, type Decision, type LaunchMissionBody, type MissionSummary, type Scenario, type UsageReport } from "./api";
+import { NO_LIVE_CONFIG, api, argosApi, inboxApi, lessonsApi, memoryApi, wsUrl, type ArgosApi, type InboxApi, type LessonsApi, type MemoryApi, type AtlasConfig, type Availability, type Decision, type LaunchMissionBody, type MissionSummary, type Scenario, type UsageReport } from "./api";
 import type {
   AgentMessage,
   AgentReport,
@@ -20,6 +20,7 @@ import type {
   RockStatus,
   Task,
   WorldState,
+  Lesson,
 } from "./contracts";
 
 /* ------------------------------------------------------------------------------------------------
@@ -47,6 +48,7 @@ export function emptyWorld(): WorldState {
     rocks: [],
     briefs: [],
     audits: [],
+    lessons: [],
     last_seq: 0,
   };
 }
@@ -88,6 +90,7 @@ export function applyEvent(s: WorldState, e: AtlasEvent): WorldState {
   if (p.rock) next.rocks = upsertBy(s.rocks ?? [], p.rock as RockStatus, byId);
   if (p.brief) next.briefs = upsertBy(s.briefs ?? [], p.brief as Brief, byId);
   if (p.audit) next.audits = upsertBy(s.audits ?? [], p.audit as Audit, byId);
+  if (p.lesson) next.lessons = upsertBy(s.lessons ?? [], p.lesson as Lesson, byId);
   if (p.approval) next.approvals = upsertBy(s.approvals, p.approval as ApprovalRequest, byId);
   if (p.message) {
     const m = p.message as AgentMessage;
@@ -140,6 +143,10 @@ export interface Transport {
   inbox: InboxApi;
   /** ARGOS monitoring: alerts, Rocks, briefs (docs/ARGOS.md). */
   argos: ArgosApi;
+  /** Lessons tray (docs/LESSONS.md). */
+  lessons: LessonsApi;
+  /** Ask ATLAS, knowledge notes, memory index (docs/MEMORY.md). */
+  memory: MemoryApi;
 }
 
 export function liveTransport(): Transport {
@@ -158,6 +165,8 @@ export function liveTransport(): Transport {
     availability: api.availability,
     inbox: inboxApi,
     argos: argosApi,
+    lessons: lessonsApi,
+    memory: memoryApi,
     connect(h) {
       let closed = false;
       let ws: WebSocket | null = null;
@@ -254,7 +263,7 @@ function storeReducer(s: StoreState, a: Action): StoreState {
   switch (a.type) {
     case "snapshot":
       // Tolerate older snapshots without `evidence` (Phase 3) … `audits` (Phase 5).
-      return { ...s, world: { ...a.world, evidence: a.world.evidence ?? [], followups: a.world.followups ?? [], drafts: a.world.drafts ?? [], digests: a.world.digests ?? [], alerts: a.world.alerts ?? [], rocks: a.world.rocks ?? [], briefs: a.world.briefs ?? [], audits: a.world.audits ?? [] }, loaded: true };
+      return { ...s, world: { ...a.world, evidence: a.world.evidence ?? [], followups: a.world.followups ?? [], drafts: a.world.drafts ?? [], digests: a.world.digests ?? [], alerts: a.world.alerts ?? [], rocks: a.world.rocks ?? [], briefs: a.world.briefs ?? [], audits: a.world.audits ?? [], lessons: a.world.lessons ?? [] }, loaded: true };
     case "event":
       return { ...s, world: applyEvent(s.world, a.event), feed: mergeFeed(s.feed, [a.event]) };
     case "backfill":
@@ -379,6 +388,33 @@ export function useAtlas() {
   }, []);
 
   // ARGOS: same pattern as the inbox wrappers.
+  const lessons = useMemo<LessonsApi>(() => {
+    const t = () => {
+      const x = transportRef.current;
+      if (!x) throw new Error("not connected");
+      return x.lessons;
+    };
+    return {
+      create: (agentId, text, mode) => t().create(agentId, text, mode),
+      decide: (id, change) => t().decide(id, change),
+    };
+  }, []);
+  const memory = useMemo<MemoryApi>(() => {
+    const t = () => {
+      const x = transportRef.current;
+      if (!x) throw new Error("not connected");
+      return x.memory;
+    };
+    return {
+      thread: (node) => t().thread(node),
+      ask: (node, q) => t().ask(node, q),
+      clear: (node) => t().clear(node),
+      notes: (node) => t().notes(node),
+      addNote: (node, text, source) => t().addNote(node, text, source),
+      updateNote: (id, change) => t().updateNote(id, change),
+      index: (node, q) => t().index(node, q),
+    };
+  }, []);
   const argos = useMemo<ArgosApi>(() => {
     const t = () => {
       const x = transportRef.current;
@@ -420,8 +456,10 @@ export function useAtlas() {
       missionHistory,
       inbox,
       argos,
+      lessons,
+      memory,
     }),
-    [state, conn, transport, launch, decide, scenarios, cancel, resume, usage, config, availability, sendMessage, attach, missionHistory, inbox, argos],
+    [state, conn, transport, launch, decide, scenarios, cancel, resume, usage, config, availability, sendMessage, attach, missionHistory, inbox, argos, lessons, memory],
   );
 }
 

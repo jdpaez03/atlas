@@ -20,6 +20,7 @@ from typing import Any
 from ..core import paths
 from ..core.models import Alert, Attachment, Brief, FollowUp, RockStatus
 from ..live.files import render_deliverable
+from ..live.lessons import with_lessons
 from .checks import CheckContext, CheckNotConfigured
 from .l10 import local_today, record_evidence
 from .rocks import RocksFileError, evaluate, rocks_source, summary_line
@@ -284,7 +285,7 @@ async def write_prose(ctx: CheckContext, facts: BriefFacts, executor: Any = None
 
     try:
         data = await _executor(ctx, executor).structured(
-            scope, model=agent.model, system=[agent.role_prompt, BRIEF_NOTE], prompt=prompt,
+            scope, model=agent.model, system=with_lessons([agent.role_prompt, BRIEF_NOTE], scope.store, agent.id, scope.node), prompt=prompt,
             tool=WRITE_BRIEF_TOOL, max_tokens=min(scope.config.max_tokens, 4000), validate=validate, attempts=2,
         )
     except Exception as exc:  # noqa: BLE001 — LLMError, SDK errors: the brief still ships with computed lines

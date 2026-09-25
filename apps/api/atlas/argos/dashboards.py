@@ -38,6 +38,7 @@ from ..inbox.sources.base import AttachmentMeta, MailMessage, MailSourceError, s
 from ..inbox.state import user_tz
 from ..live.evidence import record
 from ..live.files import FileAccessError, extract_text
+from ..live.lessons import with_lessons
 from ..live.llm import LLMError
 from .checks import AlertDraft, CheckContext, CheckNotConfigured, CheckResult, fingerprint
 
@@ -907,7 +908,7 @@ class DashboardsCheck:
 
         try:
             data = await self._executor_for(ctx, scope).structured(
-                scope, model=agent.model, system=[agent.role_prompt, DASHBOARD_NOTE], prompt=prompt,
+                scope, model=agent.model, system=with_lessons([agent.role_prompt, DASHBOARD_NOTE], scope.store, agent.id, scope.node), prompt=prompt,
                 tool=FINDINGS_TOOL, max_tokens=scope.config.max_tokens, validate=validate, attempts=2,
             )
         except LLMError as exc:

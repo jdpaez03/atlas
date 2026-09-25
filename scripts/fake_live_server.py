@@ -147,6 +147,24 @@ async def brain(**kw: Any) -> Any:
                                 "issues": [{"finding": "absorption ~1.4/month", "kind": "mislabeled", "severity": "MEDIUM",
                                             "problem": "An average of comparables, not a measured fact: label it ASSUMPTION."}]})
         return tool_use("submit_audit", {"audits": entries})
+    if "answer" in tools and "STAGE: ASK" in prompt:  # Ask ATLAS: answer from the recalled missions
+        ids = re.findall(r"### \[(msn_\w+)\]", prompt)
+        said = prompt.rsplit("## The human now says", 1)[-1].strip()
+        if ids:
+            return tool_use("answer", {
+                "answer": "Según la misión anterior, la oportunidad es atractiva solo con un **retorno preferente**; "
+                          "la absorción del desarrollador luce optimista.\n\n- TIR base 15-18%\n- Siguiente paso: "
+                          "solicitar term sheet",
+                "refs": ids[:2],
+                "remember": ["El comité pidió negociar un retorno preferente antes de comprometer capital."]
+                if "comité" in said.lower() else []})
+        return tool_use("answer", {"answer": "No tengo nada sobre eso en misiones anteriores.",
+                                   "suggest_mission": f"Investigar: {said[:120]}"})
+    if "propose_lessons" in tools:  # Lessons tray: a comment becomes rules for approval
+        comment = prompt.split("Human's comment:", 1)[-1].split("\n\n", 1)[0].strip()
+        return tool_use("propose_lessons", {"rules": [
+            f"En las presentaciones, divide tablas de más de 6 filas en varias láminas ({comment[:60]}).",
+            "Usa densidad 'airy' (letra más grande) en las láminas de comité."]})
     if "submit_documents" in tools:  # SCRIBE: the demo's report as institutional documents
         return tool_use("submit_documents", {
             "doc_kind": "Reporte ejecutivo", "title": "Oportunidad de *inversión*",

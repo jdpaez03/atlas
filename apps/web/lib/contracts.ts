@@ -91,6 +91,7 @@ export type EventType =
   | "rock.updated"
   | "brief.ready"
   | "audit.recorded"
+  | "lesson.upserted"
   | "log";
 export type Priority2 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type Priority3 = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
@@ -179,6 +180,8 @@ export interface AtlasContracts {
   RockStatus?: RockStatus;
   Brief?: Brief;
   Audit?: Audit;
+  KnowledgeNote?: KnowledgeNote;
+  AskMessage?: AskMessage;
   WorldState?: WorldState;
 }
 /**
@@ -540,6 +543,10 @@ export interface MissionReport {
    */
   documents: Attachment[];
   /**
+   * projects, areas and people this mission is about
+   */
+  topics: string[];
+  /**
    * what AUDITOR checked and what it found (system-written)
    */
   audit_summary: string;
@@ -869,6 +876,54 @@ export interface AuditIssue {
   severity: "LOW" | "MEDIUM" | "HIGH";
 }
 /**
+ * A fact the human told ATLAS about their world (docs/MEMORY.md): dated, per node, given to every run.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "KnowledgeNote".
+ */
+export interface KnowledgeNote {
+  id: string;
+  node: string;
+  text: string;
+  source: "direct" | "ask";
+  status: "active" | "retired";
+  created_at: string;
+}
+/**
+ * One turn of the "Ask ATLAS" conversation (docs/MEMORY.md).
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "AskMessage".
+ */
+export interface AskMessage {
+  id: string;
+  node: string;
+  role: "human" | "atlas";
+  text: string;
+  refs: MemoryRef[];
+  /**
+   * facts from the human's message worth saving
+   */
+  remember: string[];
+  /**
+   * an objective to launch when it needs new work
+   */
+  suggest_mission: string | null;
+  created_at: string;
+}
+/**
+ * An earlier mission / brief / digest an answer drew on.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "MemoryRef".
+ */
+export interface MemoryRef {
+  id: string;
+  kind: "mission" | "brief" | "digest";
+  title: string;
+  date: string | null;
+}
+/**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
  * via the `definition` "WorldState".
  */
@@ -891,5 +946,40 @@ export interface WorldState {
   rocks: RockStatus[];
   briefs: Brief[];
   audits: Audit[];
+  lessons: Lesson[];
   last_seq: number;
+}
+/**
+ * A durable preference the human taught an agent (docs/LESSONS.md). Proposed lessons wait for approval;
+ * active ones are added to that agent's instructions in every future run.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "Lesson".
+ */
+export interface Lesson {
+  id: string;
+  /**
+   * agent id, or '*' for every agent
+   */
+  agent_id: string;
+  /**
+   * the rule, as the agent will read it
+   */
+  text: string;
+  /**
+   * the human's original comment
+   */
+  comment: string;
+  status: "proposed" | "active" | "dismissed" | "retired";
+  origin: "comment" | "direct";
+  /**
+   * only in this node; None = every node
+   */
+  node: string | null;
+  /**
+   * lesson ids retired when this one is approved
+   */
+  replaces: string[];
+  created_at: string;
+  decided_at: string | null;
 }

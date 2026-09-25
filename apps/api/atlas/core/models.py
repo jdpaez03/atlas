@@ -395,6 +395,7 @@ class MissionReport(AtlasModel):
     deliverables: list[Attachment] = Field(default_factory=list)
     documents: list[Attachment] = Field(
         default_factory=list, description="institutional documents SCRIBE rendered from this report (PDF, deck)")
+    topics: list[str] = Field(default_factory=list, description="projects, areas and people this mission is about")
     audit_summary: str = Field(default="", description="what AUDITOR checked and what it found (system-written)")
     untraced: list[str] = Field(
         default_factory=list,
@@ -635,6 +636,7 @@ class EventType(str, Enum):
     ROCK_UPDATED = "rock.updated"
     BRIEF_READY = "brief.ready"
     AUDIT_RECORDED = "audit.recorded"
+    LESSON_UPSERTED = "lesson.upserted"
     LOG = "log"
 
 
@@ -657,6 +659,55 @@ class AtlasEvent(AtlasModel):
 # ---------------------------------------------------------------------------
 
 
+class Lesson(AtlasModel):
+    """A durable preference the human taught an agent (docs/LESSONS.md). Proposed lessons wait for approval;
+    active ones are added to that agent's instructions in every future run."""
+
+    id: str = Field(default_factory=lambda: _id("lsn"))
+    agent_id: str = Field(description="agent id, or '*' for every agent")
+    text: str = Field(description="the rule, as the agent will read it")
+    comment: str = Field(default="", description="the human's original comment")
+    status: Literal["proposed", "active", "dismissed", "retired"] = "proposed"
+    origin: Literal["comment", "direct"] = "comment"
+    node: str | None = Field(default=None, description="only in this node; None = every node")
+    replaces: list[str] = Field(default_factory=list, description="lesson ids retired when this one is approved")
+    created_at: datetime = Field(default_factory=_now)
+    decided_at: datetime | None = None
+
+
+class KnowledgeNote(AtlasModel):
+    """A fact the human told ATLAS about their world (docs/MEMORY.md): dated, per node, given to every run."""
+
+    id: str = Field(default_factory=lambda: _id("kn"))
+    node: str = "corporate"
+    text: str
+    source: Literal["direct", "ask"] = "direct"
+    status: Literal["active", "retired"] = "active"
+    created_at: datetime = Field(default_factory=_now)
+
+
+class MemoryRef(AtlasModel):
+    """An earlier mission / brief / digest an answer drew on."""
+
+    id: str
+    kind: Literal["mission", "brief", "digest"]
+    title: str
+    date: datetime | None = None
+
+
+class AskMessage(AtlasModel):
+    """One turn of the "Ask ATLAS" conversation (docs/MEMORY.md)."""
+
+    id: str = Field(default_factory=lambda: _id("ask"))
+    node: str = "corporate"
+    role: Literal["human", "atlas"]
+    text: str
+    refs: list[MemoryRef] = Field(default_factory=list)
+    remember: list[str] = Field(default_factory=list, description="facts from the human's message worth saving")
+    suggest_mission: str | None = Field(default=None, description="an objective to launch when it needs new work")
+    created_at: datetime = Field(default_factory=_now)
+
+
 class WorldState(AtlasModel):
     nodes: list[NodeDefinition] = Field(default_factory=list)
     divisions: list[DivisionDefinition] = Field(default_factory=list)
@@ -676,4 +727,5 @@ class WorldState(AtlasModel):
     rocks: list[RockStatus] = Field(default_factory=list)
     briefs: list[Brief] = Field(default_factory=list)
     audits: list[Audit] = Field(default_factory=list)
+    lessons: list[Lesson] = Field(default_factory=list)
     last_seq: int = 0

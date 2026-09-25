@@ -47,6 +47,7 @@ from .. import __version__
 from ..core.models import AgentReport, Task, TaskStatus
 from .agent_loader import ResolvedAgent
 from .executor import Validator, invalid_input_message
+from .lessons import with_lessons
 from .llm import LLMError, UsageLimitError
 from .prompts import (
     BROWSER_TOOLS,
@@ -417,7 +418,8 @@ class SdkAgentRun(AgentRun):
         sc = self.scope
         return await self.executor.one_shot(
             sc, model=sc.config.models.fast,
-            system=[target.role_prompt, CONSULT_PROTOCOL, context_block(sc.context_for(target.agent))],
+            system=with_lessons([target.role_prompt, CONSULT_PROTOCOL, context_block(sc.context_for(target.agent))],
+                                sc.store, target.id, sc.node),
             prompt=consult_message(sc.objective, self.agent.agent.name, question),
         )
 
@@ -488,6 +490,7 @@ class SdkAgentRun(AgentRun):
             + (SDK_BROWSER_NOTE if self.has_browser else ""),
             context_block(sc.context_for(self.agent.agent)),
         ]
+        system = with_lessons(system, s, self.aid, sc.node)
         prompt = self._task_message()
         last_text = ""
         async with aclosing(self.executor.session(

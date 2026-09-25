@@ -4,7 +4,7 @@
  *
  * Enable with NEXT_PUBLIC_ATLAS_MOCK=1 or ?mock=1 (optional ?speed=2 to accelerate).
  */
-import { ZERO_USAGE, type AtlasConfig, type Availability, type Decision, type LaunchMissionBody, type MissionSummary, type Scenario, type UsageReport } from "./api";
+import { type MemoryApi, ZERO_USAGE, type AtlasConfig, type Availability, type Decision, type LaunchMissionBody, type MissionSummary, type Scenario, type UsageReport } from "./api";
 import type {
   AgentDefinition,
   AgentMessage,
@@ -31,6 +31,10 @@ import type {
   TaskStatus,
   Usage,
   WorldState,
+  Lesson,
+  AskMessage,
+  KnowledgeNote,
+  MemoryRef,
 } from "./contracts";
 import { mockArgos, type MockArgos } from "./mockArgos";
 import { mockInbox, type MockInbox } from "./mockInbox";
@@ -145,6 +149,7 @@ interface TaskSpec {
 }
 
 class MockEngine {
+  lessons: Lesson[] = [];
   seq = 0;
   world: WorldState;
   listener: ((e: AtlasEvent) => void) | null = null;
@@ -218,6 +223,7 @@ class MockEngine {
       rocks: this.argos.rocks,
       briefs: this.argos.briefs,
       audits: [],
+      lessons: this.lessons,
       last_seq: 0,
     };
   }
@@ -899,6 +905,7 @@ function scriptAfterDecision(decision: Decision): Step[] {
           "AUDITOR checked 4 agent reports against the evidence the system recorded. EOS·TRACTION's capacity check held up as submitted; SOFIA's market study holds up with 2 issues (absorption rate unsourced, asking-price median labeled as a verified fact); ARGOS's zoning report failed on the density figure and was revised once — the revision (18.75% cut, consultation closes 14 Nov) passed.",
         untraced: ["~20% density cut", "IRR 15% in the density-cut case at 96 units"],
         documents: [],
+        topics: [],
         created_at: now(),
       };
       e.publishReport(report);
@@ -995,6 +1002,7 @@ function scriptFollowUp(question: string): Step[] {
         audit_summary: `AUDITOR checked ORACLE's round-${m.round} report: it holds up — the sensitivity table matches Offer_sensitivity.csv.`,
         untraced: [],
         documents: [],
+        topics: [],
         created_at: now(),
       };
       e.publishReport(report);
@@ -1068,6 +1076,7 @@ function scriptResume(refs: string[]): Step[] {
         audit_summary: `AUDITOR checked the ${n} resumed report${n === 1 ? "" : "s"}; all hold up.`,
         untraced: [],
         documents: [],
+        topics: [],
         created_at: now(),
       });
     }),
@@ -1215,6 +1224,55 @@ function fileAttachment(missionId: string, f: File): Attachment {
   };
 }
 
+/** Ask ATLAS in the demo: answers from the demo missions' titles (no model). */
+function mockMemory(engine: MockEngine): MemoryApi {
+  const thread: AskMessage[] = [];
+  const notes: KnowledgeNote[] = [];
+  const refsFor = (q: string): MemoryRef[] => {
+    const words = q.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").split(/[^a-z0-9]+/).filter((w) => w.length > 3);
+    return [...engine.missions.values()]
+      .filter((m) => words.some((w) => m.objective.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").includes(w)))
+      .slice(0, 4)
+      .map((m) => ({ id: m.id, kind: "mission" as const, title: m.objective, date: m.created_at }));
+  };
+  return {
+    async thread() {
+      return [...thread];
+    },
+    async ask(node, question) {
+      const refs = refsFor(question);
+      const human: AskMessage = { id: rid("ask"), node, role: "human", text: question, refs: [], remember: [], suggest_mission: null, created_at: now() };
+      const atlas: AskMessage = {
+        id: rid("ask"), node, role: "atlas", created_at: now(), refs, remember: [],
+        text: refs.length ? `(demo) Esto es lo que recuerdo relacionado:\n${refs.map((r) => `- ${r.title}`).join("\n")}` : "(demo) No encuentro nada relacionado en las misiones anteriores.",
+        suggest_mission: refs.length ? null : question,
+      };
+      thread.push(human, atlas);
+      return [human, atlas];
+    },
+    async clear() {
+      thread.length = 0;
+      return { status: "cleared" };
+    },
+    async notes() {
+      return notes.filter((n) => n.status === "active");
+    },
+    async addNote(node, text, source = "direct") {
+      const n: KnowledgeNote = { id: rid("kn"), node, text, source, status: "active", created_at: now() };
+      notes.unshift(n);
+      return n;
+    },
+    async updateNote(id, change) {
+      const i = notes.findIndex((n) => n.id === id);
+      notes[i] = { ...notes[i], ...change } as KnowledgeNote;
+      return notes[i];
+    },
+    async index(_node, q) {
+      return q ? refsFor(q) : [...engine.missions.values()].slice(0, 20).map((m) => ({ id: m.id, kind: "mission" as const, title: m.objective, date: m.created_at }));
+    },
+  };
+}
+
 export function mockTransport({ speed = 1 }: { speed?: number } = {}): Transport {
   const engine = new MockEngine(speed);
   return {
@@ -1233,6 +1291,29 @@ export function mockTransport({ speed = 1 }: { speed?: number } = {}): Transport
     availability: async () => AVAILABILITY,
     inbox: engine.inbox.api,
     argos: engine.argos.api,
+    memory: mockMemory(engine),
+    lessons: {
+      async create(agentId, text, mode) {
+        const clean = text.trim().replace(/\s+/g, " ");
+        const direct = mode === "direct";
+        const l: Lesson = {
+          id: rid("lsn"), agent_id: agentId, text: direct ? clean : `(demo) ${clean}`, comment: clean,
+          status: direct ? "active" : "proposed", origin: direct ? "direct" : "comment", node: null, replaces: [],
+          created_at: now(), decided_at: direct ? now() : null,
+        };
+        engine.lessons.push(l);
+        engine.emit("lesson.upserted", { lesson: l }, `Lesson ${direct ? "added" : "proposed"} · ${l.text.slice(0, 80)}`, agentId === "*" ? null : agentId, null);
+        return [l];
+      },
+      async decide(id, change) {
+        const i = engine.lessons.findIndex((x) => x.id === id);
+        if (i < 0) throw new Error("ATLAS API 404: unknown lesson");
+        const l: Lesson = { ...engine.lessons[i], ...(change.text ? { text: change.text } : {}), ...(change.status ? { status: change.status, decided_at: now() } : {}) };
+        engine.lessons[i] = l;
+        engine.emit("lesson.upserted", { lesson: l }, `Lesson ${change.status ?? "edited"} · ${l.text.slice(0, 80)}`, l.agent_id === "*" ? null : l.agent_id, null);
+        return l;
+      },
+    },
     async cancel(id: string) {
       const m = engine.mission;
       if (!m || m.id !== id) throw new Error("ATLAS API 404: mission not found");

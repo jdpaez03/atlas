@@ -84,6 +84,19 @@ class ResolvedAgent:
         return self.agent.id
 
 
+def local_prompt(agent_id: str) -> str | None:
+    """A private prompt for a built-in agent, kept out of the public repo: <ATLAS_LOCAL_DIR>/agents/<id>.md
+    (frontmatter optional). None when absent or empty."""
+    from ..core import paths
+
+    p = paths.local_dir() / "agents" / f"{paths.safe_name(agent_id)}.md"
+    try:
+        _, body = parse_frontmatter(p.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    return body or None
+
+
 def generic_prompt(agent: AgentDefinition) -> str:
     caps = ", ".join(c.replace("_", " ") for c in agent.capabilities) or "general analysis"
     return (
@@ -125,6 +138,9 @@ class AgentLoader:
             return ResolvedAgent(agent, False, model=model, source="none", reason="agent is disabled")
         adapter = AdapterType(agent.adapter)
         if adapter in (AdapterType.CLAUDE, AdapterType.MOCK):
+            private = local_prompt(agent.id)
+            if private:  # <ATLAS_LOCAL_DIR>/agents/<id>.md replaces the public prompt (docs/AGENTS.md)
+                return ResolvedAgent(agent, True, private, model, "local")
             if agent.system_prompt and agent.system_prompt.strip():
                 return ResolvedAgent(agent, True, agent.system_prompt.strip(), model, "yaml")
             return ResolvedAgent(agent, True, generic_prompt(agent), model, "generic")

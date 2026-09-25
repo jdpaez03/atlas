@@ -13,7 +13,7 @@ MAX_SECTIONS = 12
 MAX_BLOCKS = 14
 MAX_SLIDES = 22
 MAX_TABLE_ROWS = 60
-MAX_DECK_TABLE_ROWS = 12
+MAX_DECK_TABLE_ROWS = 40  # split across slides by style.table_rows_per_slide
 MAX_COLS = 9
 MAX_KPIS = 4
 MAX_SERIES = 4
@@ -96,6 +96,20 @@ SUBMIT_DOCUMENTS_TOOL: dict[str, Any] = {
             "slides": {"type": "array", "items": _SLIDE,
                        "description": "the deck body (cover and closing are added by the system)"},
             "sources": {"type": "array", "items": {"type": "string"}},
+            "style": {
+                "type": "object",
+                "description": "layout choices for THIS document (set them from the human's lessons; omit = defaults)",
+                "properties": {
+                    "deck_density": {"type": "string", "enum": ["airy", "standard", "compact"],
+                                     "description": "text size on slides: airy = bigger, compact = smaller"},
+                    "table_rows_per_slide": {"type": "integer", "minimum": 4, "maximum": 14,
+                                             "description": "long tables continue on the next slide (default 8)"},
+                    "agenda": {"type": "boolean", "description": "agenda slide after the cover (default false)"},
+                    "toc": {"type": "boolean", "description": "table of contents page in the PDF (default false)"},
+                    "chart_data_labels": {"type": "boolean", "description": "values printed on bars/points"},
+                    "section_numbers": {"type": "boolean", "description": "01, 02… before PDF sections (default true)"},
+                },
+            },
         },
         "required": ["title", "summary", "sections", "slides"],
     },
@@ -221,6 +235,26 @@ def _slide(sl: Any, errors: list[str], where: str) -> dict[str, Any] | None:
     return None
 
 
+DEFAULT_STYLE: dict[str, Any] = {"deck_density": "standard", "table_rows_per_slide": 8, "agenda": False,
+                                 "toc": False, "chart_data_labels": False, "section_numbers": True}
+
+
+def normalize_style(v: Any) -> dict[str, Any]:
+    out = dict(DEFAULT_STYLE)
+    if not isinstance(v, dict):
+        return out
+    if v.get("deck_density") in ("airy", "standard", "compact"):
+        out["deck_density"] = v["deck_density"]
+    try:
+        out["table_rows_per_slide"] = min(14, max(4, int(v.get("table_rows_per_slide") or 8)))
+    except (TypeError, ValueError):
+        pass
+    for k in ("agenda", "toc", "chart_data_labels", "section_numbers"):
+        if isinstance(v.get(k), bool):
+            out[k] = v[k]
+    return out
+
+
 def normalize(data: dict[str, Any] | None) -> tuple[dict[str, Any], list[str]]:
     """(clean spec, errors). Errors go back to SCRIBE; a spec with errors is still renderable."""
     errors: list[str] = []
@@ -235,6 +269,7 @@ def normalize(data: dict[str, Any] | None) -> tuple[dict[str, Any], list[str]]:
         "sources": _list(data.get("sources"), 30, 300),
         "sections": [],
         "slides": [],
+        "style": normalize_style(data.get("style")),
     }
     if not spec["title"]:
         errors.append("title is required")

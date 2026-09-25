@@ -20,7 +20,7 @@ from pptx.util import Emu, Pt
 
 from .brand import Brand
 from .pdf import col_weights, fmt_num, is_numeric
-from .spec import accent_runs, plain
+from .spec import DEFAULT_STYLE, accent_runs, normalize_style, plain
 
 
 def _rgb(hex_: str) -> RGBColor:
@@ -68,6 +68,8 @@ class Deck:
         layouts = list(self.prs.slide_layouts)
         blank = [lay for lay in layouts if lay.name.lower() in ("en blanco", "blank")]
         self.layout = blank[0] if blank else min(layouts, key=lambda lay: len(lay.placeholders))
+        self.style = dict(DEFAULT_STYLE)
+        self.scale = 1.0
         self.font = brand.deck_font
         self.strong = brand.deck_font_strong
         self.n = 0
@@ -203,7 +205,7 @@ class Deck:
         if sl.get("subtitle"):
             self.text(s, 120, 238, 1560, 60, sl["subtitle"], size=24, color=b.c("muted"))
         items = sl["items"]
-        size = 38 if len(items) <= 4 else 33 if len(items) <= 6 else 29
+        size = (38 if len(items) <= 4 else 33 if len(items) <= 6 else 29) * self.scale
         box = self.text(s, 180, 330, 1560, 620, [i.lstrip("\t") for i in items], size=size, color=b.c("ink"),
                         line=1.1)
         for p, item in zip(box.text_frame.paragraphs, items, strict=True):
@@ -237,7 +239,7 @@ class Deck:
         cols, rows = t["columns"], t["rows"]
         top = 300 if sl.get("subtitle") else 250
         row_h = min(78, (930 - top) / (len(rows) + 1))
-        size = 22 if row_h >= 64 else 19 if row_h >= 52 else 16
+        size = (22 if row_h >= 64 else 19 if row_h >= 52 else 16) * min(self.scale, 1.06)
         shape = s.shapes.add_table(len(rows) + 1, len(cols), self.e(120), self.e(top), self.e(1680),
                                    self.e(row_h * (len(rows) + 1)))
         tbl = shape.table
@@ -317,6 +319,15 @@ class Deck:
         c.font.size = self.pt(20)
         c.font.name = self.font
         c.font.color.rgb = _rgb(b.c("ink"))
+        if self.style.get("chart_data_labels"):
+            plot = c.plots[0]
+            plot.has_data_labels = True
+            labels = plot.data_labels
+            labels.font.size = self.pt(15)
+            labels.font.color.rgb = _rgb(b.c("ink"))
+            labels.number_format = "#,##0.##" if any(
+                v is not None and not float(v).is_integer() for sr in ch["series"] for v in sr["values"]) else "#,##0"
+            labels.number_format_is_linked = False
         c.has_legend = len(ch["series"]) > 1
         if c.has_legend:
             c.legend.position = XL_LEGEND_POSITION.TOP
@@ -384,9 +395,46 @@ class Deck:
                       font=self.strong, align=PP_ALIGN.CENTER, spacing=8)
         self.text(s, 360, 760, 1200, 150, lines, size=15, color=light, align=PP_ALIGN.CENTER)
 
+    def agenda(self, titles: list[str]) -> None:
+        b = self.b
+        s = self.new(b.c("light"))
+        self.rect(s, 0, 0, 640, 1080, b.c("primary"))
+        self.text(s, 120, 440, 440, 140, "*Agenda*", size=64, color="#FFFFFF", accents=True)
+        n = len(titles)
+        step = min(110, 760 / max(n, 1))
+        for i, t in enumerate(titles):
+            y = 540 - n * step / 2 + i * step
+            self.text(s, 760, y, 120, step, f"{i + 1:02d}", size=30 * self.scale, color=b.c("accent"),
+                      font=self.strong)
+            self.text(s, 880, y, 900, step, t, size=34 * self.scale, color=b.c("primary"), accents=True)
+        self.page_no(s)
+
+    def _expand(self, slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Long tables continue on following slides (style.table_rows_per_slide) instead of being cut."""
+        per = int(self.style.get("table_rows_per_slide") or 8)
+        out: list[dict[str, Any]] = []
+        for sl in slides:
+            if sl["type"] != "table" or len(sl["table"]["rows"]) <= per:
+                out.append(sl)
+                continue
+            rows = sl["table"]["rows"]
+            for i in range(0, len(rows), per):
+                part = {**sl, "table": {**sl["table"], "rows": rows[i:i + per]}}
+                if i:
+                    part["title"] = (sl.get("title") or sl["table"].get("caption") or "") + " (cont.)"
+                    part["notes"] = ""
+                out.append(part)
+        return out
+
     def build(self, spec: dict[str, Any], closing: list[str], out: Path) -> Path:
+        self.style = normalize_style(spec.get("style"))
+        self.scale = {"airy": 1.12, "standard": 1.0, "compact": 0.88}[self.style["deck_density"]]
         self.cover(spec)
-        for sl in spec["slides"]:
+        slides = self._expand(spec["slides"])
+        sections = [sl["title"] for sl in slides if sl["type"] == "section"]
+        if self.style.get("agenda") and sections:
+            self.agenda(sections)
+        for sl in slides:
             getattr(self, sl["type"])(sl)
         self.closing(closing)
         self.prs.core_properties.title = plain(spec["title"])

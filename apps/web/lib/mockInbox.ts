@@ -391,6 +391,7 @@ export function mockInbox(emit: Emit, speed: number): MockInbox {
           audit_summary: "",
           untraced: [],
           documents: [],
+          topics: [],
           created_at: iso(0),
         };
         emit("log", {}, summary, "hermes", id);

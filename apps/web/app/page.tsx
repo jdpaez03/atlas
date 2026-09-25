@@ -18,6 +18,8 @@ import { Emblem } from "@/components/primitives";
 import { Reports } from "@/components/Reports";
 import { TaskBoard } from "@/components/TaskBoard";
 import { UsageView } from "@/components/Usage";
+import { LessonsView } from "@/components/Lessons";
+import { AskView } from "@/components/Ask";
 import { API_URL, type AtlasConfig, type Availability, type MissionSummary } from "@/lib/api";
 import type { AgentDefinition, Task } from "@/lib/contracts";
 import { followupCounts, proposedDrafts } from "@/lib/followups";
@@ -31,7 +33,7 @@ const MONITOR_EVENTS = new Set(["alert.upserted", "rock.updated", "brief.ready"]
 function initialView(): View {
   if (typeof window === "undefined") return "missions";
   const v = new URLSearchParams(window.location.search).get("view");
-  return v === "followups" || v === "monitor" || v === "usage" ? v : "missions";
+  return v === "ask" || v === "followups" || v === "monitor" || v === "usage" || v === "lessons" ? v : "missions";
 }
 
 export default function CommandCenter() {
@@ -142,10 +144,12 @@ export default function CommandCenter() {
       const t = e.target as HTMLElement | null;
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
       if (document.querySelector('[aria-modal="true"]')) return;
-      if (e.key === "1") setView("missions");
+      if (e.key === "0") setView("ask");
+      else if (e.key === "1") setView("missions");
       else if (e.key === "2") setView("followups");
       else if (e.key === "3") setView("monitor");
       else if (e.key === "4") setView("usage");
+      else if (e.key === "5") setView("lessons");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -257,10 +261,44 @@ export default function CommandCenter() {
         onView={setView}
         counts={fuCounts}
         highAlerts={highAlerts}
+        proposedLessons={(world.lessons ?? []).filter((l) => l.status === "proposed").length}
         inbox={<InboxChip inbox={inbox} ready={ready} conn={conn} />}
       />
       <DraftDrawer draft={openDraft} followup={openDraftFollowup} onClose={() => setDraftId(null)} decide={inbox.decideDraft} />
-      {view === "usage" ? (
+      {view === "ask" ? (
+        <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
+          <AskView
+            node={nodeId ?? "corporate"}
+            nodeName={node?.name ?? "—"}
+            api={atlas.memory}
+            ready={ready}
+            refreshKey={missionsKey}
+            launch={(objective) => atlas.launch({ objective, node: nodeId ?? "corporate", mode: "live" })}
+            onOpenRef={(r) => {
+              if (r.kind === "mission") {
+                setPicked(r.id);
+                setView("missions");
+              } else setView(r.kind === "brief" ? "monitor" : "followups");
+            }}
+          />
+          <footer className="flex items-center justify-between py-2 font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
+            <span>ATLAS · ask · answers from earlier work, your notes and the live state</span>
+            <span>
+              {atlas.mode === "mock" ? "Simulated stream" : API_URL} · seq {world.last_seq}
+            </span>
+          </footer>
+        </main>
+      ) : view === "lessons" ? (
+        <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
+          <LessonsView lessons={world.lessons ?? []} agents={world.agents} api={atlas.lessons} ready={ready} />
+          <footer className="flex items-center justify-between py-2 font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
+            <span>ATLAS · lessons · approved preferences every agent follows from its next run</span>
+            <span>
+              {atlas.mode === "mock" ? "Simulated stream" : API_URL} · seq {world.last_seq}
+            </span>
+          </footer>
+        </main>
+      ) : view === "usage" ? (
         <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
           <UsageView
             load={atlas.usage}

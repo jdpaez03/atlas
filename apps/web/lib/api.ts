@@ -1,4 +1,4 @@
-import type { AgentDefinition, Alert, ApprovalRequest, AtlasEvent, Brief, EmailDraft, FollowUp, Mission, MissionPhase, RockStatus, Usage, WorldState } from "./contracts";
+import type { AskMessage, KnowledgeNote, MemoryRef, Lesson, AgentDefinition, Alert, ApprovalRequest, AtlasEvent, Brief, EmailDraft, FollowUp, Mission, MissionPhase, RockStatus, Usage, WorldState } from "./contracts";
 
 export const API_URL = (process.env.NEXT_PUBLIC_ATLAS_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
@@ -97,6 +97,64 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const wsUrl = (since: number) => `${API_URL.replace(/^http/, "ws")}/ws?since=${since}`;
+
+/* ---------------------------------------------------------------- lessons (docs/LESSONS.md) */
+
+export interface LessonsApi {
+  /** comment → proposed rules (await approval) · direct → the text is an active rule */
+  create(agentId: string, text: string, mode: "comment" | "direct"): Promise<Lesson[]>;
+  decide(id: string, change: { status?: Lesson["status"]; text?: string }): Promise<Lesson>;
+}
+
+export const lessonsApi: LessonsApi = {
+  create: (agentId, text, mode) =>
+    fetch(`${API_URL}/lessons`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent_id: agentId, text, mode }),
+    }).then((r) => json<Lesson[]>(r)),
+  decide: (id, change) =>
+    fetch(`${API_URL}/lessons/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(change),
+    }).then((r) => json<Lesson>(r)),
+};
+
+/* ---------------------------------------------------------------- memory & Ask ATLAS (docs/MEMORY.md) */
+
+export interface MemoryApi {
+  thread(node: string): Promise<AskMessage[]>;
+  ask(node: string, question: string): Promise<AskMessage[]>;
+  clear(node: string): Promise<unknown>;
+  notes(node: string): Promise<KnowledgeNote[]>;
+  addNote(node: string, text: string, source?: "direct" | "ask"): Promise<KnowledgeNote>;
+  updateNote(id: string, change: { status?: KnowledgeNote["status"]; text?: string }): Promise<KnowledgeNote>;
+  index(node: string, q?: string): Promise<MemoryRef[]>;
+}
+
+export const memoryApi: MemoryApi = {
+  thread: (node) => fetch(`${API_URL}/ask?node=${encodeURIComponent(node)}`, { cache: "no-store" }).then((r) => json<AskMessage[]>(r)),
+  ask: (node, question) =>
+    fetch(`${API_URL}/ask`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ node, question }) }).then((r) =>
+      json<AskMessage[]>(r),
+    ),
+  clear: (node) => fetch(`${API_URL}/ask/clear?node=${encodeURIComponent(node)}`, { method: "POST" }).then((r) => json<unknown>(r)),
+  notes: (node) => fetch(`${API_URL}/knowledge?node=${encodeURIComponent(node)}&status=active`, { cache: "no-store" }).then((r) => json<KnowledgeNote[]>(r)),
+  addNote: (node, text, source = "direct") =>
+    fetch(`${API_URL}/knowledge`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ node, text, source }) }).then((r) =>
+      json<KnowledgeNote>(r),
+    ),
+  updateNote: (id, change) =>
+    fetch(`${API_URL}/knowledge/${encodeURIComponent(id)}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(change) }).then(
+      (r) => json<KnowledgeNote>(r),
+    ),
+  index: (node, q) => {
+    const p = new URLSearchParams({ node, limit: "40" });
+    if (q) p.set("q", q);
+    return fetch(`${API_URL}/memory?${p}`, { cache: "no-store" }).then((r) => json<MemoryRef[]>(r));
+  },
+};
 
 export const api = {
   state: () => fetch(`${API_URL}/state`, { cache: "no-store" }).then((r) => json<WorldState>(r)),

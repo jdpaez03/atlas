@@ -14,14 +14,16 @@ const CONN: Record<ConnStatus, { label: string; color: string; pulse: boolean }>
   mock: { label: "Simulated", color: "#a78bfa", pulse: true },
 };
 
-export type View = "missions" | "followups" | "monitor" | "usage";
+export type View = "ask" | "missions" | "followups" | "monitor" | "usage" | "lessons";
 
-function ViewSwitch({ view, onView, counts, highAlerts }: { view: View; onView: (v: View) => void; counts: { open: number; overdue: number }; highAlerts: number }) {
+function ViewSwitch({ view, onView, counts, highAlerts, proposedLessons = 0 }: { view: View; onView: (v: View) => void; counts: { open: number; overdue: number }; highAlerts: number; proposedLessons?: number }) {
   const tabs: { id: View; label: string; key: string }[] = [
+    { id: "ask", label: "Ask ATLAS", key: "0" },
     { id: "missions", label: "Missions", key: "1" },
     { id: "followups", label: "Follow-ups", key: "2" },
     { id: "monitor", label: "Monitor", key: "3" },
     { id: "usage", label: "Usage", key: "4" },
+    { id: "lessons", label: "Lessons", key: "5" },
   ];
   return (
     <div role="tablist" aria-label="View" className="flex shrink-0 items-center rounded-md border border-edge bg-black/30 p-0.5">
@@ -57,6 +59,11 @@ function ViewSwitch({ view, onView, counts, highAlerts }: { view: View; onView: 
                 {highAlerts}
               </span>
             )}
+            {t.id === "lessons" && proposedLessons > 0 && (
+              <span className="rounded-full bg-amber-400/20 px-1.5 text-[9.5px] leading-[16px] tracking-normal text-amber-200 tabular-nums" title={`${proposedLessons} lesson${proposedLessons === 1 ? "" : "s"} waiting for approval`}>
+                {proposedLessons}
+              </span>
+            )}
             <kbd className="hidden rounded border border-edge px-1 text-[8.5px] leading-[13px] text-mute 2xl:inline">{t.key}</kbd>
           </button>
         );
@@ -74,6 +81,7 @@ export function Header({
   onView,
   counts,
   highAlerts = 0,
+  proposedLessons = 0,
   inbox,
 }: {
   nodes: NodeDefinition[];
@@ -85,6 +93,7 @@ export function Header({
   counts: { open: number; overdue: number };
   /** open HIGH alerts → red count on the Monitor tab */
   highAlerts?: number;
+  proposedLessons?: number;
   /** the inbox status chip (renders nothing when the backend has no inbox) */
   inbox?: ReactNode;
 }) {
@@ -106,7 +115,7 @@ export function Header({
           </div>
         </div>
 
-        <ViewSwitch view={view} onView={onView} counts={counts} highAlerts={highAlerts} />
+        <ViewSwitch view={view} onView={onView} counts={counts} highAlerts={highAlerts} proposedLessons={proposedLessons} />
 
         {/* node switcher */}
         <nav className="flex min-w-0 flex-1 items-center justify-center gap-1" aria-label="Nodes">

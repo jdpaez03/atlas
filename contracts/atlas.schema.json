@@ -721,6 +721,69 @@
       "title": "ApprovalState",
       "type": "string"
     },
+    "AskMessage": {
+      "description": "One turn of the \"Ask ATLAS\" conversation (docs/MEMORY.md).",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "node": {
+          "default": "corporate",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "human",
+            "atlas"
+          ],
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "refs": {
+          "items": {
+            "$ref": "#/$defs/MemoryRef"
+          },
+          "type": "array"
+        },
+        "remember": {
+          "description": "facts from the human's message worth saving",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "suggest_mission": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "an objective to launch when it needs new work"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "node",
+        "role",
+        "text",
+        "refs",
+        "remember",
+        "suggest_mission",
+        "created_at"
+      ],
+      "title": "AskMessage",
+      "type": "object"
+    },
     "AtlasEvent": {
       "description": "Every event carries a human-readable `summary` for the Activity Feed\nand a typed `payload` for the widgets that react to it.",
       "properties": {
@@ -1572,6 +1635,7 @@
         "rock.updated",
         "brief.ready",
         "audit.recorded",
+        "lesson.upserted",
         "log"
       ],
       "title": "EventType",
@@ -1772,6 +1836,178 @@
         "updated_at"
       ],
       "title": "FollowUp",
+      "type": "object"
+    },
+    "KnowledgeNote": {
+      "description": "A fact the human told ATLAS about their world (docs/MEMORY.md): dated, per node, given to every run.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "node": {
+          "default": "corporate",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "source": {
+          "default": "direct",
+          "enum": [
+            "direct",
+            "ask"
+          ],
+          "type": "string"
+        },
+        "status": {
+          "default": "active",
+          "enum": [
+            "active",
+            "retired"
+          ],
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "node",
+        "text",
+        "source",
+        "status",
+        "created_at"
+      ],
+      "title": "KnowledgeNote",
+      "type": "object"
+    },
+    "Lesson": {
+      "description": "A durable preference the human taught an agent (docs/LESSONS.md). Proposed lessons wait for approval;\nactive ones are added to that agent's instructions in every future run.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "description": "agent id, or '*' for every agent",
+          "type": "string"
+        },
+        "text": {
+          "description": "the rule, as the agent will read it",
+          "type": "string"
+        },
+        "comment": {
+          "default": "",
+          "description": "the human's original comment",
+          "type": "string"
+        },
+        "status": {
+          "default": "proposed",
+          "enum": [
+            "proposed",
+            "active",
+            "dismissed",
+            "retired"
+          ],
+          "type": "string"
+        },
+        "origin": {
+          "default": "comment",
+          "enum": [
+            "comment",
+            "direct"
+          ],
+          "type": "string"
+        },
+        "node": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "only in this node; None = every node"
+        },
+        "replaces": {
+          "description": "lesson ids retired when this one is approved",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "decided_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "agent_id",
+        "text",
+        "comment",
+        "status",
+        "origin",
+        "node",
+        "replaces",
+        "created_at",
+        "decided_at"
+      ],
+      "title": "Lesson",
+      "type": "object"
+    },
+    "MemoryRef": {
+      "description": "An earlier mission / brief / digest an answer drew on.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "mission",
+            "brief",
+            "digest"
+          ],
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "date": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "date"
+      ],
+      "title": "MemoryRef",
       "type": "object"
     },
     "MessageType": {
@@ -2021,6 +2257,13 @@
           },
           "type": "array"
         },
+        "topics": {
+          "description": "projects, areas and people this mission is about",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "audit_summary": {
           "default": "",
           "description": "what AUDITOR checked and what it found (system-written)",
@@ -2055,6 +2298,7 @@
         "version",
         "deliverables",
         "documents",
+        "topics",
         "audit_summary",
         "untraced",
         "created_at"
@@ -2582,6 +2826,12 @@
           },
           "type": "array"
         },
+        "lessons": {
+          "items": {
+            "$ref": "#/$defs/Lesson"
+          },
+          "type": "array"
+        },
         "last_seq": {
           "default": 0,
           "type": "integer"
@@ -2606,6 +2856,7 @@
         "rocks",
         "briefs",
         "audits",
+        "lessons",
         "last_seq"
       ],
       "title": "WorldState",
@@ -2671,6 +2922,12 @@
     },
     "Audit": {
       "$ref": "#/$defs/Audit"
+    },
+    "KnowledgeNote": {
+      "$ref": "#/$defs/KnowledgeNote"
+    },
+    "AskMessage": {
+      "$ref": "#/$defs/AskMessage"
     },
     "WorldState": {
       "$ref": "#/$defs/WorldState"

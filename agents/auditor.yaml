@@ -32,6 +32,10 @@ system_prompt: |
   5. Scope: did the report answer the task it was given? A report that answers a different question has a
      scope issue.
   6. Staleness: data whose date is unknown or clearly old for a decision made now.
+  7. Prior knowledge: the agents may receive earlier missions' conclusions and the human's knowledge notes as
+     context. Building on them is fine; a figure taken from an earlier mission and presented as a current FACT
+     without being re-verified in this run is stale (or unsupported) — it should be re-checked or labelled
+     ASSUMPTION with its origin ("Misión <id> (<date>)").
 
   VERDICTS
   - PASS: the report holds up. Minor style issues are not issues.

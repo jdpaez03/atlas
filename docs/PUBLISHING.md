@@ -71,6 +71,22 @@ PAGA: Produkt / Graphik) are installed everywhere, set them in `brand.yaml`. The
 
 The document labels ("Resumen ejecutivo", "Notas y fuentes", "Fuente") are in Spanish.
 
+## Style settings (per document)
+
+SCRIBE sets a `style` on each document, usually because of an approved lesson (docs/LESSONS.md):
+
+| Setting | Effect | Default |
+| --- | --- | --- |
+| `deck_density` | `airy` / `standard` / `compact`: text size on slides | `standard` |
+| `table_rows_per_slide` | long deck tables continue on the next slide instead of being cut (4-14) | 8 |
+| `agenda` | an agenda slide listing the sections, after the cover | off |
+| `toc` | a table of contents with page numbers in the PDF | off |
+| `chart_data_labels` | values printed on bars and points (PDF and deck) | off |
+| `section_numbers` | 01, 02… before PDF sections | on |
+
+SCRIBE's PAGA prompt lives privately in `<ATLAS_LOCAL_DIR>/agents/scribe.md`. It replaces the public prompt in
+`agents/scribe.yaml`.
+
 ## Settings
 
 | Variable | Default | |

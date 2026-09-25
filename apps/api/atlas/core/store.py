@@ -61,6 +61,7 @@ from .models import (
     EventType,
     Evidence,
     FollowUp,
+    Lesson,
     MessageType,
     Mission,
     MissionPhase,
@@ -115,6 +116,7 @@ _COLLECTIONS: dict[str, tuple[str, type[BaseModel], str]] = {
     "rock": ("rocks", RockStatus, "id"),
     "brief": ("briefs", Brief, "id"),
     "audit": ("audits", Audit, "id"),
+    "lesson": ("lessons", Lesson, "id"),
 }
 
 
@@ -985,6 +987,27 @@ class WorldStore:
             return self.registry.get("auditor").id
         except RegistryError:
             return None
+
+    # -- lessons (docs/LESSONS.md; the file in atlas-local is the source of truth, see live/lessons.py) --
+
+    def lessons(self, *, agent_id: str | None = None, status: str | None = None) -> list[Lesson]:
+        return [x for x in self._state.lessons if (agent_id is None or x.agent_id == agent_id)
+                and (status is None or x.status == status)]
+
+    def lesson(self, lesson_id: str) -> Lesson:
+        return self._find(self._state.lessons, lesson_id, "lesson")
+
+    async def upsert_lesson(self, lesson: Lesson, summary: str) -> Lesson:
+        if lesson.agent_id != "*":
+            self.registry.get(lesson.agent_id)
+        _upsert(self._state.lessons, lesson)
+        await self._emit(EventType.LESSON_UPSERTED, summary, {"lesson": _dump(lesson)},
+                         agent_id=lesson.agent_id if lesson.agent_id != "*" else None)
+        return lesson
+
+    def load_lessons(self, lessons: list[Lesson]) -> None:
+        """Seed the lessons from their file at startup (no events)."""
+        self._state.lessons = list(lessons)
 
     def audits_for(self, mission_id: str) -> list[Audit]:
         return [a for a in self._state.audits if a.mission_id == mission_id]

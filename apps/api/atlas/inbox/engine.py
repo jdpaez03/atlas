@@ -47,6 +47,7 @@ from ..core.models import (
 from ..core.rungate import RunGate
 from ..core.store import NotFoundError, StoreError, WorldStore, _person
 from ..live.evidence import record
+from ..live.lessons import with_lessons
 from ..live.llm import LLMError, Meter
 from ..live.runtime import MissionScope
 from .drafts import write_eml
@@ -700,7 +701,7 @@ class InboxEngine:
             return errors
 
         data = await self.live.executor(self._backend(scope)).structured(
-            scope, model=hermes.model, system=[hermes.role_prompt, EXTRACT_NOTE],
+            scope, model=hermes.model, system=with_lessons([hermes.role_prompt, EXTRACT_NOTE], scope.store, hermes.id, scope.node),
             prompt=extraction_message(batch, today=self.today(), tz=self.tz), tool=RECORD_FOLLOWUPS_TOOL,
             max_tokens=scope.config.max_tokens, validate=validate, attempts=2,
         )
@@ -891,7 +892,7 @@ class InboxEngine:
             return errors
 
         data = await self.live.executor(self._backend(scope)).structured(
-            scope, model=alfred.model, system=[alfred.role_prompt, DRAFT_NOTE], prompt=prompt,
+            scope, model=alfred.model, system=with_lessons([alfred.role_prompt, DRAFT_NOTE], scope.store, alfred.id, scope.node), prompt=prompt,
             tool=DRAFT_EMAIL_TOOL, max_tokens=4000, validate=validate, attempts=2,
         )
         if data is None:

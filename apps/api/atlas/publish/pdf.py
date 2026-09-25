@@ -40,9 +40,10 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
+from reportlab.platypus.tableofcontents import TableOfContents
 
 from .brand import Brand
-from .spec import plain
+from .spec import normalize_style, plain
 
 W, H = letter
 ML, MR, MT, MB = 70, 58, 70, 64
@@ -299,6 +300,17 @@ def chart_flow(ch: dict[str, Any], brand: Brand, st: Styles, width: float) -> li
     values = [v for row in data for v in row if v is not None]
     if values and min(values) >= 0:
         c.valueAxis.valueMin = 0
+    if getattr(st, "chart_labels", False):  # style.chart_data_labels
+        def label(v: Any) -> str:
+            return fmt_num(round(v, 2)) if isinstance(v, (int, float)) else ""
+        if ch["chart_type"] == "line":
+            c.lineLabelFormat = label
+            c.lineLabels.fontName, c.lineLabels.fontSize = st.f["regular"], 6.3
+            c.lineLabels.dy = 6
+        else:
+            c.barLabelFormat = label
+            c.barLabels.fontName, c.barLabels.fontSize = st.f["regular"], 6.3
+            c.barLabels.nudge = 6
     d.add(c)
     if len(series) > 1:
         lg = Legend()
@@ -355,6 +367,14 @@ def blocks_flow(blocks: list[dict[str, Any]], brand: Brand, st: Styles, width: f
         elif t == "chart":
             out.append(KeepTogether(chart_flow(b["chart"], brand, st, width)))
     return out
+
+
+class _TocDoc(BaseDocTemplate):
+    """Registers section headings for the optional table of contents (style.toc)."""
+
+    def afterFlowable(self, flowable: Any) -> None:
+        if isinstance(flowable, Paragraph) and getattr(flowable, "_toc", False):
+            self.notify("TOCEntry", (0, flowable.getPlainText(), self.page))
 
 
 def heading(num: str, title: str, st: Styles) -> list[Any]:
@@ -449,7 +469,16 @@ def render_pdf(spec: dict[str, Any], brand: Brand, meta: DocMeta, out: Path) -> 
         canvas.drawRightString(W - MR, MB - 32, f"{doc.page:02d}")
         canvas.restoreState()
 
-    doc = BaseDocTemplate(str(out), pagesize=letter, leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB,
+    style = normalize_style(spec.get("style"))
+    st.chart_labels = style["chart_data_labels"]
+    numbered = style["section_numbers"]
+
+    def h1(num: str, title: str) -> list[Any]:
+        items = heading(num if numbered else "", title, st)
+        items[1]._toc = True
+        return items
+
+    doc = _TocDoc(str(out), pagesize=letter, leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB,
                           title=short_title, author=brand.company or "ATLAS", subject=spec.get("doc_kind", ""),
                           creator="ATLAS")
     doc.addPageTemplates([
@@ -458,9 +487,15 @@ def render_pdf(spec: dict[str, Any], brand: Brand, meta: DocMeta, out: Path) -> 
                                               topPadding=6, bottomPadding=0)], onPage=page),
     ])
     story: list[Any] = [NextPageTemplate("body"), Spacer(1, 1), PageBreak()]
+    if style["toc"]:
+        toc = TableOfContents()
+        toc.levelStyles = [ParagraphStyle("toc0", fontName=f["light"], fontSize=11.5, leading=22,
+                                          textColor=prim, leftIndent=0)]
+        toc.dotsMinLevel = 0
+        story += [*heading("", "*Contenido*", st), Spacer(1, 6), toc, PageBreak()]
 
     # executive summary
-    story += heading("", "Resumen *ejecutivo*", st)
+    story += h1("", "Resumen *ejecutivo*")
     for i, para in enumerate(spec["summary"]):
         story.append(Paragraph(rich(para, f), st.lead if i == 0 else st.body))
     if spec.get("highlights"):
@@ -468,12 +503,12 @@ def render_pdf(spec: dict[str, Any], brand: Brand, meta: DocMeta, out: Path) -> 
 
     for n, sec in enumerate(spec["sections"], 1):
         story += [CondPageBreak(H * 0.28), Spacer(1, 16)]
-        story.append(KeepTogether(heading(f"{n:02d}", sec["title"], st) + blocks_flow(sec["blocks"][:1], brand, st,
+        story.append(KeepTogether(h1(f"{n:02d}", sec["title"]) + blocks_flow(sec["blocks"][:1], brand, st,
                                                                                          width)))
         story += blocks_flow(sec["blocks"][1:], brand, st, width)
 
     # notes, sources, verification
-    story += [PageBreak(), *heading("", "Notas y *fuentes*", st)]
+    story += [PageBreak(), *h1("", "Notas y *fuentes*")]
     if spec.get("sources"):
         story += [Paragraph("Fuentes", st.caption), bullets_flow(spec["sources"], brand, st)]
     for title, lines in meta.notes.items():
@@ -482,5 +517,8 @@ def render_pdf(spec: dict[str, Any], brand: Brand, meta: DocMeta, out: Path) -> 
     story += [Spacer(1, 10), Rule(width, rule),
               Paragraph(rich(f"{brand.prepared_by} · {meta.date_text}. Las cifras provienen de los reportes de los "
                              "agentes y de la evidencia registrada por el sistema en la misión.", f), st.source)]
-    doc.build(story)
+    if style["toc"]:
+        doc.multiBuild(story)  # two passes: the contents page needs the page numbers
+    else:
+        doc.build(story)
     return out

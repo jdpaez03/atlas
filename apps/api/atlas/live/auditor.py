@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..core.models import AgentReport, Audit, AuditIssue, AuditVerdict, ClaimKind, Evidence, MissionReport
+from .lessons import with_lessons
 from .llm import LLMError, current_agent
 from .prompts import render_report
 
@@ -208,7 +209,7 @@ async def run_audit(live: Any, reports: list[AgentReport], *, final: bool) -> li
     token = current_agent.set(auditor.id)
     try:
         data = await live.executor.structured(
-            scope, model=auditor.model, system=[auditor.role_prompt], prompt=audit_message(
+            scope, model=auditor.model, system=with_lessons([auditor.role_prompt], scope.store, auditor.id, scope.node), prompt=audit_message(
                 scope.objective, items, live._notes()),
             tool=SUBMIT_AUDIT_TOOL, max_tokens=scope.config.audit_max_tokens, validate=validate, attempts=2,
         )

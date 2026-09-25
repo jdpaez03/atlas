@@ -25,6 +25,7 @@ const KIND: Record<EventType, { tag: string; color: string }> = {
   "rock.updated": { tag: "RCK", color: "#fbbf24" },
   "brief.ready": { tag: "BRF", color: "#fde68a" },
   "audit.recorded": { tag: "AUDIT", color: "#f0abfc" },
+  "lesson.upserted": { tag: "LESSON", color: "#cbd5e1" },
   log: { tag: "LOG", color: "#64748b" },
 };
 

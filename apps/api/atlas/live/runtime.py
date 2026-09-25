@@ -37,6 +37,7 @@ from .agent_loader import ModelConfig, ResolvedAgent
 from .context import NodeContext
 from .evidence import apply_claim_check, record
 from .files import FileSandbox, FileTools
+from .lessons import lessons_block
 from .llm import LLMError, Meter, block_to_param, response_text, tool_uses
 from .prompts import (
     BROWSER_TOOLS,
@@ -137,6 +138,7 @@ class MissionScope:
     orchestrator: ResolvedAgent
     auditor: ResolvedAgent | None = None  # AUDITOR, when registered and available (never planned)
     publisher: ResolvedAgent | None = None  # SCRIBE: institutional documents from the final report
+    memory: str = ""  # prior knowledge for this mission (docs/MEMORY.md): related earlier work + human notes
     touched: set[str] = field(default_factory=set)
     consulted: bool = False
     _ctx: dict[str, str] = field(default_factory=dict)
@@ -313,11 +315,12 @@ class AgentRun:
 
     def _task_message(self) -> str:
         sc = self.scope
-        return task_message(
+        msg = task_message(
             sc.objective, sc.node, self.task, self.dep_reports,
             consultable=[f"{a} ({sc.name(a)})" for a in self._consultable()],
             approval_required=self.task.requires_approval, files_note=self._files_note(),
         )
+        return msg + ("\n\n" + sc.memory if sc.memory else "")
 
     async def _file_tool(self, name: str, data: dict[str, Any]) -> tuple[str, bool]:
         """Run a file tool in a worker thread; the activity line and the evidence come from this real call."""
@@ -372,7 +375,8 @@ class AgentRun:
         await s.update_task(task.id, status=TaskStatus.IN_PROGRESS, progress=0.05)
         await self._activity(f"Working on '{task.title}'")
         system = system_blocks(
-            self.agent.role_prompt, PROTOCOL, context_block(self.scope.context_for(self.agent.agent))
+            self.agent.role_prompt, PROTOCOL, context_block(self.scope.context_for(self.agent.agent)),
+            lessons_block(self.store, self.aid, self.scope.node),
         )
         tools = self._tools()
         messages: list[dict[str, Any]] = [{"role": "user", "content": self._task_message()}]
@@ -516,7 +520,8 @@ class AgentRun:
         resp = await sc.meter.create(
             model=sc.config.models.fast,
             max_tokens=sc.config.consult_max_tokens,
-            system=system_blocks(target.role_prompt, CONSULT_PROTOCOL, context_block(sc.context_for(target.agent))),
+            system=system_blocks(target.role_prompt, CONSULT_PROTOCOL, context_block(sc.context_for(target.agent)),
+                                 lessons_block(sc.store, target.id, sc.node)),
             messages=[{"role": "user", "content": consult_message(sc.objective, self.agent.agent.name, question)}],
         )
         return response_text(resp)

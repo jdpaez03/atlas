@@ -249,6 +249,9 @@ SUBMIT_MISSION_REPORT_TOOL: dict[str, Any] = {
             "needs_human_attention": _STR_LIST,
             "next_actions": _STR_LIST,
             "references": _STR_LIST,
+            "topics": {"type": "array", "items": {"type": "string"},
+                       "description": "2-8 short names of the projects, areas and people this mission is about "
+                                      "(e.g. 'Balcones 800', 'Torre Acqua', 'crédito puente') — the memory index"},
         },
         "required": ["executive_summary", "objective_status", "key_findings"],
     },
