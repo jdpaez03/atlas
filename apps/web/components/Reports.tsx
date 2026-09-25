@@ -19,6 +19,9 @@ const EVIDENCE: Record<Evidence["kind"], { label: string; color: string }> = {
   email_read: { label: "Email", color: "#f0abfc" },
   draft_created: { label: "Draft", color: "#34d399" },
   external_call: { label: "external call", color: "#fb923c" },
+  browser_visit: { label: "Opened", color: "#67e8f9" },
+  browser_action: { label: "Browser", color: "#67e8f9" },
+  browser_download: { label: "Download", color: "#34d399" },
 };
 
 export function EvidenceIcon({ kind, color, size = 12 }: { kind: Evidence["kind"]; color: string; size?: number }) {
@@ -87,6 +90,22 @@ export function EvidenceIcon({ kind, color, size = 12 }: { kind: Evidence["kind"
           <path d="M5.75 8l1.6 1.6 3-3.2" />
         </svg>
       );
+    case "browser_visit":
+    case "browser_action":
+      return (
+        <svg {...p} aria-hidden>
+          <rect x="1.75" y="2.25" width="12.5" height="11.5" rx="1.25" />
+          <path d="M1.75 5.25h12.5M4 3.75h.01M5.75 3.75h.01" />
+          {kind === "browser_action" && <path d="M7 7.5l1.2 4.5.9-1.9 1.9-.9z" />}
+        </svg>
+      );
+    case "browser_download":
+      return (
+        <svg {...p} aria-hidden>
+          <path d="M8 2v8M4.75 7L8 10.25 11.25 7" />
+          <path d="M2.25 11v2.75h11.5V11" />
+        </svg>
+      );
     case "external_call":
       return (
         <svg {...p} aria-hidden>
@@ -103,6 +122,8 @@ function shortRef(e: Evidence, agents: Map<string, AgentDefinition>): string {
   // external_call: an agent id, or the endpoint/command it called
   if (e.kind === "external_call" && agents.has(e.ref)) return agents.get(e.ref)!.name;
   if (e.kind === "approval") return e.ref.length > 14 ? `${e.ref.slice(0, 12)}…` : e.ref;
+  // browser_action: what was done (click "Exportar"), not the page URL
+  if (e.kind === "browser_action") return e.detail || e.ref;
   if (e.kind === "web_search") return `“${e.ref}”`;
   // email_read / draft_created refs are subjects (or message ids), not paths.
   if (e.kind === "email_read" || e.kind === "draft_created") return e.ref;

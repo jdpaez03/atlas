@@ -32,12 +32,14 @@ from ..core.models import (
     TaskStatus,
 )
 from ..core.store import StoreError, WorldStore
+from . import browser as browser_mod
 from .agent_loader import ModelConfig, ResolvedAgent
 from .context import NodeContext
 from .evidence import apply_claim_check, record
 from .files import FileSandbox, FileTools
 from .llm import LLMError, Meter, block_to_param, response_text, tool_uses
 from .prompts import (
+    BROWSER_TOOLS,
     CONSULT_PROTOCOL,
     FILE_TOOLS,
     PROTOCOL,
@@ -226,6 +228,10 @@ class AgentRun:
         self.approval_requested = False
         self.deliverables: list[Attachment] = []
         self._files: FileTools | None = None
+        self.approved = False  # the human approved a request_approval of this run (unlocks confirm=true clicks)
+        self._browser: browser_mod.BrowserSession | None = None
+        cfg = self.agent.agent.browser
+        self.browser_cfg = browser_mod.resolve(self.aid, cfg) if cfg is not None else None
 
     @property
     def aid(self) -> str:
@@ -238,12 +244,32 @@ class AgentRun:
     def _consultable(self) -> list[str]:
         return [a for a in self.scope.agents if a != self.aid]
 
+    @property
+    def browser_problem(self) -> str | None:
+        """Why a configured browser can't be used (None = usable or not configured)."""
+        if self.browser_cfg is None:
+            return None
+        if not browser_mod.playwright_installed():
+            return "Playwright is not installed on the ATLAS machine (run `uv sync` in apps/api)"
+        return self.browser_cfg.problem
+
+    @property
+    def has_browser(self) -> bool:
+        return self.browser_cfg is not None and self.browser_problem is None
+
+    @property
+    def max_turns(self) -> int:
+        base = self.scope.config.max_turns
+        return max(base, self.browser_cfg.max_turns) if self.has_browser and self.browser_cfg else base
+
     def _tools(self) -> list[dict[str, Any]]:
         cfg = self.scope.config
         tools: list[dict[str, Any]] = []
         if self._consultable() and cfg.max_consults > 0:
             tools.append(consult_tool(self._consultable()))
         tools += [*FILE_TOOLS, REQUEST_APPROVAL_TOOL, SUBMIT_REPORT_TOOL]
+        if self.has_browser:
+            tools += BROWSER_TOOLS
         if cfg.web_search and "web_search" in self.agent.agent.tools:
             tools.append(web_search_tool(cfg.web_search_tool, cfg.web_search_max_uses))
         return tools
@@ -266,7 +292,13 @@ class AgentRun:
 
     def _files_note(self) -> str:
         sb = self.files.sb
-        return files_note([str(r) for r in sb.user_roots], str(sb.attachments), str(sb.outputs))
+        note = files_note([str(r) for r in sb.user_roots], str(sb.attachments), str(sb.outputs))
+        if self.has_browser and self.browser_cfg is not None:
+            note += "\n\n" + browser_mod.browser_note(self.browser_cfg)
+        elif self.browser_cfg is not None:
+            note += (f"\n\nYour browser is configured but unavailable: {self.browser_problem}. "
+                     "Say so in limitations if the task needed it.")
+        return note
 
     def _task_message(self) -> str:
         sc = self.scope
@@ -292,6 +324,36 @@ class AgentRun:
             self.deliverables.append(res.attachment)
         return res.text, res.ok
 
+    # -- browser ---------------------------------------------------------------
+
+    async def _browser_tool(self, name: str, data: dict[str, Any]) -> tuple[str, bool]:
+        """Run a browser tool on this run's dedicated browser; evidence comes from what really happened."""
+        if not self.has_browser or self.browser_cfg is None:
+            return f"Error: no browser for this agent ({self.browser_problem or 'not configured'}).", False
+        if self._browser is None:
+            self._browser = browser_mod.BrowserSession(
+                self.browser_cfg, outputs=self.files.sb.outputs, mission_id=self.scope.mission_id)
+        await self._activity(browser_mod.activity(name, data))
+        try:
+            res = await self._browser.run(name, data, approved=self.approved)
+        except Exception as exc:
+            log.exception("browser tool %s failed", name)
+            await self._evidence("browser_action", name, str(exc), ok=False)
+            return f"Error: {type(exc).__name__}: {exc}", False
+        for kind, ref, detail, ok in res.evidence:
+            await self._evidence(kind, ref, detail, ok)
+        self.deliverables += res.attachments
+        return res.text, res.ok
+
+    async def close(self) -> None:
+        """Release what the run opened (the browser)."""
+        if self._browser is not None:
+            try:
+                await self._browser.close()
+            except Exception:
+                log.exception("closing the browser failed")
+            self._browser = None
+
     # -- the loop ------------------------------------------------------------
 
     async def run(self) -> AgentReport:
@@ -306,10 +368,11 @@ class AgentRun:
         force = False
         nudged = False
         last_text = ""
-        for turn in range(cfg.max_turns):
-            final = turn == cfg.max_turns - 1
+        max_turns = self.max_turns
+        for turn in range(max_turns):
+            final = turn == max_turns - 1
             if turn:  # the activity line only changes on real tool calls (never from model text)
-                await s.update_task(task.id, progress=round(min(0.9, 0.05 + 0.85 * turn / cfg.max_turns), 2))
+                await s.update_task(task.id, progress=round(min(0.9, 0.05 + 0.85 * turn / max_turns), 2))
             kwargs: dict[str, Any] = {
                 "model": self.agent.model,
                 "max_tokens": cfg.max_tokens,
@@ -350,6 +413,9 @@ class AgentRun:
                     results.append(await self._request_approval(tu.id, data))
                 elif name in FileTools.NAMES:
                     out, ok = await self._file_tool(name, data)
+                    results.append(_tool_result(tu.id, out, error=not ok))
+                elif name in browser_mod.NAMES:
+                    out, ok = await self._browser_tool(name, data)
                     results.append(_tool_result(tu.id, out, error=not ok))
                 else:
                     results.append(_tool_result(tu.id, f"Unknown tool '{name}'.", error=True))
@@ -473,6 +539,7 @@ class AgentRun:
         await self._activity("Awaiting human approval", AgentStatus.WAITING)
         decided = await s.wait_for_decision(approval.id)
         approved = decided.state == ApprovalState.APPROVED.value
+        self.approved = self.approved or approved
         await self._evidence(
             "approval", approval.id, f"{decided.state}: {title}" + (f" · {decided.decision_note}"
                                                                     if decided.decision_note else ""),

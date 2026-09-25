@@ -29,6 +29,7 @@ _URL_RE = re.compile(r"\b(?:https?|ftp)://\S+|\bwww\.\S+", re.IGNORECASE)
 _VERBS = {
     "file_listed": "listed", "file_read": "read", "file_written": "wrote", "web_search": "searched the web ·",
     "web_fetch": "fetched", "consult": "consulted", "approval": "requested approval ·",
+    "browser_visit": "opened", "browser_action": "in the browser:", "browser_download": "downloaded",
 }
 
 
@@ -49,7 +50,10 @@ async def record(store: WorldStore, *, mission_id: str, task_id: str | None, age
                         ref=ref, detail=detail, ok=ok)
     if summary is None:
         name = store.registry.get(agent_id).name if agent_id != "human" else "Human"
-        shown = _base(ref) if kind.startswith("file_") and ref and not ref.startswith("(") else ref
+        shown = (_base(ref) if (kind.startswith("file_") or kind == "browser_download") and ref
+                 and not ref.startswith("(") else ref)
+        if kind == "browser_action":
+            shown = detail or ref
         if kind == "consult":
             shown = store.registry.get(ref).name if ref in {a.id for a in store.registry.all()} else ref
         summary = _short(f"{name} {_VERBS.get(kind, kind)} {shown}", 140)

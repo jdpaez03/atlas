@@ -82,4 +82,8 @@ class ApiExecutor:
         return None
 
     async def run_task(self, scope: MissionScope, task: Task, dep_reports: list[str]) -> AgentReport:
-        return await AgentRun(scope, task, dep_reports).run()
+        run = AgentRun(scope, task, dep_reports)
+        try:
+            return await run.run()
+        finally:
+            await run.close()

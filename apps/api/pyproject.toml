@@ -23,7 +23,11 @@ dependencies = [
   "httpx>=0.28.1",
   "tzdata>=2026.4",
   "ruamel-yaml>=0.19.1",
+  "playwright>=1.56",
 ]
+
+[project.scripts]
+atlas-browser = "atlas.live.browser:main"
 
 [dependency-groups]
 dev = [

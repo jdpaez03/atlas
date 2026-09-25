@@ -247,6 +247,10 @@ export interface AgentDefinition {
    * false = never assigned tasks by the planner (e.g. AUDITOR)
    */
   plannable: boolean;
+  /**
+   * opt-in dedicated browser (docs/BROWSER.md)
+   */
+  browser: BrowserConfig | null;
 }
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema
@@ -260,6 +264,31 @@ export interface AgentPermissions {
   can_message: string[];
   requires_approval_for: ApprovalReason[];
   max_parallel_tasks: number;
+}
+/**
+ * Opt-in browser for one agent: its own dedicated, persistent browser profile (never the user's Chrome).
+ *
+ * The human logs into the site once in that profile (`atlas-browser login <agent>`); the agent then opens,
+ * reads, clicks, fills filters, extracts tables and downloads files, only on `allowed_domains`.
+ * Strings may use ${ENV_VAR} so personal sites stay out of the public repo.
+ *
+ * This interface was referenced by `AtlasContracts`'s JSON-Schema
+ * via the `definition` "BrowserConfig".
+ */
+export interface BrowserConfig {
+  /**
+   * profile folder in <ATLAS_LOCAL_DIR>/browser/
+   */
+  profile: string;
+  start_url: string;
+  /**
+   * hosts the agent may open (subdomains included); comma lists allowed
+   */
+  allowed_domains: string[];
+  /**
+   * turn budget of tasks that use the browser
+   */
+  max_turns: number;
 }
 /**
  * Live runtime state of one agent (what the Agent Board renders).
@@ -465,7 +494,10 @@ export interface Evidence {
     | "approval"
     | "email_read"
     | "draft_created"
-    | "external_call";
+    | "external_call"
+    | "browser_visit"
+    | "browser_action"
+    | "browser_download";
   /**
    * path, URL, agent id or approval id
    */

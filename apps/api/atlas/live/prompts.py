@@ -328,6 +328,59 @@ WRITE_DELIVERABLE_TOOL: dict[str, Any] = {
 FILE_TOOLS: list[dict[str, Any]] = [LIST_FILES_TOOL, SEARCH_FILES_TOOL, READ_FILE_TOOL, WRITE_DELIVERABLE_TOOL]
 
 
+def _btool(name: str, description: str, props: dict[str, Any] | None = None,
+           required: list[str] | None = None) -> dict[str, Any]:
+    schema: dict[str, Any] = {"type": "object", "properties": props or {}}
+    if required:
+        schema["required"] = required
+    return {"name": name, "description": description, "input_schema": schema}
+
+
+_REF = {"type": "string", "description": "element ref from the last browser_snapshot, e.g. e12 or f1e3"}
+_CONFIRM = {"type": "boolean", "description": "true only after request_approval was approved for this click"}
+
+# Only for agents with a `browser:` block (docs/BROWSER.md). The agent's dedicated, already signed-in profile.
+BROWSER_TOOLS: list[dict[str, Any]] = [
+    _btool("browser_open", "Open a page of the allowed sites in your dedicated browser (no url = the start page).",
+           {"url": {"type": "string"}}),
+    _btool("browser_snapshot",
+           "Read the current page: URL, title, visible text (paged with offset) and the interactive elements "
+           "with refs (e12) to click / type / select. Call it after every change of page.",
+           {"offset": {"type": "integer", "minimum": 0}, "max_chars": {"type": "integer", "minimum": 500},
+            "filter": {"type": "string", "description": "only elements whose text contains this"},
+            "max_elements": {"type": "integer", "minimum": 10},
+            "elements_only": {"type": "boolean", "description": "skip the page text"}}),
+    _btool("browser_click", "Click an element (button, link, tab, menu item, checkbox, option).",
+           {"ref": _REF, "confirm": _CONFIRM}, ["ref"]),
+    _btool("browser_type", "Type into a field (search box, filter). Never for passwords.",
+           {"ref": _REF, "text": {"type": "string"},
+            "submit": {"type": "boolean", "description": "press Enter afterwards"},
+            "clear": {"type": "boolean", "description": "replace the current value (default true)"}},
+           ["ref", "text"]),
+    _btool("browser_select", "Choose an option of a <select> dropdown (visible text or value). Custom "
+           "dropdowns: click them, snapshot, click the option.",
+           {"ref": _REF, "option": {"type": "string"}}, ["ref", "option"]),
+    _btool("browser_press", "Press a key on the page (Enter, Escape, Tab, PageDown, ArrowDown ...).",
+           {"key": {"type": "string"}}, ["key"]),
+    _btool("browser_scroll", "Scroll the page (loads lazy lists) or bring an element into view.",
+           {"direction": {"type": "string", "enum": ["down", "up"]}, "ref": _REF}),
+    _btool("browser_wait", "Wait for the page (reports that take time to build), optionally until a text appears.",
+           {"seconds": {"type": "number", "minimum": 0.5, "maximum": 60}, "text": {"type": "string"}}),
+    _btool("browser_back", "Go back to the previous page."),
+    _btool("browser_tables",
+           "Extract the visible tables / grids of the page (preview). With save_as, save them to the mission "
+           "outputs as xlsx (all, one sheet each) or csv (one: give index).",
+           {"index": {"type": "integer", "minimum": 1}, "save_as": {"type": "string", "description": "file name"},
+            "format": {"type": "string", "enum": ["xlsx", "csv"]}}),
+    _btool("browser_download",
+           "Click an export / download button and save the file it produces to the mission outputs (then read it "
+           "with read_file). Waits up to wait_seconds (default 90).",
+           {"ref": _REF, "filename": {"type": "string", "description": "optional name to save it as"},
+            "wait_seconds": {"type": "number", "minimum": 5, "maximum": 300}, "confirm": _CONFIRM},
+           ["ref"]),
+]
+
+
 def web_search_tool(tool_type: str, max_uses: int = 5) -> dict[str, Any]:
     return {"type": tool_type, "name": "web_search", "max_uses": max_uses}
 

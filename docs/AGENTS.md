@@ -13,6 +13,7 @@ approval rules, node isolation, language; see [LIVE.md](LIVE.md)), so role promp
 | `alfred` | ALFRED | Execution / Operations | shared |
 | `auditor` | AUDITOR | Quality: checks every report against the evidence (never planned; docs/AUDITOR.md) | shared |
 | `eos-vision`, `eos-people`, `eos-data`, `eos-issues`, `eos-process`, `eos-traction` | EOS division | One specialist per EOS component (`claude_md`, prompts kept locally) | corporate |
+| `market-studies` | MERCATO | Market studies (`claude_md`, prompt kept locally); has a dedicated signed-in browser (docs/BROWSER.md) | corporate |
 
 Typical flow: **gather** (sofia and the EOS members) → **verify** (argos) → **analyze** (oracle) →
 **package** (alfred). ATLAS skips any stage the objective doesn't need and runs independent work in parallel.

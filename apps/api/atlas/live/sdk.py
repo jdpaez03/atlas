@@ -49,6 +49,7 @@ from .agent_loader import ResolvedAgent
 from .executor import Validator, invalid_input_message
 from .llm import LLMError, UsageLimitError
 from .prompts import (
+    BROWSER_TOOLS,
     CONSULT_PROTOCOL,
     FILE_TOOLS,
     PROTOCOL,
@@ -90,6 +91,10 @@ mcp__atlas__search_files, mcp__atlas__read_file, mcp__atlas__write_deliverable a
 Your ONLY file access is through those mcp__atlas__ file tools (read-only on the user's files; write_deliverable
 creates new files in the mission outputs). You have no shell and no other tool. Finish by calling
 mcp__atlas__submit_report; once it succeeds, stop (reply with one short line)."""
+
+SDK_BROWSER_NOTE = """
+You also have mcp__atlas__browser_* tools: your own dedicated browser, already signed into the allowed sites
+(this is NOT Claude in Chrome and not the user's browser). Downloads land in your outputs folder."""
 
 SDK_STEP_NOTE = """# Runtime (Claude Code session)
 Deliver your answer ONLY by calling the tool mcp__atlas__{name} (no other tools exist). If it returns an
@@ -376,7 +381,11 @@ class SubscriptionExecutor:
         return state["data"]
 
     async def run_task(self, scope: MissionScope, task: Task, dep_reports: list[str]) -> AgentReport:
-        return await SdkAgentRun(scope, task, dep_reports, self).run()
+        run = SdkAgentRun(scope, task, dep_reports, self)
+        try:
+            return await run.run()
+        finally:
+            await run.close()
 
     async def one_shot(self, scope: MissionScope, *, model: str, system: list[str], prompt: str) -> str:
         """A plain answer, no tools (consultations)."""
@@ -420,6 +429,10 @@ class SdkAgentRun(AgentRun):
             tools.append(ex.tool(spec["name"], spec["description"], spec["input_schema"], self._on_consult))
         for spec in FILE_TOOLS:
             tools.append(ex.tool(spec["name"], spec["description"], spec["input_schema"], self._file_handler(spec["name"])))
+        if self.has_browser:
+            for spec in BROWSER_TOOLS:
+                tools.append(ex.tool(spec["name"], spec["description"], spec["input_schema"],
+                                     self._browser_handler(spec["name"])))
         for spec, handler in ((REQUEST_APPROVAL_TOOL, self._on_approval), (SUBMIT_REPORT_TOOL, self._on_submit)):
             tools.append(ex.tool(spec["name"], spec["description"], spec["input_schema"], handler))
         return tools
@@ -429,6 +442,15 @@ class SdkAgentRun(AgentRun):
             if self.report is not None:
                 return _mcp_result("Your report is already submitted. Stop now.", error=True)
             text, ok = await self._file_tool(name, args)
+            return _mcp_result(text, error=not ok)
+
+        return handler
+
+    def _browser_handler(self, name: str) -> Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]:
+        async def handler(args: dict[str, Any]) -> dict[str, Any]:
+            if self.report is not None:
+                return _mcp_result("Your report is already submitted. Stop now.", error=True)
+            text, ok = await self._browser_tool(name, args)
             return _mcp_result(text, error=not ok)
 
         return handler
@@ -446,7 +468,7 @@ class SdkAgentRun(AgentRun):
     async def _on_submit(self, args: dict[str, Any]) -> dict[str, Any]:
         if self.report is not None:
             return _mcp_result("Your report is already submitted. Stop now.")
-        final = self.turns >= self.scope.config.max_turns - 1
+        final = self.turns >= self.max_turns - 1
         if self.task.requires_approval and not self.approval_requested and not final:
             return _mcp_result("This task requires human approval: call mcp__atlas__request_approval first.",
                                error=True)
@@ -456,20 +478,21 @@ class SdkAgentRun(AgentRun):
     async def run(self) -> AgentReport:
         from claude_agent_sdk import TextBlock, ToolUseBlock
 
-        s, cfg, task, sc = self.store, self.scope.config, self.task, self.scope
+        s, task, sc = self.store, self.task, self.scope
         await s.update_task(task.id, status=TaskStatus.IN_PROGRESS, progress=0.05)
         await self._activity(f"Working on '{task.title}'")
         web = web_enabled(sc, self.agent)
         system = [
             self.agent.role_prompt, PROTOCOL,
-            SDK_TASK_NOTE.format(web=", plus WebSearch and WebFetch for research" if web else ""),
+            SDK_TASK_NOTE.format(web=", plus WebSearch and WebFetch for research" if web else "")
+            + (SDK_BROWSER_NOTE if self.has_browser else ""),
             context_block(sc.context_for(self.agent.agent)),
         ]
         prompt = self._task_message()
         last_text = ""
         async with aclosing(self.executor.session(
             sc, model=self.agent.model, system=system, prompt=prompt, tools=self._mcp_tools(), web=web,
-            max_turns=cfg.max_turns, done=lambda: self.report is not None,
+            max_turns=self.max_turns, done=lambda: self.report is not None,
         )) as stream:
             async for msg in stream:
                 if msg.message_id is None or msg.message_id != self._message_id:  # the CLI may split a turn
@@ -481,7 +504,7 @@ class SdkAgentRun(AgentRun):
                     if isinstance(b, ToolUseBlock) and b.name in WEB_TOOLS:
                         await self._web_evidence(b.name, b.input or {})
                 if self.report is None and s.task(task.id).status == TaskStatus.IN_PROGRESS.value:
-                    progress = round(min(0.9, 0.05 + 0.85 * self.turns / cfg.max_turns), 2)
+                    progress = round(min(0.9, 0.05 + 0.85 * self.turns / self.max_turns), 2)
                     await s.update_task(task.id, progress=progress)
         if self.report is not None:
             return self.report

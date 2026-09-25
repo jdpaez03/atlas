@@ -154,6 +154,21 @@ class AgentPermissions(AtlasModel):
     max_parallel_tasks: int = 1
 
 
+class BrowserConfig(AtlasModel):
+    """Opt-in browser for one agent: its own dedicated, persistent browser profile (never the user's Chrome).
+
+    The human logs into the site once in that profile (`atlas-browser login <agent>`); the agent then opens,
+    reads, clicks, fills filters, extracts tables and downloads files, only on `allowed_domains`.
+    Strings may use ${ENV_VAR} so personal sites stay out of the public repo."""
+
+    profile: str = Field(pattern=r"^[a-z][a-z0-9_-]*$", description="profile folder in <ATLAS_LOCAL_DIR>/browser/")
+    start_url: str = ""
+    allowed_domains: list[str] = Field(
+        default_factory=list, description="hosts the agent may open (subdomains included); comma lists allowed"
+    )
+    max_turns: int = Field(default=40, ge=4, le=200, description="turn budget of tasks that use the browser")
+
+
 class NodeDefinition(AtlasModel):
     """An isolated operating context (e.g. corporate, personal).
 
@@ -200,6 +215,7 @@ class AgentDefinition(AtlasModel):
     nodes: list[str] = Field(default_factory=lambda: ["*"], description="node ids, '*' = shared core agent")
     division: str | None = None
     plannable: bool = Field(default=True, description="false = never assigned tasks by the planner (e.g. AUDITOR)")
+    browser: BrowserConfig | None = Field(default=None, description="opt-in dedicated browser (docs/BROWSER.md)")
 
 
 class AgentState(AtlasModel):
@@ -242,7 +258,7 @@ class Evidence(AtlasModel):
     agent_id: str
     kind: Literal[
         "file_listed", "file_read", "file_written", "web_search", "web_fetch", "consult", "approval",
-        "email_read", "draft_created", "external_call",
+        "email_read", "draft_created", "external_call", "browser_visit", "browser_action", "browser_download",
     ]
     ref: str = Field(description="path, URL, agent id or approval id")
     detail: str = ""

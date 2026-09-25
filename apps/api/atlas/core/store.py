@@ -949,6 +949,7 @@ class WorldStore:
             "web_search": "searched the web for", "web_fetch": "fetched", "consult": "consulted",
             "approval": "requested approval",
             "email_read": "read email", "draft_created": "drafted",  # M2: inbox evidence kinds
+            "browser_visit": "opened", "browser_action": "used the browser on", "browser_download": "downloaded",
         }.get(evidence.kind, evidence.kind)
         name = self.registry.get(evidence.agent_id).name if evidence.agent_id != "human" else "Human"
         line = summary or f"{name} {verb} {evidence.ref}" + ("" if evidence.ok else " (failed)")

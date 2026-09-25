@@ -62,6 +62,7 @@ function agent(p: Partial<AgentDefinition> & Pick<AgentDefinition, "id" | "name"
     nodes: ["*"],
     division: null,
     plannable: true,
+    browser: null,
     ...p,
   };
 }
@@ -273,6 +274,9 @@ class MockEngine {
       email_read: "read the email",
       draft_created: "drafted",
       external_call: "called",
+      browser_visit: "opened",
+      browser_action: "used the browser on",
+      browser_download: "downloaded",
     };
     const short = ref.split(/[\\/]/).pop() || ref;
     this.emit("evidence.recorded", { evidence: ev }, `${name} ${verb[kind]} ${kind === "consult" ? short.toUpperCase() : short}${ok ? "" : ` — failed: ${detail}`}`, agentId);

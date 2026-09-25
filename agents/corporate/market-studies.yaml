@@ -10,3 +10,10 @@ adapter_config:
   path: ${ATLAS_LOCAL_DIR}/agents/market-studies.md
 nodes: [corporate]
 capabilities: [market_study, absorption, pricing, product_mix, demand_analysis, bank_underwriting]
+# Dedicated browser (docs/BROWSER.md): its own signed-in profile, never your everyday Chrome.
+# The site stays in your .env; sign in once with `uv run atlas-browser login market-studies`.
+browser:
+  profile: mercato
+  start_url: ${ATLAS_MERCATO_BROWSER_URL}
+  allowed_domains: ["${ATLAS_MERCATO_BROWSER_DOMAINS}"]
+  max_turns: 40

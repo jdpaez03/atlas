@@ -112,6 +112,18 @@
           "default": true,
           "description": "false = never assigned tasks by the planner (e.g. AUDITOR)",
           "type": "boolean"
+        },
+        "browser": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "opt-in dedicated browser (docs/BROWSER.md)"
         }
       },
       "required": [
@@ -132,7 +144,8 @@
         "is_orchestrator",
         "nodes",
         "division",
-        "plannable"
+        "plannable",
+        "browser"
       ],
       "title": "AgentDefinition",
       "type": "object"
@@ -1046,6 +1059,42 @@
       "title": "Brief",
       "type": "object"
     },
+    "BrowserConfig": {
+      "description": "Opt-in browser for one agent: its own dedicated, persistent browser profile (never the user's Chrome).\n\nThe human logs into the site once in that profile (`atlas-browser login <agent>`); the agent then opens,\nreads, clicks, fills filters, extracts tables and downloads files, only on `allowed_domains`.\nStrings may use ${ENV_VAR} so personal sites stay out of the public repo.",
+      "properties": {
+        "profile": {
+          "description": "profile folder in <ATLAS_LOCAL_DIR>/browser/",
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "type": "string"
+        },
+        "start_url": {
+          "default": "",
+          "type": "string"
+        },
+        "allowed_domains": {
+          "description": "hosts the agent may open (subdomains included); comma lists allowed",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_turns": {
+          "default": 40,
+          "description": "turn budget of tasks that use the browser",
+          "maximum": 200,
+          "minimum": 4,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "profile",
+        "start_url",
+        "allowed_domains",
+        "max_turns"
+      ],
+      "title": "BrowserConfig",
+      "type": "object"
+    },
     "Claim": {
       "properties": {
         "kind": {
@@ -1546,7 +1595,10 @@
             "approval",
             "email_read",
             "draft_created",
-            "external_call"
+            "external_call",
+            "browser_visit",
+            "browser_action",
+            "browser_download"
           ],
           "type": "string"
         },
