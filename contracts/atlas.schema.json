@@ -1030,6 +1030,13 @@
           ],
           "default": null
         },
+        "documents": {
+          "description": "SCRIBE's institutional PDF + deck",
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
         "mission_id": {
           "anyOf": [
             {
@@ -1053,6 +1060,7 @@
         "headline",
         "sections",
         "deliverable",
+        "documents",
         "mission_id",
         "created_at"
       ],
@@ -1206,6 +1214,13 @@
           "description": "CC emails excluded by rules or as automated",
           "type": "integer"
         },
+        "documents": {
+          "description": "SCRIBE's institutional PDF of the digest",
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
         "created_at": {
           "format": "date-time",
           "type": "string"
@@ -1220,6 +1235,7 @@
         "headline",
         "threads",
         "skipped",
+        "documents",
         "created_at"
       ],
       "title": "Digest",

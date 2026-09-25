@@ -278,6 +278,7 @@ function makeBrief(hooks: MockArgosHooks, week: string, createdAt: string, suite
       "Follow-ups": ["2 compromisos tuyos vencidos: calendario de escrituración de Torre B y autorización de la estimación 7."],
     },
     deliverable: null,
+    documents: [],
     mission_id: null,
     created_at: createdAt,
   };

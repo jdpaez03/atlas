@@ -361,6 +361,7 @@ async def build_brief(ctx: CheckContext, *, executor: Any = None, rocks_path: Pa
     brief.deliverable = Attachment(name=name, kind="file", size_bytes=size,
                                    download_url=f"/briefs/{brief.id}/file")
     await record_evidence(ctx, "file_written", str(target), f"{size:,} bytes")
+    brief.documents = await publish_brief(ctx, brief, facts)
     upsert = getattr(ctx.store, "upsert_brief", None)
     if upsert is not None:
         brief = await upsert(brief, mission_id=ctx.mission_id, agent_id="argos") or brief
@@ -368,6 +369,43 @@ async def build_brief(ctx: CheckContext, *, executor: Any = None, rocks_path: Pa
         log.warning("store.upsert_brief is not available yet; brief %s not emitted", brief.id)
     return brief
 
+
+
+async def publish_brief(ctx: CheckContext, brief: Brief, facts: BriefFacts) -> list[Attachment]:
+    """SCRIBE lays the brief out as institutional documents (PDF + deck, docs/PUBLISHING.md). Never breaks the brief."""
+    import asyncio
+    from urllib.parse import quote
+
+    from ..publish import briefs as pub
+
+    if not pub.enabled():
+        return []
+    stem = f"{pub.prefix(ctx.node)}_Brief_L10_{facts.week}"
+    spec = pub.brief_spec(facts.week, facts.today, brief.headline, brief.sections, facts.rocks, facts.counts,
+                          facts.notes)
+    try:
+        files = await asyncio.to_thread(pub.render, spec, ctx.node, brief_dir(ctx.node), stem, pub.formats(),
+                                        facts.today)
+    except Exception as exc:
+        log.exception("brief documents failed")
+        facts.notes.append(f"Institutional documents not produced: {exc}")
+        return []
+    docs = [pub.attachment(p, f"/briefs/{brief.id}/documents/{quote(p.name)}") for p in files]
+    for p in files:
+        await _scribe_evidence(ctx, p)
+    return docs
+
+
+async def _scribe_evidence(ctx: CheckContext, path: Path) -> None:
+    if not ctx.mission_id:
+        return
+    from ..live.evidence import record
+
+    try:
+        await record(ctx.store, mission_id=ctx.mission_id, task_id=getattr(ctx, "task_id", None), agent_id="scribe",
+                     kind="file_written", ref=str(path), detail=f"{path.stat().st_size:,} bytes · brief institucional")
+    except Exception as exc:  # noqa: BLE001 — evidence never breaks the brief
+        log.debug("evidence not recorded: %s", exc)
 
 
 def _all_clear_or_why(check: str, all_clear: str) -> str:

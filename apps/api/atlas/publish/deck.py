@@ -19,7 +19,7 @@ from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Emu, Pt
 
 from .brand import Brand
-from .pdf import fmt_num, is_numeric
+from .pdf import col_weights, fmt_num, is_numeric
 from .spec import accent_runs, plain
 
 
@@ -204,13 +204,20 @@ class Deck:
             self.text(s, 120, 238, 1560, 60, sl["subtitle"], size=24, color=b.c("muted"))
         items = sl["items"]
         size = 38 if len(items) <= 4 else 33 if len(items) <= 6 else 29
-        box = self.text(s, 180, 330, 1560, 620, items, size=size, color=b.c("ink"), line=1.1)
-        for p in box.text_frame.paragraphs:
-            p.space_after = self.pt(size * 0.75)
+        box = self.text(s, 180, 330, 1560, 620, [i.lstrip("\t") for i in items], size=size, color=b.c("ink"),
+                        line=1.1)
+        for p, item in zip(box.text_frame.paragraphs, items, strict=True):
+            sub = item.startswith("\t")  # a detail under the previous bullet
+            p.space_after = self.pt(size * (0.35 if sub else 0.75))
+            if sub:
+                for r in p.runs:
+                    r.font.size = self.pt(size * 0.82)
+                    r.font.color.rgb = _rgb(b.c("muted"))
             pPr = p._p.get_or_add_pPr()
-            pPr.set("marL", str(int(self.e(34))))
+            pPr.set("marL", str(int(self.e(90 if sub else 34))))
             pPr.set("indent", str(-int(self.e(34))))
-            bu = pPr.makeelement("{http://schemas.openxmlformats.org/drawingml/2006/main}buChar", {"char": "▪"})
+            bu = pPr.makeelement("{http://schemas.openxmlformats.org/drawingml/2006/main}buChar",
+                                 {"char": "–" if sub else "▪"})
             clr = pPr.makeelement("{http://schemas.openxmlformats.org/drawingml/2006/main}buClr", {})
             srgb = clr.makeelement("{http://schemas.openxmlformats.org/drawingml/2006/main}srgbClr",
                                    {"val": b.c("primary").lstrip("#")})
@@ -242,9 +249,8 @@ class Deck:
         tbl.horz_banding = False
         numeric = [all(is_numeric(r[i]) or r[i] in ("", "-", "—") for r in rows) and
                    any(is_numeric(r[i]) for r in rows) for i in range(len(cols))]
-        lens = [min(max([len(str(c))] + [len(fmt_num(r[i])) for r in rows] + [5]), 34) for i, c in enumerate(cols)]
-        for i, n in enumerate(lens):
-            tbl.columns[i].width = self.e(1680 * n / sum(lens))
+        for i, w in enumerate(col_weights(cols, rows)):
+            tbl.columns[i].width = self.e(1680 * w)
         for r_i in range(len(rows) + 1):
             tbl.rows[r_i].height = self.e(row_h)
             for c_i in range(len(cols)):

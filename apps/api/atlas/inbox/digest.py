@@ -29,6 +29,7 @@ import yaml
 from ..core import paths
 from ..core.models import (
     AgentStatus,
+    Attachment,
     Claim,
     ClaimKind,
     Confidence,
@@ -43,6 +44,7 @@ from ..live.evidence import record
 from ..live.llm import LLMError
 from .prompts import DIGEST_NOTE, SUMMARIZE_THREADS_TOOL, digest_message
 from .sources.base import MailMessage, address_of, my_addresses, trim_quoted
+from .state import user_tz
 
 if TYPE_CHECKING:
     from ..live.runtime import MissionScope
@@ -404,6 +406,8 @@ async def run_digest(engine: InboxEngine, scope: MissionScope, src: MailSource, 
                             -max(m.received_at.timestamp() for m in d.messages if m.received_at)))
     digest = Digest(mission_id=mid, window_start=window_start, window_end=window_end,
                     headline=merge_headlines(headlines), threads=out, skipped=skipped)
+    digest.node = scope.node
+    digest.documents = await publish_digest(scope, digest)
     digest = await s.upsert_digest(digest, mission_id=mid, agent_id="hermes")
     counts.digest_threads = len(out)
     counts.failures += failures
@@ -422,6 +426,38 @@ async def run_digest(engine: InboxEngine, scope: MissionScope, src: MailSource, 
     await scope.set_agent("hermes", AgentStatus.COMPLETED, task_id=task.id,
                           activity=f"CC digest · {len(out)} conversation(s)")
     return digest
+
+
+def digest_dir(node: str) -> Path:
+    return paths.local_dir() / "outputs" / paths.safe_name(node) / "digests"
+
+
+async def publish_digest(scope: MissionScope, digest: Digest) -> list[Attachment]:
+    """SCRIBE lays the digest out as an institutional PDF (docs/PUBLISHING.md). Never breaks the digest."""
+    import asyncio
+    from urllib.parse import quote
+
+    from ..publish import briefs as pub
+
+    if not pub.enabled() or not digest.threads:
+        return []
+    when = digest.window_end or digest.created_at
+    local = when.astimezone(user_tz())
+    stem = f"{pub.prefix(scope.node)}_Correos_en_copia_{local.strftime('%Y-%m-%d_%H%M')}"
+    try:
+        files = await asyncio.to_thread(pub.render, pub.digest_spec(digest), scope.node, digest_dir(scope.node), stem,
+                                        tuple(f for f in pub.formats() if f == "pdf"), local)
+    except Exception:
+        log.exception("digest documents failed")
+        return []
+    docs = [pub.attachment(p, f"/digests/{digest.id}/documents/{quote(p.name)}") for p in files]
+    for p in files:
+        try:
+            await record(scope.store, mission_id=scope.mission_id, task_id=None, agent_id="scribe",
+                         kind="file_written", ref=str(p), detail=f"{p.stat().st_size:,} bytes · resumen institucional")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("evidence not recorded: %s", exc)
+    return docs
 
 
 async def _nothing(engine: InboxEngine, scope: MissionScope, counts: ScanCounts, cc_total: int, scope_label: str,

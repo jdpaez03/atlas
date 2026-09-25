@@ -162,13 +162,30 @@ class Rule(Flowable):
         self.canv.line(0, self.space, self.width, self.space)
 
 
-def _col_widths(columns: list[str], rows: list[list[Any]], total: float) -> list[float]:
-    lens = []
+SHORT_COL = 14  # columns whose values are all this short never wrap
+
+
+def col_weights(columns: list[str], rows: list[list[Any]]) -> list[float]:
+    """Relative column widths: short columns (dates, statuses, figures) get exactly what they need so they don't
+    wrap; the rest of the width goes to the long text columns."""
+    longest = []
     for i, c in enumerate(columns):
-        longest = max([len(str(c))] + [len(fmt_num(r[i])) for r in rows[:40]])
-        lens.append(min(max(longest, 5), 38))
-    s = sum(lens)
-    return [total * n / s for n in lens]
+        values = [len(fmt_num(r[i])) for r in rows[:60]] or [0]
+        head = max((len(w) for w in str(c).split()), default=0)
+        longest.append(max(max(values), head, 3))
+    short = [n <= SHORT_COL for n in longest]
+    need = [n + (4 if sh else 2) for n, sh in zip(longest, short, strict=True)]  # + room for cell padding
+    fixed = sum(n for n, sh in zip(need, short, strict=True) if sh)
+    flex = [min(n, 40) for n, sh in zip(need, short, strict=True) if not sh]
+    if not flex:
+        return [n / sum(need) for n in need]
+    total = max(fixed + sum(flex), fixed * 1.6)
+    return [(n if sh else min(n, 40) * (total - fixed) / sum(flex)) / total
+            for n, sh in zip(need, short, strict=True)]
+
+
+def _col_widths(columns: list[str], rows: list[list[Any]], total: float) -> list[float]:
+    return [total * w for w in col_weights(columns, rows)]
 
 
 def table_flow(t: dict[str, Any], brand: Brand, st: Styles, width: float) -> list[Any]:
@@ -307,8 +324,14 @@ def chart_flow(ch: dict[str, Any], brand: Brand, st: Styles, width: float) -> li
 
 
 def bullets_flow(items: list[str], brand: Brand, st: Styles) -> ListFlowable:
+    """Items starting with a tab are second-level (details under the previous item)."""
+    sub = ParagraphStyle("sub", parent=st.bullet, fontSize=st.bullet.fontSize - 0.6, textColor=_hex(brand.c("muted")),
+                         spaceAfter=2)
     return ListFlowable(
-        [ListItem(Paragraph(rich(i, st.f), st.bullet), leftIndent=12, value="square") for i in items],
+        [ListItem(Paragraph(rich(i.lstrip("\t"), st.f), sub), leftIndent=26, value="–", bulletFontSize=7,
+                  bulletColor=_hex(brand.c("muted")))
+         if i.startswith("\t") else ListItem(Paragraph(rich(i, st.f), st.bullet), leftIndent=12, value="square")
+         for i in items],
         bulletType="bullet", start="square", bulletFontSize=4.2, bulletColor=_hex(brand.c("primary")),
         leftIndent=12, bulletOffsetY=-2.2, spaceAfter=6,
     )

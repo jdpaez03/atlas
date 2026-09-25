@@ -384,6 +384,18 @@ def test_http_digests(monkeypatch, rules):
         one = client.get(f"/digests/{digests[0]['id']}").json()
         assert one["headline"][0] == "Polanco al 62%" and one["threads"][0]["followup_id"]
         assert client.get("/digests/dig_nope").status_code == 404
+        # SCRIBE: the digest as an institutional PDF (docs/PUBLISHING.md)
+        docs = one["documents"]
+        assert len(docs) == 1 and docs[0]["name"].startswith("ATLAS_Correos_en_copia_") and docs[0]["name"].endswith(".pdf")
+        pdf = client.get(docs[0]["download_url"])
+        assert pdf.status_code == 200 and pdf.content[:4] == b"%PDF"
+        from io import BytesIO
+
+        from pypdf import PdfReader
+
+        text = " ".join(" ".join(p.extract_text().split()) for p in PdfReader(BytesIO(pdf.content)).pages)
+        assert "Correos en copia" in text and "Polanco al 62%" in text and SECRET not in text
+        assert client.get(f"/digests/{one['id']}/documents/nope.pdf").status_code == 404
         assert client.get("/digests", params={"limit": 0}).status_code == 422
         events = client.get("/events").json()
         assert any(e["type"] == "digest.ready" for e in events)

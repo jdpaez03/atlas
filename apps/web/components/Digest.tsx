@@ -5,6 +5,7 @@ import { apiErrorText } from "@/lib/api";
 import type { AtlasEvent, Digest, DigestThread, FollowUp, Mission, MissionReport } from "@/lib/contracts";
 import { isOpen, parseAddr, shortDate } from "@/lib/followups";
 import { PRIORITY, cx } from "@/lib/ui";
+import { FileLink } from "./Files";
 import { Tag } from "./primitives";
 
 export type FollowUpsTab = "board" | "digest";
@@ -472,6 +473,13 @@ export function DigestView({
                   </li>
                 ))}
               </ul>
+            )}
+            {(digest.documents ?? []).length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {digest.documents.map((d) => (
+                  <FileLink key={d.id} a={d} accent="#cbd5e1" compact />
+                ))}
+              </div>
             )}
           </div>
 

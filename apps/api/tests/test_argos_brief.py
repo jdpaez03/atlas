@@ -147,6 +147,23 @@ def test_brief_with_argos_prose(registry):
         assert needle in text, needle
     assert "99 correos" not in text
 
+    # SCRIBE: the same brief as an institutional PDF + a deck for the L10 meeting (docs/PUBLISHING.md)
+    from pptx import Presentation
+    from pypdf import PdfReader
+
+    assert [d.name for d in brief.documents] == ["ATLAS_Brief_L10_2026-W39.pdf", "ATLAS_Brief_L10_2026-W39.pptx"]
+    assert brief.documents[0].download_url == f"/briefs/{brief.id}/documents/ATLAS_Brief_L10_2026-W39.pdf"
+    pdf = path.parent / brief.documents[0].name
+    pdf_text = " ".join(" ".join(p.extract_text().split()) for p in PdfReader(str(pdf)).pages)
+    for needle in ["Brief L10", "3 de 6", "Vender 100 departamentos", "En riesgo", "Polanco: 2 alertas abiertas",
+                   "Level 10", "PAGA Suite"]:
+        assert needle in pdf_text, needle
+    deck = Presentation(str(path.parent / brief.documents[1].name))
+    deck_text = " ".join(sh.text_frame.text for s in deck.slides for sh in s.shapes if sh.has_text_frame)
+    assert "Estado de Rocks" in deck_text and any(sh.has_table for s in deck.slides for sh in s.shapes)
+    ev_scribe = [e for e in c.store.evidence_for(c.mission_id) if e.agent_id == "scribe"]
+    assert [e.ref.rsplit(".", 1)[-1] for e in ev_scribe] == ["pdf", "pptx"]
+
     state = c.store.snapshot()
     assert [b.id for b in state.briefs] == [brief.id]
     ev = c.store.evidence_for(c.mission_id)
@@ -215,3 +232,39 @@ def test_brief_never_says_all_clear_for_unchecked_sources(tmp_path, monkeypatch)
     assert "incomplete" in with_state("failed", note="HTTP 500")
     state.unlink()
     assert brief._all_clear_or_why("l10", "ALL CLEAR").startswith("Not checked yet")
+
+
+def test_brief_documents_off(registry, monkeypatch):
+    monkeypatch.setenv("ATLAS_PUBLISH", "off")
+    llm = FakeLLM()
+    llm.when(is_brief, tool_use("write_brief", prose(invented=False)))
+
+    async def go():
+        c = await setup(registry, llm)
+        return await build_brief(c)
+
+    brief = asyncio.run(go())
+    assert brief.documents == [] and brief.deliverable is not None  # the docx is always produced
+
+
+def test_brief_document_download_route(registry):
+    from fastapi.testclient import TestClient
+
+    from atlas.main import app
+
+    llm = FakeLLM()
+    llm.when(is_brief, tool_use("write_brief", prose(invented=False)))
+
+    async def go():
+        c = await setup(registry, llm)
+        return await build_brief(c)
+
+    brief = asyncio.run(go())
+    with TestClient(app) as client:
+        client.portal.call(app.state.argos.store.upsert_brief, brief)
+        r = client.get(brief.documents[0].download_url)
+        assert r.status_code == 200 and r.headers["content-type"] == "application/pdf" and r.content[:4] == b"%PDF"
+        deck = client.get(brief.documents[1].download_url)
+        assert deck.status_code == 200 and "presentationml" in deck.headers["content-type"]
+        assert client.get(f"/briefs/{brief.id}/documents/..%2F..%2Fatlas.db").status_code == 404
+        assert client.get(f"/briefs/{brief.id}/documents/other.pdf").status_code == 404

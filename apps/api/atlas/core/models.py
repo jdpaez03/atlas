@@ -516,6 +516,7 @@ class Digest(AtlasModel):
     headline: list[str] = Field(default_factory=list, description="≤ 3 lines: what matters most")
     threads: list[DigestThread] = Field(default_factory=list)
     skipped: int = Field(default=0, description="CC emails excluded by rules or as automated")
+    documents: list[Attachment] = Field(default_factory=list, description="SCRIBE's institutional PDF of the digest")
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -582,6 +583,7 @@ class Brief(AtlasModel):
     headline: list[str] = Field(default_factory=list)
     sections: dict[str, list[str]] = Field(default_factory=dict)
     deliverable: Attachment | None = None
+    documents: list[Attachment] = Field(default_factory=list, description="SCRIBE's institutional PDF + deck")
     mission_id: str | None = None
     created_at: datetime = Field(default_factory=_now)
 

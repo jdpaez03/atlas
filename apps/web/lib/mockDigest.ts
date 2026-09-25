@@ -148,6 +148,7 @@ export function seedDigest(): Digest {
     ],
     threads,
     skipped: 6,
+    documents: [],
     created_at: iso(-2 * HOUR),
   };
 }
@@ -194,6 +195,7 @@ export function scanDigest(windowStart: string | null): Digest {
       },
     ],
     skipped: 2,
+    documents: [],
     created_at: iso(0),
   };
 }

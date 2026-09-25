@@ -29,6 +29,22 @@ documents** in the report, and are recorded as evidence.
 
 A follow-up round publishes new versions (`…_v2_Reporte.pdf`).
 
+## Briefs
+
+The recurring briefs go through SCRIBE as well:
+
+- **Monday L10 brief (ARGOS):** a PDF and a deck to project in the L10 meeting. The deck has the week in one
+  sentence, the key figures, one slide per area (Rocks, project dashboards, Level 10, follow-ups) and the Rocks
+  status table. The `.docx` is still produced (editable). Download it from Monitor → L10 brief, or at
+  `GET /briefs/{id}/documents/{name}`.
+- **CC digest (HERMES):** a PDF with one section per conversation: what happened, what you are asked (a
+  callout), decisions and figures. Download it from Follow-ups → Digest, or at `GET /digests/{id}/documents/{name}`.
+
+These briefs are already checked content: ARGOS's figures are computed and its prose passes a number guard,
+and the digest keeps only figures found verbatim in the emails. So SCRIBE does not rewrite them. The document
+is built from them directly (no model call) and only laid out with the brand kit. `ATLAS_PUBLISH=off` turns
+these documents off too, and `ATLAS_PUBLISH_FORMATS` applies (the digest is PDF only).
+
 ## Brand kit (private, per node)
 
 ```

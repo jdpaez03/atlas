@@ -7,6 +7,7 @@ import { dayDiff, parseDue } from "@/lib/followups";
 import { cx, useNow } from "@/lib/ui";
 import { createPortal } from "react-dom";
 import { DeviceCodeModal, type DeviceCodeCopy } from "./DeviceCodeModal";
+import { FileLink } from "./Files";
 import { Empty, Panel, Tag } from "./primitives";
 
 const SUITE_CONNECT_COPY: DeviceCodeCopy = {
@@ -867,6 +868,14 @@ function BriefCard({
               </ul>
             </div>
           ))}
+          {(brief.documents ?? []).length > 0 && (
+            <div className="grid gap-1.5">
+              <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-300">Institutional documents · SCRIBE</p>
+              {brief.documents.map((d) => (
+                <FileLink key={d.id} a={d} accent="#cbd5e1" />
+              ))}
+            </div>
+          )}
           {href && (
             <a href={href} download={brief.deliverable?.name ?? `L10 brief ${brief.week}.docx`} className={cx(BTN_QUIET, "self-start text-signal")}>
               <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

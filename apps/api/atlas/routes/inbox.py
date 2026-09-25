@@ -237,3 +237,19 @@ def get_digest(digest_id: str, request: Request) -> Digest:
         return get_inbox(request).store.digest(digest_id)
     except StoreError as exc:
         raise http_error(exc) from exc
+
+
+@router.get("/digests/{digest_id}/documents/{name}")
+def download_digest_document(digest_id: str, name: str, request: Request) -> FileResponse:
+    """SCRIBE's institutional PDF of a CC digest (docs/PUBLISHING.md)."""
+    from ..inbox.digest import digest_dir
+    from ..publish.briefs import MEDIA, document_path
+
+    try:
+        digest = get_inbox(request).store.digest(digest_id)
+    except StoreError as exc:
+        raise http_error(exc) from exc
+    path = document_path(digest.documents, name, digest_dir(digest.node))
+    if path is None:
+        raise HTTPException(404, "no such document for this digest")
+    return FileResponse(path, media_type=MEDIA.get(path.suffix.lower(), "application/octet-stream"), filename=path.name)

@@ -675,6 +675,10 @@ export interface Digest {
    * CC emails excluded by rules or as automated
    */
   skipped: number;
+  /**
+   * SCRIBE's institutional PDF of the digest
+   */
+  documents: Attachment[];
   created_at: string;
 }
 /**
@@ -814,6 +818,10 @@ export interface Brief {
     [k: string]: string[];
   };
   deliverable: Attachment | null;
+  /**
+   * SCRIBE's institutional PDF + deck
+   */
+  documents: Attachment[];
   mission_id: string | null;
   created_at: string;
 }

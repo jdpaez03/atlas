@@ -255,6 +255,22 @@ def download_brief(brief_id: str, request: Request) -> FileResponse:
     return FileResponse(path, media_type=media, filename=brief.deliverable.name if brief.deliverable else path.name)
 
 
+@router.get("/briefs/{brief_id}/documents/{name}")
+def download_brief_document(brief_id: str, name: str, request: Request) -> FileResponse:
+    """SCRIBE's institutional PDF / deck of a brief (docs/PUBLISHING.md)."""
+    from ..argos.brief import brief_dir
+    from ..publish.briefs import MEDIA, document_path
+
+    try:
+        brief = get_argos(request).store.brief(brief_id)
+    except StoreError as exc:
+        raise http_error(exc) from exc
+    path = document_path(brief.documents, name, brief_dir(brief.node))
+    if path is None:
+        raise HTTPException(404, "no such document for this brief")
+    return FileResponse(path, media_type=MEDIA.get(path.suffix.lower(), "application/octet-stream"), filename=path.name)
+
+
 # ---------------------------------------------------------------------------
 # PAGA Suite sign-in (Entra): one-time consent for the Suite API scope (argos/suite_auth.py)
 # ---------------------------------------------------------------------------

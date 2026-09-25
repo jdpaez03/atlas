@@ -80,3 +80,6 @@ work in parallel against it without colliding.
   same traceability check as the executive report. Each mission can opt out. PAGA's kit comes from its
   official PowerPoint template (PAGA TEMPLATE.potm) and institutional presentation: #002A53 navy, light
   thin type, italic accent words, a vertical side label (docs/PUBLISHING.md).
+- 2026-09-25 · **Briefs through SCRIBE**: the Monday L10 brief becomes a branded PDF plus a deck to project in
+  the meeting, and the CC digest becomes a branded PDF. Both are laid out from their already-validated content
+  without another model call. The L10 brief's .docx stays.
