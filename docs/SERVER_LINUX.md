@@ -6,14 +6,14 @@ SSD, ethernet. Any x86-64 machine with 8 GB or more works.
 
 What changes compared with the Windows PC:
 
-| | Windows PC | Linux server |
-|---|---|---|
-| Work files | the OneDrive client syncs a folder | **Microsoft Graph**: `onedrive:/` and `sharepoint:` read roots (§ Files) |
-| Agents' browser (REDI…) | Chrome with a profile folder | Chrome on a virtual display (Xvfb). The login is carried over with `export-session` / `import-session`. |
-| Microsoft token cache | encrypted with DPAPI | a file only the ATLAS user can read (folder 700, file 600) |
-| PDFs (SCRIBE) | Segoe UI | Selawik, an open font with Segoe UI metrics. The decks keep naming Segoe UI, so they look the same on your PC. |
-| Start | `start.ps1` | systemd services `atlas-xvfb`, `atlas-api`, `atlas-web`, started on boot |
-| Access | http://localhost:3000 | `https://<machine>.<tailnet>.ts.net`, from any of your devices on Tailscale |
+|                         | Windows PC                         | Linux server                                                                                                   |
+| ----------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Work files              | the OneDrive client syncs a folder | **Microsoft Graph**: `onedrive:/` and `sharepoint:` read roots (§ Files)                                       |
+| Agents' browser (REDI…) | Chrome with a profile folder       | Chrome on a virtual display (Xvfb). The login is carried over with `export-session` / `import-session`.        |
+| Microsoft token cache   | encrypted with DPAPI               | a file only the ATLAS user can read (folder 700, file 600)                                                     |
+| PDFs (SCRIBE)           | Segoe UI                           | Selawik, an open font with Segoe UI metrics. The decks keep naming Segoe UI, so they look the same on your PC. |
+| Start                   | `start.ps1`                        | systemd services `atlas-xvfb`, `atlas-api`, `atlas-web`, started on boot                                       |
+| Access                  | http://localhost:3000              | `https://<machine>.<tailnet>.ts.net`, from any of your devices on Tailscale                                    |
 
 ## 1. Install Ubuntu Server
 
@@ -37,7 +37,7 @@ This erases the disk. Copy anything you want off the laptop first.
 From now on, work from your PC. In PowerShell:
 
 ```powershell
-ssh atlas@192.168.1.50
+ssh atlas@192.168.101.145
 ```
 
 ## 2. Run the installer
@@ -100,6 +100,7 @@ browser logins (REDI).
    - the tailnet URLs are set
 
    It then imports the browser sessions and **deletes the file**.
+
 4. Delete `atlas-transfer.tgz` from the PC's Desktop too; it contains secrets. Stop starting ATLAS on the PC: from now on the
    server is the one ATLAS. Two copies would each keep their own history.
 
@@ -126,6 +127,7 @@ The login is stored in `~/.claude/`. ATLAS's Agent SDK uses it, the same as on y
 
    If your organization requires admin approval, ask IT to **Grant admin consent**. All of these are read-only
    except `Mail.ReadWrite`, which only saves drafts; ATLAS never sends mail.
+
 3. In `~/atlas/.env`, set `ATLAS_MS_CLIENT_ID` (Application ID) and `ATLAS_MS_TENANT_ID` (Directory ID).
 4. Sign in:
 
@@ -155,7 +157,7 @@ ATLAS_FILE_ROOTS_CORPORATE=onedrive:/PAGA;sharepoint:pagadesarrollos.sharepoint.
   `read_file onedrive:/PAGA/Estudios/Balcones.xlsx`. A relative path that isn't found locally is tried against the
   remote roots.
 - `search_files` on a remote root uses Microsoft Search, which also matches **file contents**.
-- `list_files` walks folders. Folders added with *Add shortcut to My files* are followed.
+- `list_files` walks folders. Folders added with _Add shortcut to My files_ are followed.
 - The same sandbox rules apply as for local folders:
   - only this node's roots;
   - the deepest matching root decides which node a path belongs to;
@@ -196,14 +198,14 @@ To sign in directly on the server instead, look at its virtual screen:
 
 ## Day to day
 
-| | |
-|---|---|
-| Open ATLAS | `https://<machine>.<tailnet>.ts.net` (phone or PC with Tailscale on) |
-| Status | `systemctl status atlas-api atlas-web atlas-xvfb` |
-| Logs | `journalctl -u atlas-api -f` |
-| Update | `bash ~/atlas/deploy/linux/update.sh` (pull, dependencies, rebuild, restart) |
-| Restart | `sudo systemctl restart atlas-api` |
-| Backup | `sqlite3 ~/atlas-local/atlas.db ".backup ~/atlas-backup.db"` and copy `~/atlas-local` elsewhere now and then |
+|            |                                                                                                              |
+| ---------- | ------------------------------------------------------------------------------------------------------------ |
+| Open ATLAS | `https://<machine>.<tailnet>.ts.net` (phone or PC with Tailscale on)                                         |
+| Status     | `systemctl status atlas-api atlas-web atlas-xvfb`                                                            |
+| Logs       | `journalctl -u atlas-api -f`                                                                                 |
+| Update     | `bash ~/atlas/deploy/linux/update.sh` (pull, dependencies, rebuild, restart)                                 |
+| Restart    | `sudo systemctl restart atlas-api`                                                                           |
+| Backup     | `sqlite3 ~/atlas-local/atlas.db ".backup ~/atlas-backup.db"` and copy `~/atlas-local` elsewhere now and then |
 
 - The services start on boot. The battery covers short power cuts.
 - Ubuntu installs security updates by itself. Run `sudo apt upgrade` and reboot now and then.
