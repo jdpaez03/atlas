@@ -1852,6 +1852,11 @@
           "description": "was running when the server stopped",
           "type": "boolean"
         },
+        "publish": {
+          "default": true,
+          "description": "SCRIBE formats the report as institutional documents",
+          "type": "boolean"
+        },
         "created_at": {
           "format": "date-time",
           "type": "string"
@@ -1884,6 +1889,7 @@
         "attachments",
         "round",
         "interrupted",
+        "publish",
         "created_at",
         "closed_at"
       ],
@@ -1992,6 +1998,13 @@
           },
           "type": "array"
         },
+        "documents": {
+          "description": "institutional documents SCRIBE rendered from this report (PDF, deck)",
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          },
+          "type": "array"
+        },
         "audit_summary": {
           "default": "",
           "description": "what AUDITOR checked and what it found (system-written)",
@@ -2025,6 +2038,7 @@
         "agent_report_ids",
         "version",
         "deliverables",
+        "documents",
         "audit_summary",
         "untraced",
         "created_at"

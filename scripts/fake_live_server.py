@@ -147,6 +147,33 @@ async def brain(**kw: Any) -> Any:
                                 "issues": [{"finding": "absorption ~1.4/month", "kind": "mislabeled", "severity": "MEDIUM",
                                             "problem": "An average of comparables, not a measured fact: label it ASSUMPTION."}]})
         return tool_use("submit_audit", {"audits": entries})
+    if "submit_documents" in tools:  # SCRIBE: the demo's report as institutional documents
+        return tool_use("submit_documents", {
+            "doc_kind": "Reporte ejecutivo", "title": "Oportunidad de *inversión*",
+            "subtitle": "Demo · evaluación de la oportunidad",
+            "summary": [("La oportunidad es atractiva solo con un retorno preferente; la absorción del "
+                         "desarrollador luce optimista (2x el promedio del mercado)."),
+                        "Se recomienda negociar un retorno preferente antes de comprometer capital."],
+            "highlights": [{"label": "TIR escenario base", "value": "15-18%"},
+                           {"label": "Absorción 2 recámaras", "value": "1.4", "note": "unidades/mes"}],
+            "sections": [
+                {"title": "Hallazgos", "blocks": [
+                    {"type": "bullets", "items": ["Los precios están dentro del rango de comparables.",
+                                                  "La absorción del desarrollador es 2x el promedio del mercado."]},
+                    {"type": "table", "table": {"columns": ["Escenario", "TIR"],
+                                                "rows": [["Base", "15-18%"], ["Bajista", "7-10%"]],
+                                                "source": "Reportes de ORACLE y ALFRED"}}]},
+                {"title": "Recomendación", "blocks": [
+                    {"type": "callout", "title": "Siguiente paso", "text": "ALFRED: solicitar term sheet."}]}],
+            "slides": [
+                {"type": "statement", "text": "Atractiva solo con un *retorno preferente*."},
+                {"type": "kpis", "title": "Cifras *clave*", "kpis": [{"label": "TIR base", "value": "15-18%"},
+                                                                       {"label": "Absorción", "value": "1.4"}]},
+                {"type": "table", "title": "Escenarios", "table": {"columns": ["Escenario", "TIR"],
+                                                                    "rows": [["Base", "15-18%"], ["Bajista", "7-10%"]]}},
+                {"type": "bullets", "title": "Siguientes *pasos*", "items": ["Negociar retorno preferente.",
+                                                                             "Solicitar term sheet."]}],
+            "sources": ["Reportes de los agentes de la misión"]})
     if "create_plan" in tools:
         return tool_use("create_plan", {"rationale": "Research and verify in parallel, then analyze, then package.",
                                         "tasks": PLAN})

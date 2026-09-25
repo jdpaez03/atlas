@@ -92,6 +92,10 @@ class LiveConfig:
     audit_max_tokens: int = 6000
     task_retries: int = 1  # automatic re-runs of a task after a transient error
     retry_delay: float = 10.0  # seconds before the first re-run (doubles each time)
+    # Institutional documents (docs/PUBLISHING.md)
+    publish: bool = True
+    publish_formats: tuple[str, ...] = ("pdf", "pptx")
+    publish_max_tokens: int = 16000
 
     @classmethod
     def from_env(cls, backend: str = "api") -> LiveConfig:
@@ -111,6 +115,10 @@ class LiveConfig:
             audit_revisions=_env_int("ATLAS_AUDIT_REVISIONS", 1, minimum=0),
             task_retries=_env_int("ATLAS_TASK_RETRIES", 1, minimum=0),
             retry_delay=_env_float("ATLAS_TASK_RETRY_DELAY", 10.0),
+            publish=os.getenv("ATLAS_PUBLISH", "on").strip().lower() not in ("0", "off", "false", "no"),
+            publish_formats=tuple(f for f in (x.strip().lower() for x in os.getenv(
+                "ATLAS_PUBLISH_FORMATS", "pdf,pptx").split(",")) if f in ("pdf", "pptx")) or ("pdf", "pptx"),
+            publish_max_tokens=_env_int("ATLAS_PUBLISH_MAX_TOKENS", 16000, minimum=2000),
         )
 
 
@@ -128,6 +136,7 @@ class MissionScope:
     agents: dict[str, ResolvedAgent]  # planned roster (allowed in the node AND available)
     orchestrator: ResolvedAgent
     auditor: ResolvedAgent | None = None  # AUDITOR, when registered and available (never planned)
+    publisher: ResolvedAgent | None = None  # SCRIBE: institutional documents from the final report
     touched: set[str] = field(default_factory=set)
     consulted: bool = False
     _ctx: dict[str, str] = field(default_factory=dict)
@@ -143,6 +152,8 @@ class MissionScope:
             return r.agent.name
         if self.auditor is not None and agent_id == self.auditor.id:
             return self.auditor.agent.name
+        if self.publisher is not None and agent_id == self.publisher.id:
+            return self.publisher.agent.name
         return self.orchestrator.agent.name if agent_id == self.orchestrator.id else agent_id
 
     async def set_agent(self, agent_id: str, status: AgentStatus | str, *, activity: str | None = None,

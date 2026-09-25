@@ -16,6 +16,8 @@ export interface LaunchMissionBody {
   scenario_id?: string;
   speed?: number;
   mode?: MissionMode;
+  /** live missions: SCRIBE publishes the final report as institutional documents (default true) */
+  publish?: boolean;
 }
 
 export type MissionMode = "simulated" | "live";
@@ -120,6 +122,7 @@ export const api = {
     if (body.mode) fd.append("mode", body.mode);
     if (body.scenario_id) fd.append("scenario_id", body.scenario_id);
     if (body.speed != null) fd.append("speed", String(body.speed));
+    if (body.publish != null) fd.append("publish", String(body.publish));
     for (const f of files) fd.append("files", f, f.name);
     return fetch(`${API_URL}/missions`, { method: "POST", body: fd }).then((r) => json<Mission>(r));
   },

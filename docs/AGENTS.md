@@ -12,6 +12,7 @@ approval rules, node isolation, language; see [LIVE.md](LIVE.md)), so role promp
 | `oracle` | ORACLE | Strategy & Analysis | shared |
 | `alfred` | ALFRED | Execution / Operations | shared |
 | `auditor` | AUDITOR | Quality: checks every report against the evidence (never planned; docs/AUDITOR.md) | shared |
+| `scribe` | SCRIBE | Institutional documents: the final report as a branded PDF + committee deck (never planned; docs/PUBLISHING.md) | shared (brand kit per node) |
 | `eos-vision`, `eos-people`, `eos-data`, `eos-issues`, `eos-process`, `eos-traction` | EOS division | One specialist per EOS component (`claude_md`, prompts kept locally) | corporate |
 | `market-studies` | MERCATO | Market studies (`claude_md`, prompt kept locally); has a dedicated signed-in browser (docs/BROWSER.md) | corporate |
 

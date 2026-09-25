@@ -898,6 +898,7 @@ function scriptAfterDecision(decision: Decision): Step[] {
         audit_summary:
           "AUDITOR checked 4 agent reports against the evidence the system recorded. EOS·TRACTION's capacity check held up as submitted; SOFIA's market study holds up with 2 issues (absorption rate unsourced, asking-price median labeled as a verified fact); ARGOS's zoning report failed on the density figure and was revised once — the revision (18.75% cut, consultation closes 14 Nov) passed.",
         untraced: ["~20% density cut", "IRR 15% in the density-cut case at 96 units"],
+        documents: [],
         created_at: now(),
       };
       e.publishReport(report);
@@ -993,6 +994,7 @@ function scriptFollowUp(question: string): Step[] {
         deliverables: [...e.deliverables],
         audit_summary: `AUDITOR checked ORACLE's round-${m.round} report: it holds up — the sensitivity table matches Offer_sensitivity.csv.`,
         untraced: [],
+        documents: [],
         created_at: now(),
       };
       e.publishReport(report);
@@ -1065,6 +1067,7 @@ function scriptResume(refs: string[]): Step[] {
         deliverables: [...e.deliverables],
         audit_summary: `AUDITOR checked the ${n} resumed report${n === 1 ? "" : "s"}; all hold up.`,
         untraced: [],
+        documents: [],
         created_at: now(),
       });
     }),
@@ -1145,6 +1148,7 @@ function seedHistory(): { missions: Mission[]; tasks: Task[] } {
     task_ids: ["tsk_hist_cf1", "tsk_hist_cf2"],
     round: 1,
     interrupted: true,
+    publish: true,
     attachments: [{ id: "att_hist_1", name: "Cashflow_Q3.xlsx", kind: "file", uri: null, content: null, size_bytes: 184_320, download_url: "/missions/msn_hist_cashflow/files/attachments/Cashflow_Q3.xlsx" }],
     created_at: ago(26),
     closed_at: null,
@@ -1161,6 +1165,7 @@ function seedHistory(): { missions: Mission[]; tasks: Task[] } {
     task_ids: [],
     round: 1,
     interrupted: false,
+    publish: true,
     created_at: ago(50),
     closed_at: ago(49.8),
   };
@@ -1324,6 +1329,7 @@ export function mockTransport({ speed = 1 }: { speed?: number } = {}): Transport
         attachments: (files ?? []).map((f) => fileAttachment(id, f)),
         round: 1,
         interrupted: false,
+        publish: true,
         usage: { ...ZERO_USAGE },
         usage_by_agent: {},
         context: scenario.title,

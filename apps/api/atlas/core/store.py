@@ -306,13 +306,14 @@ class WorldStore:
         mode: str = "simulated",
         mission_id: str | None = None,
         attachments: list[Attachment] | None = None,
+        publish: bool = True,
     ) -> Mission:
         self._check_node(node)
         extra: dict[str, Any] = {"id": mission_id} if mission_id else {}
         if mission_id and any(m.id == mission_id for m in self._state.missions):
             raise ConflictError(f"mission '{mission_id}' already exists")
         mission = Mission(objective=objective, node=node, context=context, priority=priority, mode=mode,
-                          attachments=list(attachments or []), **extra)
+                          attachments=list(attachments or []), publish=publish, **extra)
         self._state.missions.append(mission)
         node_name = self._node_name(node)
         await self._emit(

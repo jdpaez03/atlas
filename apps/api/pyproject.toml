@@ -24,6 +24,7 @@ dependencies = [
   "tzdata>=2026.4",
   "ruamel-yaml>=0.19.1",
   "playwright>=1.56",
+  "reportlab>=4.2",
 ]
 
 [project.scripts]

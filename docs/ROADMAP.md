@@ -74,3 +74,9 @@ work in parallel against it without colliding.
   allowed_domains only, no password typing, and approval + confirm before a consequential click (delete / buy /
   send / credits / log out). Downloads and saved tables land in the mission outputs as evidence (docs/BROWSER.md).
   MERCATO is the first agent to get one.
+- 2026-09-24 · **SCRIBE (institutional documents)**: after consolidation, a non-planned agent writes a structured
+  document spec and the system renders it with the node's private brand kit into a PDF report and an
+  editable committee deck (native tables and charts, speaker notes). Figures in the documents go through the
+  same traceability check as the executive report. Each mission can opt out. PAGA's kit comes from its
+  official PowerPoint template (PAGA TEMPLATE.potm) and institutional presentation: #002A53 navy, light
+  thin type, italic accent words, a vertical side label (docs/PUBLISHING.md).

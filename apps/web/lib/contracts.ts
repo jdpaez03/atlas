@@ -337,6 +337,10 @@ export interface Mission {
    * was running when the server stopped
    */
   interrupted: boolean;
+  /**
+   * SCRIBE formats the report as institutional documents
+   */
+  publish: boolean;
   created_at: string;
   closed_at: string | null;
 }
@@ -531,6 +535,10 @@ export interface MissionReport {
    */
   version: number;
   deliverables: Attachment[];
+  /**
+   * institutional documents SCRIBE rendered from this report (PDF, deck)
+   */
+  documents: Attachment[];
   /**
    * what AUDITOR checked and what it found (system-written)
    */

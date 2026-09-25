@@ -49,6 +49,7 @@ from ..core.models import (
 from ..core.registry import RegistryError
 from ..core.store import WorldStore
 from . import auditor as audit_mod
+from . import publisher as publisher_mod
 from .agent_loader import AgentLoader, ResolvedAgent
 from .backend import BackendInfo, detect_backend
 from .context import NodeContext
@@ -110,6 +111,18 @@ def _retryable(exc: BaseException) -> bool:
                               "RemoteProtocolError"):
         return True
     return isinstance(exc, OSError)
+
+
+def _resolve_publisher(loader: AgentLoader, config: LiveConfig, node: str) -> ResolvedAgent | None:
+    if not config.publish:
+        return None
+    try:
+        agent = loader.resolve("scribe")
+    except RegistryError:
+        return None
+    if not agent.available or not loader.registry.can_work_in(agent.id, node):
+        return None
+    return agent
 
 
 def _resolve_auditor(loader: AgentLoader, config: LiveConfig) -> ResolvedAgent | None:
@@ -229,6 +242,7 @@ class LiveMission:
         orchestrator = loader.resolve(self.store.registry.orchestrator.id)
         roster = loader.roster(mission.node)
         auditor = _resolve_auditor(loader, self.config)
+        publisher = _resolve_publisher(loader, self.config, mission.node)
         self.scope = MissionScope(
             store=self.store,
             meter=Meter(engine.llm if backend == "api" else None, self.store, mission.id, engine.prices,
@@ -241,6 +255,7 @@ class LiveMission:
             agents={r.id: r for r in roster},
             orchestrator=orchestrator,
             auditor=auditor,
+            publisher=publisher,
         )
         self.refs: dict[str, str] = {}  # plan ref -> task id
         for i, tid in enumerate(mission.task_ids):  # earlier rounds (follow-ups): T1, T2...
@@ -353,6 +368,7 @@ class LiveMission:
 
         await self._phase(MissionPhase.REPORTING)
         await self._atlas(AgentStatus.WORKING, "Writing executive report")
+        report = await self._publish(report)
         await s.submit_mission_report(report)
         await self._phase(MissionPhase.FOLLOW_UP)
         await self._atlas(AgentStatus.COMPLETED, "Mission report delivered")
@@ -763,6 +779,34 @@ class LiveMission:
             references=_str_list(data.get("references")),
         ))
 
+    async def _publish(self, report: MissionReport) -> MissionReport:
+        """SCRIBE lays the final report out as institutional documents (PDF + deck). Never blocks the report:
+        on any failure the report goes out without them and the reason is logged."""
+        pub = self.scope.publisher
+        if pub is None or not self.store.mission(self.mission_id).publish:
+            return report
+        if self.limited:
+            await self.store.log(f"Documents skipped · {self.limited}", mission_id=self.mission_id,
+                                 agent_id=pub.id)
+            return report
+        try:
+            docs = await publisher_mod.publish(self, report)
+        except LLMError as exc:
+            if isinstance(exc, UsageLimitError):
+                await self._on_limit(str(exc))
+            await self._publish_failed(pub.id, str(exc))
+            return report
+        except Exception as exc:
+            log.exception("publishing failed")
+            await self._publish_failed(pub.id, f"{type(exc).__name__}: {exc}")
+            return report
+        return report.model_copy(update={"documents": docs})
+
+    async def _publish_failed(self, agent_id: str, why: str) -> None:
+        await self.store.log(f"Documents not produced · {_short(why, 200)}", mission_id=self.mission_id,
+                             agent_id=agent_id)
+        await self.scope.set_agent(agent_id, AgentStatus.ERROR, activity=_short(f"Documents failed: {why}", 120))
+
     async def _traced(self, report: MissionReport) -> MissionReport:
         """System check on the executive report: figures that come from no agent report / evidence / human."""
         untraced = audit_mod.untraced_figures(report, audit_mod.report_corpus(self))
@@ -836,6 +880,7 @@ class LiveMission:
         await self._atlas(AgentStatus.WORKING, f"Consolidating round {self.round}")
         report = await self._consolidate()
         await self._phase(MissionPhase.REPORTING)
+        report = await self._publish(report)
         await s.submit_mission_report(report)
         await self._phase(MissionPhase.FOLLOW_UP)
         await self._atlas(AgentStatus.COMPLETED, f"Mission report v{report.version} delivered")
@@ -990,6 +1035,7 @@ class LiveMission:
 
         await self._phase(MissionPhase.REPORTING)
         await self._atlas(AgentStatus.WORKING, f"Writing executive report v{report.version}")
+        report = await self._publish(report)
         await s.submit_mission_report(report)
         await self._phase(MissionPhase.FOLLOW_UP)
         await self._reply(message, f"Round {self.round} complete · report v{report.version} "
@@ -1093,10 +1139,11 @@ class LiveEngine:
         return self._agent_slots[agent_id]
 
     async def start(self, objective: str, node: str, backend: str | None = None, *,
-                    mission_id: str | None = None, attachments: list[Attachment] | None = None) -> Mission:
+                    mission_id: str | None = None, attachments: list[Attachment] | None = None,
+                    publish: bool = True) -> Mission:
         chosen = backend or self.backend_info().backend or "api"
         mission = await self.store.create_mission(objective, node, mode="live", mission_id=mission_id,
-                                                  attachments=attachments)
+                                                  attachments=attachments, publish=publish)
         live = LiveMission(self, mission, chosen)
         await self.store.log(
             f"Live mission on {'your Claude plan (Claude Code)' if chosen == 'subscription' else 'the Claude API'}",

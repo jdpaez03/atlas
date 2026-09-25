@@ -369,6 +369,7 @@ export function mockArgos(emit: Emit, speed: number, hooks: MockArgosHooks): Moc
     attachments: [],
     round: 1,
     interrupted: false,
+    publish: true,
     created_at: iso(0),
     closed_at: null,
   });

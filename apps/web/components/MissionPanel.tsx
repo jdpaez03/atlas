@@ -129,6 +129,7 @@ export function LaunchForm({
   const [err, setErr] = useState<string | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [fileErr, setFileErr] = useState<string[]>([]);
+  const [publish, setPublish] = useState(true);
 
   function addFiles(list: File[]) {
     const { accepted, errors } = acceptFiles(list, files);
@@ -173,7 +174,7 @@ export function LaunchForm({
     setErr(null);
     try {
       const body: LaunchMissionBody = isLive
-        ? { objective: obj, node: node.id, mode: "live" }
+        ? { objective: obj, node: node.id, mode: "live", publish }
         : { objective: obj, node: node.id, mode: "simulated", scenario_id: scenarioId || undefined };
       const m = await launch(body, files.length ? files : undefined);
       setObjective("");
@@ -260,6 +261,13 @@ export function LaunchForm({
           </p>
         ))}
       </div>
+      {isLive && (
+        <label className="flex cursor-pointer items-center gap-2 rounded-md border border-slate-300/15 bg-slate-300/[0.03] px-2.5 py-1.5 font-mono text-[10px] tracking-[0.04em] text-dim">
+          <input type="checkbox" checked={publish} onChange={(e) => setPublish(e.target.checked)} className="accent-slate-300" />
+          <span className="text-slate-300">Institutional documents</span>
+          <span className="text-mute">· SCRIBE formats the final report as a PDF and a committee deck</span>
+        </label>
+      )}
       <div className="flex flex-wrap items-end gap-3">
         {isLive ? (
           <p className="min-w-0 flex-1 self-center font-mono text-[9.5px] tracking-[0.06em] text-mute">

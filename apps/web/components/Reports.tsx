@@ -221,6 +221,31 @@ function Deliverables({ items, title = "Deliverables", empty }: { items: Attachm
   );
 }
 
+/** SCRIBE's institutional documents: the files the human forwards (PDF report, committee deck). */
+function Documents({ items }: { items: Attachment[] }) {
+  const color = "#cbd5e1";
+  if (!items.length) return null;
+  return (
+    <section className="rounded-lg border bg-gradient-to-br from-slate-300/[0.07] to-transparent p-3" style={{ borderColor: `${color}55` }}>
+      <h4 className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color }}>
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M3.5 1.75h6l3 3v9.5h-9z" />
+          <path d="M5.75 8.5h4.5M5.75 11h3M5.75 6h2" />
+        </svg>
+        Institutional documents
+        <span className="text-mute">· SCRIBE</span>
+      </h4>
+      <ul className="grid gap-1.5">
+        {items.map((a) => (
+          <li key={a.id}>
+            <FileLink a={a} accent={color} />
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 const isUnverified = (s: string) => /^unverified:/i.test(s.trim());
 
 function Limitations({ items }: { items: string[] }) {
@@ -633,6 +658,7 @@ function MissionReportView({
         <Findings claims={r.key_findings} />
       </div>
       <div className="grid content-start gap-3">
+        <Documents items={r.documents ?? []} />
         <Deliverables items={r.deliverables ?? []} title="Mission deliverables" />
         <Untraced items={r.untraced ?? []} />
         <MissionAudit summary={r.audit_summary ?? ""} audits={audits} />

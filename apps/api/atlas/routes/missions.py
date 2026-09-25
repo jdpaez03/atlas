@@ -47,6 +47,7 @@ class MissionCreate(BaseModel):
     mode: Literal["simulated", "live"] | None = None
     scenario_id: str | None = None
     speed: float | None = Field(default=None, gt=0)
+    publish: bool = Field(default=True, description="live missions: SCRIBE formats the report as PDF + deck")
 
 
 class MissionSummary(BaseModel):
@@ -178,7 +179,7 @@ async def create_mission(request: Request, sim: SimDep, live: LiveDep, registry:
     try:
         if _is_multipart(request):
             form = await request.form(max_files=MAX_FILES_PER_MISSION * 2 + 10)
-            raw = {k: v for k in ("objective", "node", "mode", "scenario_id", "speed")
+            raw = {k: v for k in ("objective", "node", "mode", "scenario_id", "speed", "publish")
                    if isinstance(v := form.get(k), str) and v != ""}
             files = _upload_list(form)
         else:
@@ -228,7 +229,7 @@ async def create_mission(request: Request, sim: SimDep, live: LiveDep, registry:
     try:
         if mode == "live":
             return await live.start(body.objective, body.node, backend=info.backend, mission_id=mission_id,
-                                    attachments=attachments)
+                                    attachments=attachments, publish=body.publish)
         return await sim.start(scenario, objective=body.objective, node=body.node, speed=body.speed,
                                mission_id=mission_id, attachments=attachments)
     except BaseException as exc:

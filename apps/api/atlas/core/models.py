@@ -314,6 +314,7 @@ class Mission(AtlasModel):
     attachments: list[Attachment] = Field(default_factory=list, description="files the user attached")
     round: int = 1
     interrupted: bool = Field(default=False, description="was running when the server stopped")
+    publish: bool = Field(default=True, description="SCRIBE formats the report as institutional documents")
     created_at: datetime = Field(default_factory=_now)
     closed_at: datetime | None = None
 
@@ -392,6 +393,8 @@ class MissionReport(AtlasModel):
     agent_report_ids: list[str] = Field(default_factory=list)
     version: int = Field(default=1, description="bumps with each follow-up round")
     deliverables: list[Attachment] = Field(default_factory=list)
+    documents: list[Attachment] = Field(
+        default_factory=list, description="institutional documents SCRIBE rendered from this report (PDF, deck)")
     audit_summary: str = Field(default="", description="what AUDITOR checked and what it found (system-written)")
     untraced: list[str] = Field(
         default_factory=list,
