@@ -233,9 +233,11 @@ class GraphSource:
     def _login_scopes(self) -> list[str]:
         """Scopes asked at sign-in: mail, plus OneDrive/SharePoint read when a node has onedrive:/sharepoint: file
         roots (one sign-in serves both; silent calls then ask each for its own scopes)."""
+        from atlas.argos.transcripts import TRANSCRIPT_SCOPES, transcripts_wanted
         from atlas.live.graphfiles import FILE_SCOPES, remote_roots_configured
 
-        return self._scopes() + (FILE_SCOPES if remote_roots_configured() else [])
+        return (self._scopes() + (FILE_SCOPES if remote_roots_configured() else [])
+                + (TRANSCRIPT_SCOPES if transcripts_wanted() else []))
 
     def _account(self) -> dict | None:
         accounts = self.app.get_accounts()

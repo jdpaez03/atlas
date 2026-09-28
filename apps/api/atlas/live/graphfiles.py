@@ -189,10 +189,10 @@ def _account(app: Any) -> dict | None:
     return accounts[0] if accounts else None
 
 
-def graph_token() -> str:
+def graph_token(scopes: list[str] | None = None) -> str:
     app = msal_app()
     account = _account(app)
-    result = app.acquire_token_silent(FILE_SCOPES, account=account) if account else None
+    result = app.acquire_token_silent(scopes or FILE_SCOPES, account=account) if account else None
     if not result or "access_token" not in result:
         raise GraphFilesError("not signed in to Microsoft 365 for files (or Files.Read.All was not granted): "
                               "the human must run `atlas-graph login` on the ATLAS machine")
@@ -464,10 +464,13 @@ def name_matches(name: str, query: str) -> bool:
 
 
 def _login(files_only: bool) -> int:
+    from ..argos.transcripts import TRANSCRIPT_SCOPES, transcripts_wanted
     from ..inbox.sources.graph import DRAFT_SCOPES, READ_SCOPES
 
     app = msal_app()
     scopes = list(FILE_SCOPES)
+    if transcripts_wanted():
+        scopes += TRANSCRIPT_SCOPES
     if not files_only:
         scopes += READ_SCOPES
         if os.getenv("ATLAS_MS_DRAFTS", "1").strip().lower() not in ("0", "false", "no", "off"):
@@ -496,12 +499,17 @@ def _status() -> int:
     ok = app.acquire_token_silent(FILE_SCOPES, account=acc)
     print(f"Account: {acc.get('username')}")
     print("Files: " + ("OK" if ok and "access_token" in ok else "no token (run: atlas-graph login)"))
+    from ..argos.transcripts import TRANSCRIPT_SCOPES, transcripts_wanted
+
+    if transcripts_wanted():
+        tr = app.acquire_token_silent(TRANSCRIPT_SCOPES, account=acc)
+        print("Teams transcripts: " + ("OK" if tr and "access_token" in tr else "no token (run: atlas-graph login)"))
     return 0 if ok and "access_token" in ok else 1
 
 
 def _roots() -> int:
     g = GraphFiles()
-    bad = 0
+    bad = seen = 0
     for key, value in sorted(os.environ.items()):
         if not key.startswith("ATLAS_FILE_ROOTS_"):
             continue
@@ -512,7 +520,12 @@ def _roots() -> int:
             except GraphFilesError as exc:
                 state = f"ERROR {exc}"
             bad += not state.startswith("OK")
+            seen += 1
             print(f"{key[len('ATLAS_FILE_ROOTS_'):].lower():<12} {root.label}  ->  {state}")
+    if not seen:
+        print("No onedrive:/sharepoint: roots configured: set e.g. ATLAS_FILE_ROOTS_CORPORATE=onedrive:/ in .env "
+              "(unset, the corporate node reads ~/Documents).")
+        return 1
     return 1 if bad else 0
 
 

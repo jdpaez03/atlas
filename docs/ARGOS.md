@@ -95,3 +95,18 @@ A **Monitor** view, a third top-level view next to Missions and Follow-ups (key 
 - **Status strip:** each check's last run, ok or failed, and its note/hint (e.g. "PAGA Suite not configured: set ATLAS_SUITE_URL and ATLAS_SUITE_TOKEN"), the next run, and "Run checks now".
 
 The activity feed tags `alert.upserted` as `ALR`, `rock.updated` as `RCK` and `brief.ready` as `BRF`. Open HIGH alerts show a red count on the Monitor tab.
+
+## Teams transcripts (`atlas/argos/transcripts.py`)
+
+Saves the transcript of the meetings you follow as text the agents can read.
+
+- **Setup:** set `ATLAS_TRANSCRIPT_MEETINGS=junta semanal` in `.env`. It holds meeting subjects separated by `;`, matched without case or accents.
+- **Entra app permissions (delegated):** `Calendars.Read`, `OnlineMeetings.Read` and `OnlineMeetingTranscript.Read.All`. The last one needs admin consent. After adding them, run `uv run atlas-graph login` and restart the API.
+- **Each run:** it runs with the other checks, or on demand from Monitor.
+  1. It reads your calendar for the last `ATLAS_TRANSCRIPT_LOOKBACK_DAYS` (default 30) and keeps the matching Teams meetings.
+  2. It finds each meeting's online meeting. A recurring series shares one online meeting.
+  3. It downloads every transcript not saved yet (WebVTT) and saves it as `[mm:ss] Speaker: text` in `<ATLAS_LOCAL_DIR>/transcripts/<node>/<YYYY-MM-DD> <Subject>.txt`.
+- **Access:** that folder is one of the node's read roots, so agents find it with `search_files` / `read_file`. Evidence records each file written.
+- **Alert:** a matched meeting that ended more than 3 hours ago with no transcript raises a LOW alert: "<subject> <date>: sin transcripción" (transcription was not turned on).
+- **Read-only** on Microsoft 365.
+

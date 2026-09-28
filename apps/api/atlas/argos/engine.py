@@ -66,9 +66,9 @@ log = logging.getLogger("atlas.argos")
 
 NODE = "corporate"
 ARGOS = "argos"
-CHECK_MODULES = ("dashboards", "l10", "rocks")  # the built-in checks, in run order
+CHECK_MODULES = ("dashboards", "l10", "rocks", "transcripts")  # the built-in checks, in run order
 BRIEF_MODULE = "brief"
-LABELS = {"dashboards": "dashboards", "l10": "L10", "rocks": "Rocks"}
+LABELS = {"dashboards": "dashboards", "l10": "L10", "rocks": "Rocks", "transcripts": "Teams transcripts"}
 ALERT_KINDS = {
     "missing_report", "identical_report", "moved_date", "removed_row", "kpi_mismatch", "value_change",
     "overdue_todo", "unreported_todo", "stale_issue", "rock_failed", "rock_at_risk", "other",

@@ -392,7 +392,7 @@ export const inboxApi: InboxApi = {
  * ---------------------------------------------------------------------------------------------- */
 
 export interface ArgosCheckStatus {
-  /** "dashboards" | "l10" | "rocks" */
+  /** "dashboards" | "l10" | "rocks" | "transcripts" */
   name: string;
   /** false = not configured; `note` carries the hint */
   enabled: boolean;

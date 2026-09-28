@@ -41,9 +41,9 @@ const KIND: Record<Alert["kind"], string> = {
   other: "Other",
 };
 
-const CHECK_LABEL: Record<string, string> = { dashboards: "Dashboards", l10: "L10", rocks: "Rocks" };
+const CHECK_LABEL: Record<string, string> = { dashboards: "Dashboards", l10: "L10", rocks: "Rocks", transcripts: "Teams transcripts" };
 const checkLabel = (c: string) => CHECK_LABEL[c] ?? c.charAt(0).toUpperCase() + c.slice(1);
-const CHECK_ORDER = ["dashboards", "l10", "rocks"];
+const CHECK_ORDER = ["dashboards", "l10", "rocks", "transcripts"];
 
 export const ROCK_STATUS: Record<RockStatus["status"], { color: string; label: string }> = {
   ON_TRACK: { color: "#22c55e", label: "On track" },

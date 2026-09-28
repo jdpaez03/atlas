@@ -11,7 +11,7 @@ import pytest
 
 from atlas.argos.checks import CheckContext, CheckNotConfigured
 from atlas.argos.l10 import L10Check
-from atlas.argos.suite import NOT_CONFIGURED_HINT, SuiteClient, SuiteError, map_issue, map_todo, parse_date
+from atlas.argos.suite import MISSING_CONFIG_HINT, SuiteClient, SuiteError, map_issue, map_todo, parse_date
 from atlas.core.events import EventBus
 from atlas.core.registry import AgentRegistry
 from atlas.core.store import WorldStore
@@ -179,7 +179,7 @@ def test_not_configured(registry, monkeypatch):
     monkeypatch.setenv("ATLAS_SUITE_TOKEN", "x")
     with pytest.raises(CheckNotConfigured) as exc:
         run(L10Check(), ctx(registry))
-    assert exc.value.hint == NOT_CONFIGURED_HINT
+    assert exc.value.hint == MISSING_CONFIG_HINT
     assert "ATLAS_SUITE_URL" in str(exc.value)
 
 

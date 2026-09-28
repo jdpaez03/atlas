@@ -10,7 +10,7 @@ Agents read the user's files ONLY through these tools, and only inside the read 
 `FileSandbox.resolve()` is the single policy function: real path (symlinks followed) inside an allowed root, the
 deepest matching root must belong to this node (a node never reads another node's roots), nothing on the deny
 list (.git, .env*, *.pem, *.key, id_rsa*, .ssh, ~/.claude, ...) and, inside ATLAS_LOCAL_DIR, only this node's
-context, this mission's attachments and this mission's outputs.
+context, its Teams transcripts (ARGOS), this mission's attachments and this mission's outputs.
 
 Reading is read-only and bounded: 25 MB per file, text paged by `offset` in chunks of at most
 ATLAS_FILE_MAX_CHARS (default 60k). Listing and searching are capped (entries, depth, visited directories) and
@@ -186,6 +186,9 @@ class FileSandbox:
         attachments = _real(paths.attachments_dir(mission_id))
         outputs = _real(paths.outputs_dir(node, mission_id))
         roots = [_real(r) for r in node_roots(node)]
+        transcripts = paths.local_dir() / "transcripts" / paths.safe_name(node)  # Teams transcripts (ARGOS)
+        if transcripts.is_dir():
+            roots.append(_real(transcripts))
         return cls(
             node=node, mission_id=mission_id,
             roots=[*roots, attachments, outputs],
@@ -236,7 +239,8 @@ class FileSandbox:
             fold = (lambda x: x.lower()) if os.name == "nt" else (lambda x: x)
             rel = [fold(p) for p in path.relative_to(self.local).parts]
             node, mid = fold(self.node), fold(self.mission_id)
-            allowed = (["context", node], ["missions", mid, "attachments"], ["outputs", node, mid])
+            allowed = (["context", node], ["transcripts", node], ["missions", mid, "attachments"],
+                       ["outputs", node, mid])
             ok = any(rel[:len(a)] == a for a in allowed)
             if not ok and traverse:
                 ok = any(len(rel) < len(a) and rel == a[:len(rel)] for a in allowed)

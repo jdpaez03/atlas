@@ -734,7 +734,7 @@ def test_http_argos(monkeypatch, checks):
 
         monkeypatch.setattr(engine_mod, "brief_builder", lambda: builder)
         r = client.post("/argos/brief")
-        assert r.status_code == 200 and r.json()["objective"] == "L10 brief · 2026-W39"
+        assert r.status_code == 200 and r.json()["objective"].startswith("L10 brief · 20")  # the current ISO week
         _poll(client, _closed(r.json()["id"]))
         briefs = client.get("/briefs").json()
         assert len(briefs) == 1 and briefs[0]["week"] == "2026-W39"

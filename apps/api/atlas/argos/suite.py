@@ -31,6 +31,9 @@ log = logging.getLogger("atlas.argos.suite")
 
 NOT_CONFIGURED_HINT = ("Set ATLAS_SUITE_URL and ATLAS_SUITE_SCOPE in .env (the Suite API's Entra scope), "
                        "then Connect PAGA Suite in Monitor")
+# config missing: no "Connect" button in Monitor (it only applies to the Entra-scope sign-in)
+MISSING_CONFIG_HINT = ("Set ATLAS_SUITE_URL plus ATLAS_SUITE_TOKEN (static token) or ATLAS_SUITE_SCOPE (Microsoft "
+                       "sign-in) in .env, then restart the API")
 DEFAULT_TIMEOUT = 20.0
 
 # -- aliases (normalized: lowercase, no accents, '_' separators) -----------------------------------------------
@@ -300,7 +303,7 @@ class SuiteClient:
         if not url or not (token or scope):
             missing = " and ".join(n for n, v in (("ATLAS_SUITE_URL", url),
                                                    ("ATLAS_SUITE_SCOPE (or ATLAS_SUITE_TOKEN)", token or scope)) if not v)
-            raise CheckNotConfigured(f"PAGA Suite not configured ({missing} missing)", NOT_CONFIGURED_HINT)
+            raise CheckNotConfigured(f"PAGA Suite not configured ({missing} missing)", MISSING_CONFIG_HINT)
         try:
             timeout = float(os.getenv("ATLAS_SUITE_TIMEOUT", "") or DEFAULT_TIMEOUT)
         except ValueError:
