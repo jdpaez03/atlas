@@ -169,7 +169,7 @@ function CheckChip({ c, now, onConnect }: { c: ArgosCheckStatus; now: number; on
           </svg>
           <div
             role="tooltip"
-            className="pointer-events-none invisible absolute top-full left-0 z-20 mt-1.5 w-[300px] rounded-md border border-edge-2 bg-panel-2 px-3 py-2 text-[11.5px] leading-relaxed text-slate-300 opacity-0 shadow-[0_18px_40px_-12px_rgba(0,0,0,0.9)] transition-opacity group-hover/chk:visible group-hover/chk:opacity-100 group-focus-visible/chk:visible group-focus-visible/chk:opacity-100"
+            className="pointer-events-none invisible fixed inset-x-3 bottom-20 z-50 rounded-md border border-edge-2 bg-panel-2 px-3 py-2 text-[11.5px] leading-relaxed text-slate-300 opacity-0 shadow-[0_18px_40px_-12px_rgba(0,0,0,0.9)] transition-opacity group-hover/chk:visible group-hover/chk:opacity-100 group-focus/chk:visible group-focus/chk:opacity-100 md:absolute md:inset-x-auto md:top-full md:bottom-auto md:left-0 md:z-20 md:mt-1.5 md:w-[300px]"
           >
             {c.note}
           </div>
@@ -201,7 +201,7 @@ function StatusStrip({
 }) {
   const checks = [...(status?.checks ?? [])].sort((a, b) => (CHECK_ORDER.indexOf(a.name) + 99) % 99 - (CHECK_ORDER.indexOf(b.name) + 99) % 99);
   return (
-    <section className="panel relative z-20 flex flex-col gap-2 px-4 py-3">
+    <section className="panel relative z-20 flex flex-col gap-2 px-3 py-3 md:px-4">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
         <div className="flex shrink-0 items-center gap-2.5">
           <h2 className="label flex items-center gap-2 !text-slate-300">
@@ -216,14 +216,14 @@ function StatusStrip({
         ) : status === null ? (
           <span className="font-mono text-[10.5px] text-mute">This backend has no ARGOS module (GET /argos/status → 404).</span>
         ) : (
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 max-md:grid max-md:w-full max-md:flex-none max-md:grid-cols-2">
             {checks.map((c) => (
               <CheckChip key={c.name} c={c} now={now} onConnect={onConnectSuite} />
             ))}
           </div>
         )}
         {status && (
-          <div className="ml-auto flex shrink-0 items-center gap-4">
+          <div className="ml-auto flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 max-md:w-full max-md:justify-between">
             <dl className="grid grid-cols-[auto_auto] gap-x-2.5 gap-y-0.5 font-mono text-[10px]">
               <dt className="uppercase tracking-[0.14em] text-mute">Next run</dt>
               <dd className="text-slate-200 tabular-nums">{upcoming(status.next_run, now)}</dd>
@@ -474,7 +474,7 @@ function AlertsPanel({ alerts, patch, now, colorOf, className }: { alerts: Alert
       meta={
         <div className="flex flex-wrap items-center justify-end gap-2">
           {high > 0 && <span className="text-red-300">{high} open high</span>}
-          <div role="radiogroup" aria-label="Alert status" className="flex items-center rounded-md border border-edge bg-black/30 p-0.5">
+          <div role="radiogroup" aria-label="Alert status" className="flex max-w-full items-center overflow-x-auto rounded-md border border-edge bg-black/30 p-0.5">
             {tabs.map((t) => {
               const on = filter === t.id;
               return (
@@ -704,7 +704,57 @@ function RocksPanel({ rocks, patch, reload, now, colorOf, className }: { rocks: 
       {rocks.length === 0 ? (
         <Empty>No Rocks yet. They come from PAGA Suite (Rocks module) when it is connected, otherwise from rocks.yaml under ATLAS_LOCAL_DIR/argos/.</Empty>
       ) : (
-        <div className="overflow-x-auto scroll-thin">
+        <>
+        {/* phones: one card per Rock */}
+        <ul className="divide-y divide-edge/40 md:hidden">
+          {sorted.map((r) => {
+            const s = ROCK_STATUS[r.status] ?? ROCK_STATUS.UNKNOWN;
+            const due = dueText(r.due, now);
+            const measurable = r.metric != null && r.target != null;
+            const progress = measurable && r.current != null && r.target ? Math.max(0, Math.min(1, r.current / r.target)) : 0;
+            return (
+              <li key={r.id} className="px-3.5 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[9.5px] whitespace-nowrap uppercase tracking-[0.12em]"
+                    style={{ color: s.color, borderColor: `${s.color}55`, background: `${s.color}14` }}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: s.color }} />
+                    {s.label}
+                  </span>
+                  <span className={cx("font-mono text-[10px]", r.status !== "DONE" && due.late ? "text-red-300" : "text-mute")}>
+                    {shortDay(r.due)}
+                    {r.status !== "DONE" && ` · ${due.text}`}
+                  </span>
+                </div>
+                <p className="mt-1.5 text-[13.5px] leading-snug text-ink">{r.title}</p>
+                <p className="mt-0.5 text-[11.5px] text-slate-400">
+                  {r.owner}
+                  {r.project && (
+                    <span className="ml-1.5 font-mono text-[9.5px] uppercase tracking-[0.12em]" style={{ color: colorOf(r.project) }}>
+                      · {r.project}
+                    </span>
+                  )}
+                  {twoOwners(r.owner) && <span className="ml-1.5 font-mono text-[9px] uppercase tracking-[0.12em] text-amber-300">2 owners</span>}
+                </p>
+                {measurable && (
+                  <div className="mt-2">
+                    <div className="flex items-baseline gap-1">
+                      <CurrentEditor rock={r} patch={patch} />
+                      <span className="font-mono text-[11px] text-dim tabular-nums">/ {fmtNum(r.target!)}</span>
+                      <span className="ml-1 truncate text-[11px] text-dim">{r.metric}</span>
+                    </div>
+                    <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/[0.06]">
+                      <div className="h-full rounded-full" style={{ width: `${progress * 100}%`, background: s.color }} />
+                    </div>
+                  </div>
+                )}
+                {r.reason && <p className="mt-1.5 text-[12px] leading-snug text-slate-400">{r.reason}</p>}
+              </li>
+            );
+          })}
+        </ul>
+        <div className="hidden overflow-x-auto scroll-thin md:block">
           <table className="w-full min-w-[980px] border-collapse text-left">
             <thead>
               <tr className="border-b border-edge/70 font-mono text-[9px] uppercase tracking-[0.16em] text-mute">
@@ -782,6 +832,7 @@ function RocksPanel({ rocks, patch, reload, now, colorOf, className }: { rocks: 
             </tbody>
           </table>
         </div>
+        </>
       )}
     </Panel>
   );
@@ -1003,14 +1054,15 @@ export function MonitorView({
           <DeviceCodeModal start={argos.suiteConnect} poll={argos.suiteConnectStatus} copy={SUITE_CONNECT_COPY} onClose={closeSuite} onConnected={onSuiteConnected} closeOnConnected />,
           document.body,
         )}
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px]">
-        <AlertsPanel alerts={alerts} patch={patchAlert} now={now} colorOf={colorOf} className="min-h-[420px]" />
-        <div className="flex min-w-0 flex-col gap-4 xl:self-start">
-          <BriefCard briefs={briefs} fileUrl={argos.briefFileUrl} build={build} building={briefStarting || !!briefId} error={briefError} />
-          {feed}
+      {/* phones: the brief first (the week in three lines), then alerts, Rocks, activity */}
+      <div className="grid grid-cols-1 gap-4 max-md:contents xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px]">
+        <AlertsPanel alerts={alerts} patch={patchAlert} now={now} colorOf={colorOf} className="min-h-[420px] max-md:order-2 max-md:min-h-0" />
+        <div className="flex min-w-0 flex-col gap-4 max-md:contents xl:self-start">
+          <BriefCard className="max-md:order-1" briefs={briefs} fileUrl={argos.briefFileUrl} build={build} building={briefStarting || !!briefId} error={briefError} />
+          <div className="flex min-w-0 flex-col max-md:order-4">{feed}</div>
         </div>
       </div>
-      <RocksPanel rocks={rocks} patch={patchRock} reload={argos.reloadRocks} now={now} colorOf={colorOf} />
+      <RocksPanel className="max-md:order-3" rocks={rocks} patch={patchRock} reload={argos.reloadRocks} now={now} colorOf={colorOf} />
     </div>
   );
 }

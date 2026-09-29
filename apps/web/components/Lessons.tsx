@@ -224,8 +224,8 @@ export function LessonsView({ lessons, agents, api, ready }: { lessons: Lesson[]
   }, [active, agents]);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
-      <div className="flex flex-col gap-4">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
+      <div className="flex min-w-0 flex-col gap-4">
         {ready ? <Composer agents={agents} api={api} initialAgent="scribe" /> : <Panel code="01" title="Teach an agent"><Empty>Connecting…</Empty></Panel>}
       </div>
       <div className="flex min-w-0 flex-col gap-4">

@@ -391,12 +391,12 @@ export function DigestView({
         </div>
         {run && digests.length > 0 && <DigestRunControl run={run} />}
         {digests.length > 0 && (
-          <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-dim">
+          <label className="flex min-w-0 max-w-full items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-dim">
             Digest
             <select
               value={digest?.id ?? ""}
               onChange={(e) => setPicked(e.target.value === latest?.id ? null : e.target.value)}
-              className="h-7 max-w-[340px] rounded-md border border-edge bg-black/40 px-2 font-mono text-[10.5px] normal-case tracking-normal text-slate-200 [color-scheme:dark] focus:border-signal/60 focus:outline-none"
+              className="h-7 min-w-0 max-w-[340px] flex-1 rounded-md border border-edge bg-black/40 px-2 font-mono text-[10.5px] normal-case tracking-normal text-slate-200 [color-scheme:dark] focus:border-signal/60 focus:outline-none"
             >
               {digests.map((d, i) => (
                 <option key={d.id} value={d.id}>

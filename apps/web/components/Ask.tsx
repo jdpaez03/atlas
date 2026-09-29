@@ -133,7 +133,7 @@ function AtlasTurn({
       {m.suggest_mission && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-400/25 bg-amber-500/[0.05] px-3 py-2 text-[12.5px] text-slate-200">
           <span className="font-mono text-[9.5px] uppercase tracking-[0.16em] text-amber-300/90">Needs new work</span>
-          <span className="min-w-0 flex-1">{m.suggest_mission}</span>
+          <span className="min-w-[12rem] flex-1">{m.suggest_mission}</span>
           <button
             disabled={launching || launched}
             onClick={async () => {

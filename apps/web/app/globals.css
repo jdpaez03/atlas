@@ -124,3 +124,15 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .dot-live, .glow, .alarm, .feed-in, .spin-slow, .spin-rev, .bar-sweep::after, .edge-flow, .phase-ping { animation: none !important; }
 }
+
+/* Phones: 16px form fields (iOS zooms into smaller ones on focus), room under the notch */
+@media (max-width: 767px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+  header.sticky {
+    padding-top: env(safe-area-inset-top);
+  }
+}

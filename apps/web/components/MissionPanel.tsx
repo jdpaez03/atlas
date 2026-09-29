@@ -364,7 +364,7 @@ export function MissionPanel({
   if (!mission) {
     return (
       <section className="panel overflow-hidden">
-        <div className="grid gap-8 p-6 lg:grid-cols-[1.1fr_1fr] lg:p-8">
+        <div className="grid gap-6 p-4 md:gap-8 md:p-6 lg:grid-cols-[1.1fr_1fr] lg:p-8">
           <div className="flex flex-col justify-center">
             <p className="label !text-signal/70">No active mission · {node?.name ?? "—"} node</p>
             <h1 className="mt-3 text-[28px] font-light leading-tight tracking-tight text-ink">
@@ -383,7 +383,7 @@ export function MissionPanel({
               ))}
             </div>
           </div>
-          <div className="rounded-lg border border-edge bg-black/20 p-5">
+          <div className="rounded-lg border border-edge bg-black/20 p-3.5 md:p-5">
             <LaunchForm hero node={node} config={config} loadScenarios={loadScenarios} launch={launch} onLaunched={onLaunched} />
           </div>
         </div>
@@ -403,7 +403,7 @@ export function MissionPanel({
 
   return (
     <section className="panel overflow-hidden">
-      <div className="flex flex-col gap-5 px-5 pt-4 pb-5 xl:flex-row xl:items-start">
+      <div className="flex flex-col gap-4 px-3.5 pt-3.5 pb-4 md:gap-5 md:px-5 md:pt-4 md:pb-5 xl:flex-row xl:items-start">
         {/* objective */}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -461,7 +461,7 @@ export function MissionPanel({
         </div>
 
         {/* stats + action */}
-        <div className="flex shrink-0 items-stretch gap-2">
+        <div className="grid shrink-0 grid-cols-4 items-stretch gap-2 md:flex">
           <Stat
             label="Elapsed"
             value={interrupted ? "—" : now ? elapsed(mission.created_at, closed && mission.closed_at ? new Date(mission.closed_at).getTime() : now) : "--:--"}
@@ -475,7 +475,7 @@ export function MissionPanel({
           <button
             onClick={() => setComposing((v) => !v)}
             className={cx(
-              "ml-1 flex items-center gap-2 rounded-md border px-3.5 font-mono text-[10.5px] font-semibold uppercase tracking-[0.2em] transition",
+              "col-span-4 flex min-h-10 items-center justify-center gap-2 rounded-md border px-3.5 font-mono text-[10.5px] font-semibold uppercase tracking-[0.2em] transition md:ml-1 md:min-h-0",
               composing ? "border-edge-2 text-dim" : "border-signal/50 bg-signal/10 text-signal hover:bg-signal/20",
             )}
           >
@@ -485,7 +485,7 @@ export function MissionPanel({
       </div>
 
       {composing && (
-        <div className="mx-5 mb-5 rounded-lg border border-edge bg-black/25 p-4">
+        <div className="mx-3 mb-4 rounded-lg border border-edge bg-black/25 p-3 md:mx-5 md:mb-5 md:p-4">
           <LaunchForm
             node={node}
             config={config}
@@ -595,7 +595,7 @@ function ResumeMission({ unfinished, onResume }: { unfinished: number; onResume:
   }
 
   return (
-    <div className="ml-1 flex max-w-[220px] flex-col justify-center gap-1">
+    <div className="flex flex-col justify-center gap-1 max-md:col-span-2 md:ml-1 md:max-w-[220px]">
       <button
         onClick={go}
         disabled={busy}
@@ -639,14 +639,14 @@ function CancelMission({ onConfirm }: { onConfirm: () => Promise<unknown> }) {
     return (
       <button
         onClick={() => setConfirming(true)}
-        className="ml-1 rounded-md border border-edge-2 px-3 font-mono text-[10.5px] font-semibold uppercase tracking-[0.2em] text-dim transition hover:border-red-400/50 hover:text-red-300"
+        className="rounded-md border border-edge-2 px-3 font-mono max-md:col-span-2 max-md:min-h-10 md:ml-1 text-[10.5px] font-semibold uppercase tracking-[0.2em] text-dim transition hover:border-red-400/50 hover:text-red-300"
       >
         Cancel
       </button>
     );
   }
   return (
-    <div className="ml-1 flex flex-col justify-center gap-1 rounded-md border border-red-400/50 bg-red-500/10 px-2.5 py-1" role="group" aria-label="Confirm cancel">
+    <div className="flex flex-col justify-center gap-1 rounded-md border border-red-400/50 bg-red-500/10 px-2.5 py-1 max-md:col-span-2 md:ml-1" role="group" aria-label="Confirm cancel">
       <span className="font-mono text-[8.5px] uppercase tracking-[0.2em] text-red-300/90">{err ? <span title={err}>Cancel failed</span> : "Stop this mission?"}</span>
       <div className="flex gap-1.5">
         <button
@@ -675,9 +675,9 @@ function CancelMission({ onConfirm }: { onConfirm: () => Promise<unknown> }) {
 function Stat({ label, value, alert }: { label: string; value: string; alert?: boolean }) {
   return (
     <div
-      className={cx("flex min-w-[84px] flex-col justify-center rounded-md border px-3 py-1.5", alert ? "border-amber-500/50 bg-amber-500/10" : "border-edge bg-black/20")}
+      className={cx("flex min-w-0 flex-col justify-center rounded-md border px-2 py-1.5 md:min-w-[84px] md:px-3", alert ? "border-amber-500/50 bg-amber-500/10" : "border-edge bg-black/20")}
     >
-      <span className="font-mono text-[8.5px] uppercase tracking-[0.2em] text-dim">{label}</span>
+      <span className="truncate font-mono text-[8.5px] uppercase tracking-[0.12em] text-dim md:tracking-[0.2em]">{label}</span>
       <span className={cx("mt-0.5 font-mono text-[16px] tabular-nums", alert ? "text-amber-300" : "text-ink")}>{value}</span>
     </div>
   );

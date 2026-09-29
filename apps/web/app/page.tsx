@@ -8,7 +8,7 @@ import { CollabGraph } from "@/components/CollabGraph";
 import { DigestView, FollowUpsTabs, useDigestRun, type FollowUpsTab } from "@/components/Digest";
 import { DraftDrawer } from "@/components/DraftDrawer";
 import { FollowUpsBoard, type FollowUpActions } from "@/components/FollowUps";
-import { Header, type View } from "@/components/Header";
+import { Header, MobileNav, type View } from "@/components/Header";
 import { InboxChip } from "@/components/InboxChip";
 import { MissionHistory } from "@/components/MissionHistory";
 import { MissionPanel } from "@/components/MissionPanel";
@@ -264,9 +264,16 @@ export default function CommandCenter() {
         proposedLessons={(world.lessons ?? []).filter((l) => l.status === "proposed").length}
         inbox={<InboxChip inbox={inbox} ready={ready} conn={conn} />}
       />
+      <MobileNav
+        view={view}
+        onView={setView}
+        counts={fuCounts}
+        highAlerts={highAlerts}
+        proposedLessons={(world.lessons ?? []).filter((l) => l.status === "proposed").length}
+      />
       <DraftDrawer draft={openDraft} followup={openDraftFollowup} onClose={() => setDraftId(null)} decide={inbox.decideDraft} />
       {view === "ask" ? (
-        <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
+        <main className="mx-auto flex max-w-[1680px] flex-col gap-3 px-3 pb-24 pt-3 md:gap-4 md:px-4 md:pt-4 lg:px-6 lg:pb-4">
           <AskView
             node={nodeId ?? "corporate"}
             nodeName={node?.name ?? "—"}
@@ -281,7 +288,7 @@ export default function CommandCenter() {
               } else setView(r.kind === "brief" ? "monitor" : "followups");
             }}
           />
-          <footer className="flex items-center justify-between py-2 font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
+          <footer className="hidden items-center justify-between py-2 md:flex font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
             <span>ATLAS · ask · answers from earlier work, your notes and the live state</span>
             <span>
               {atlas.mode === "mock" ? "Simulated stream" : API_URL} · seq {world.last_seq}
@@ -289,9 +296,9 @@ export default function CommandCenter() {
           </footer>
         </main>
       ) : view === "lessons" ? (
-        <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
+        <main className="mx-auto flex max-w-[1680px] flex-col gap-3 px-3 pb-24 pt-3 md:gap-4 md:px-4 md:pt-4 lg:px-6 lg:pb-4">
           <LessonsView lessons={world.lessons ?? []} agents={world.agents} api={atlas.lessons} ready={ready} />
-          <footer className="flex items-center justify-between py-2 font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
+          <footer className="hidden items-center justify-between py-2 md:flex font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
             <span>ATLAS · lessons · approved preferences every agent follows from its next run</span>
             <span>
               {atlas.mode === "mock" ? "Simulated stream" : API_URL} · seq {world.last_seq}
@@ -299,7 +306,7 @@ export default function CommandCenter() {
           </footer>
         </main>
       ) : view === "usage" ? (
-        <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
+        <main className="mx-auto flex max-w-[1680px] flex-col gap-3 px-3 pb-24 pt-3 md:gap-4 md:px-4 md:pt-4 lg:px-6 lg:pb-4">
           <UsageView
             load={atlas.usage}
             node={nodeId}
@@ -308,7 +315,7 @@ export default function CommandCenter() {
             ready={ready}
             refreshKey={`${conn}|${missionsKey}`}
           />
-          <footer className="flex items-center justify-between py-2 font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
+          <footer className="hidden items-center justify-between py-2 md:flex font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
             <span>ATLAS · LLM usage by agent and day · estimates, not a bill</span>
             <span>
               {atlas.mode === "mock" ? "Simulated stream" : API_URL} · seq {world.last_seq}
@@ -316,7 +323,7 @@ export default function CommandCenter() {
           </footer>
         </main>
       ) : view === "monitor" ? (
-        <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
+        <main className="mx-auto flex max-w-[1680px] flex-col gap-3 px-3 pb-24 pt-3 md:gap-4 md:px-4 md:pt-4 lg:px-6 lg:pb-4">
           <MonitorView
             alerts={alerts}
             rocks={world.rocks ?? []}
@@ -326,7 +333,7 @@ export default function CommandCenter() {
             ready={ready}
             feed={<ActivityFeed events={monitorEvents} agents={agents} className="h-[380px]" />}
           />
-          <footer className="flex items-center justify-between py-2 font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
+          <footer className="hidden items-center justify-between py-2 md:flex font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
             <span>ARGOS · Dashboards, L10 and Rocks · reads only, never writes to the Suite</span>
             <span>
               {atlas.mode === "mock" ? "Simulated stream" : API_URL} · seq {world.last_seq}
@@ -334,7 +341,7 @@ export default function CommandCenter() {
           </footer>
         </main>
       ) : view === "followups" ? (
-        <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
+        <main className="mx-auto flex max-w-[1680px] flex-col gap-3 px-3 pb-24 pt-3 md:gap-4 md:px-4 md:pt-4 lg:px-6 lg:pb-4">
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_340px]">
             {fuTab === "digest" ? (
               <DigestView digests={digests} followups={followups} onAsk={showFollowup} switcher={fuSwitch} run={digestRun} className="min-h-[560px]" />
@@ -354,7 +361,7 @@ export default function CommandCenter() {
               <ActivityFeed events={inboxEvents} agents={agents} className="h-[420px] xl:h-auto xl:min-h-[360px] xl:flex-1" />
             </div>
           </div>
-          <footer className="flex items-center justify-between py-2 font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
+          <footer className="hidden items-center justify-between py-2 md:flex font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
             <span>ATLAS · Follow-ups from your work email · never sends email</span>
             <span>
               {atlas.mode === "mock" ? "Simulated stream" : API_URL} · seq {world.last_seq}
@@ -362,7 +369,7 @@ export default function CommandCenter() {
           </footer>
         </main>
       ) : (
-      <main className="mx-auto flex max-w-[1680px] flex-col gap-4 px-4 py-4 lg:px-6">
+      <main className="mx-auto flex max-w-[1680px] flex-col gap-3 px-3 pb-24 pt-3 md:gap-4 md:px-4 md:pt-4 lg:px-6 lg:pb-4">
         <MissionPanel
           mission={mission}
           missions={nodeMissions}
@@ -401,10 +408,11 @@ export default function CommandCenter() {
         )}
 
         {/* Three independent columns: each stretches to the tallest; the feed fills what's left. */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-[minmax(340px,380px)_minmax(0,1fr)_minmax(310px,350px)]">
-          <div className="flex min-w-0 flex-col">
+        {/* phones: the columns dissolve (display: contents) and the panels are re-ordered by what matters on the go */}
+        <div className="grid grid-cols-1 gap-4 max-md:contents lg:grid-cols-2 xl:grid-cols-[minmax(340px,380px)_minmax(0,1fr)_minmax(310px,350px)]">
+          <div className="flex min-w-0 flex-col max-md:contents">
             <AgentBoard
-              className="flex-1"
+              className="flex-1 max-md:order-5"
               orchestrator={org.orchestrator}
               core={org.core}
               divisions={org.divisions}
@@ -414,8 +422,9 @@ export default function CommandCenter() {
               availability={availability}
             />
           </div>
-          <div className="flex min-w-0 flex-col gap-4">
+          <div className="flex min-w-0 flex-col gap-4 max-md:contents">
             <CollabGraph
+              className="max-md:hidden"
               orchestrator={org.orchestrator}
               core={org.core}
               divisions={org.divisions}
@@ -423,13 +432,13 @@ export default function CommandCenter() {
               messages={agentMessages}
               agents={agents}
             />
-            <TaskBoard className="flex-1" tasks={tasks} agents={agents} />
+            <TaskBoard className="flex-1 max-md:order-4" tasks={tasks} agents={agents} />
           </div>
-          <div className={`flex min-w-0 flex-col gap-4 lg:col-span-2 xl:order-none xl:col-span-1 ${pendingCount > 0 ? "order-first" : ""}`}>
-            <ApprovalQueue approvals={approvals} agents={agents} decide={atlas.decide} drafts={toReview} onOpenDraft={setDraftId} />
+          <div className={`flex min-w-0 flex-col gap-4 max-md:contents lg:col-span-2 xl:order-none xl:col-span-1 ${pendingCount > 0 ? "order-first" : ""}`}>
+            <ApprovalQueue className="max-md:order-1" approvals={approvals} agents={agents} decide={atlas.decide} drafts={toReview} onOpenDraft={setDraftId} />
             {/* thread + feed share what's left; absolutely positioned so they never drive the row height */}
-            <div className="relative h-[460px] xl:h-auto xl:min-h-[600px] xl:flex-1">
-              <div className="absolute inset-0 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-1 xl:grid-rows-[minmax(0,1.1fr)_minmax(0,1fr)]">
+            <div className="relative h-[460px] max-md:contents xl:h-auto xl:min-h-[600px] xl:flex-1">
+              <div className="absolute inset-0 grid grid-cols-1 gap-4 max-md:contents lg:grid-cols-2 xl:grid-cols-1 xl:grid-rows-[minmax(0,1.1fr)_minmax(0,1fr)]">
                 <MissionThread
                   mission={mission}
                   messages={messages}
@@ -437,15 +446,16 @@ export default function CommandCenter() {
                   agents={agents}
                   send={atlas.sendMessage}
                   attach={atlas.attach}
-                  className="min-h-0"
+                  className="min-h-0 max-md:order-3 max-md:h-[440px]"
                 />
-                <ActivityFeed events={events} agents={agents} className="min-h-0" />
+                <ActivityFeed events={events} agents={agents} className="min-h-0 max-md:order-6 max-md:h-[360px]" />
               </div>
             </div>
           </div>
         </div>
 
         <Reports
+          className="max-md:order-2"
           missionReports={missionReports}
           agentReports={agentReports}
           agents={agents}
@@ -455,7 +465,7 @@ export default function CommandCenter() {
           missionClosed={mission?.phase === "CLOSED" || !!mission?.interrupted}
         />
 
-        <footer className="flex items-center justify-between py-2 font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
+        <footer className="hidden items-center justify-between py-2 md:flex font-mono text-[9.5px] uppercase tracking-[0.22em] text-mute">
           <span>ATLAS · Task → Delegate → Collaborate → Review → Report</span>
           <span>
             {atlas.mode === "mock" ? "Simulated stream" : API_URL} · seq {world.last_seq}

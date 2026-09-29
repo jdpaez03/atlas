@@ -269,7 +269,7 @@ export function CollabGraph({
             <span className="text-mute">No inter-agent traffic yet</span>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-2.5">
+        <div className="hidden shrink-0 items-center gap-2.5 sm:flex">
           {Object.entries(MSG).map(([k, v]) => (
             <span key={k} className="flex items-center gap-1 font-mono text-[8.5px] uppercase tracking-[0.12em] text-dim">
               <span className="h-[2px] w-2.5 rounded" style={{ background: v.color }} />

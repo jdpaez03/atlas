@@ -23,13 +23,13 @@ export function Panel({
 }) {
   return (
     <section className={cx("panel flex min-w-0 flex-col", className)} style={style}>
-      <header className="flex items-center justify-between gap-3 border-b border-edge/80 px-4 py-2.5">
+      <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-edge/80 px-3 py-2.5 md:flex-nowrap md:px-4">
         <h2 className="label flex items-center gap-2 whitespace-nowrap !text-slate-300">
           {code && <span className="text-signal/60">{code}</span>}
           <span className="text-signal/30">//</span>
           {title}
         </h2>
-        {meta && <div className="flex min-w-0 items-center gap-2 font-mono text-[10.5px] text-dim">{meta}</div>}
+        {meta && <div className="flex min-w-0 max-w-full items-center gap-2 font-mono text-[10.5px] text-dim">{meta}</div>}
       </header>
       <div className={cx("min-h-0 flex-1", bodyClassName)}>{children}</div>
     </section>

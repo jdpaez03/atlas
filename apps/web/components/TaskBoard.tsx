@@ -4,7 +4,7 @@ import type { AgentDefinition, Task } from "@/lib/contracts";
 import { PRIORITY, REASON_LABEL, TASK_STATUS, cx, pct } from "@/lib/ui";
 import { AgentName, Empty, Panel, ProgressBar } from "./primitives";
 
-const COLS = "grid-cols-[26px_minmax(0,1fr)_76px_80px_72px] @[600px]:grid-cols-[30px_minmax(0,1fr)_84px_84px_34px_58px_78px]";
+const COLS = "grid-cols-[minmax(0,1fr)_70px_78px] @[440px]:grid-cols-[26px_minmax(0,1fr)_76px_80px_72px] @[600px]:grid-cols-[30px_minmax(0,1fr)_84px_84px_34px_58px_78px]";
 
 export function TaskBoard({ tasks, agents, className }: { tasks: Task[]; agents: Map<string, AgentDefinition>; className?: string }) {
   const index = new Map(tasks.map((t, i) => [t.id, `T${String(i + 1).padStart(2, "0")}`]));
@@ -33,14 +33,14 @@ export function TaskBoard({ tasks, agents, className }: { tasks: Task[]; agents:
         <Empty>No tasks yet — ATLAS will decompose the objective into a task graph.</Empty>
       ) : (
         <div>
-          <div className={cx("grid items-center gap-2.5 border-b border-edge/60 px-4 py-2 font-mono text-[9px] uppercase tracking-[0.2em] text-mute", COLS)}>
-            <span>ID</span>
+          <div className={cx("grid items-center gap-2.5 border-b border-edge/60 px-3 py-2 font-mono @[440px]:px-4 text-[9px] uppercase tracking-[0.2em] text-mute", COLS)}>
+            <span className="hidden @[440px]:block">ID</span>
             <span>Task</span>
             <span>Agent</span>
             <span>Status</span>
             <span className="hidden @[600px]:block">Pri</span>
             <span className="hidden @[600px]:block">Deps</span>
-            <span className="text-right">Progress</span>
+            <span className="hidden text-right @[440px]:block">Progress</span>
           </div>
           <ul>
             {tasks.map((t) => {
@@ -53,13 +53,13 @@ export function TaskBoard({ tasks, agents, className }: { tasks: Task[]; agents:
                 <li
                   key={t.id}
                   className={cx(
-                    "grid items-center gap-2.5 border-b border-edge/40 px-4 py-2 transition-colors last:border-b-0 hover:bg-white/[0.02]",
+                    "grid items-center gap-2.5 border-b border-edge/40 px-3 py-2 transition-colors @[440px]:px-4 last:border-b-0 hover:bg-white/[0.02]",
                     COLS,
                     awaiting && "bg-amber-500/[0.06]",
                   )}
                   title={t.description}
                 >
-                  <span className="font-mono text-[10px] text-mute">{index.get(t.id)}</span>
+                  <span className="hidden font-mono text-[10px] text-mute @[440px]:block">{index.get(t.id)}</span>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className={cx("truncate text-[12.5px]", faded ? "text-slate-400" : "text-slate-100")}>{t.title}</span>
@@ -125,7 +125,7 @@ export function TaskBoard({ tasks, agents, className }: { tasks: Task[]; agents:
                       ]
                     )}
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className="hidden items-center gap-2 @[440px]:flex">
                     <ProgressBar value={t.progress} color={st.color} active={t.status === "IN_PROGRESS"} />
                     <span className="w-7 shrink-0 text-right font-mono text-[9.5px] tabular-nums text-dim">{pct(t.progress)}%</span>
                   </div>
