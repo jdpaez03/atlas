@@ -136,3 +136,17 @@ body {
     padding-top: env(safe-area-inset-top);
   }
 }
+
+/* Grid items default to min-width: auto, so one long unbroken line (a truncated title, a URL) widens the whole
+   column past its box. Let them shrink; explicit min-w-* utilities still win (they are a later layer). */
+@layer base {
+  .grid > * {
+    min-width: 0;
+  }
+  /* long unbroken strings (URLs, file paths, ids) wrap inside their card instead of spilling out */
+  .panel,
+  aside,
+  [role="dialog"] {
+    overflow-wrap: anywhere;
+  }
+}
