@@ -107,4 +107,16 @@ SCRIBE formats the final report when a mission closes. Any agent can also produc
 - **Look:** the node's brand kit is used, so the result looks like SCRIBE's documents.
 - **Where it goes:** the file lands in the mission outputs, like any other deliverable.
 - **Inputs from earlier missions:** a mission can read the node's earlier deliverables in place (`outputs/<node>/<mission_id>/`, read-only). An approved script or workbook from a previous mission needs no copying.
-
+- **Photos and renders:** `cover_image`, image slides and image blocks.
+  - `cover_image` puts a photo on the cover (right third).
+  - Image slides: `{type: image, image, title, items?, caption, layout: side|full}`. `side` puts the photo on the right and the text on the left; `full` is a full-bleed photo with a title band.
+  - Image blocks in the PDF: `{type: image, image, caption}`.
+  - `image` is the path of a png, jpg, webp, gif, bmp or tif that the agent can read (local roots, `onedrive:` / `sharepoint:`, earlier missions' outputs). It goes through the same sandbox as `read_file`, and images of other nodes or outside the roots are refused.
+  - A reference that can't be used becomes an "Imagen no disponible" placeholder, and the agent is told why.
+  - Only use the company's own images or images with confirmed rights; the prompt says so. SCRIBE's end-of-mission documents carry no images, because SCRIBE reads no files.
+  - **Images from the company's own website:** `collect_site_images(url)` opens a page of a site listed in `ATLAS_OWN_SITES` (e.g. `pagadesarrollos.com`) in a headless browser. It scrolls to load lazy galleries and saves every image at least `min_px` (default 600 px) on its longest side into the mission outputs under `imagenes/`.
+    - Sources: `<img>` with the largest `srcset` candidate, `<picture>`, CSS backgrounds and `og:image`.
+    - Icons, logos, SVGs and duplicates are skipped.
+    - It also returns the page's links to the same site, so the agent can walk from the home page to each project page.
+    - The saved files are then used as `imagenes/<name>.jpg` in `cover_image` or in image slides.
+    - Other sites are refused. No login, a fresh browser each call. Images on the company's own site count as the company's material.

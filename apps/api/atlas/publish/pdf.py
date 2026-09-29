@@ -43,7 +43,7 @@ from reportlab.platypus import (
 from reportlab.platypus.tableofcontents import TableOfContents
 
 from .brand import Brand
-from .spec import normalize_style, plain
+from .spec import image_file, normalize_style, plain
 
 W, H = letter
 ML, MR, MT, MB = 70, 58, 70, 64
@@ -366,7 +366,32 @@ def blocks_flow(blocks: list[dict[str, Any]], brand: Brand, st: Styles, width: f
             out += [callout_flow(b.get("title", ""), b["text"], brand, st, width), Spacer(1, 10)]
         elif t == "chart":
             out.append(KeepTogether(chart_flow(b["chart"], brand, st, width)))
+        elif t == "image":
+            out += image_flow(b, brand, st, width)
     return out
+
+
+def image_flow(b: dict[str, Any], brand: Brand, st: Styles, width: float, max_h: float = 300) -> list[Any]:
+    """A photo/render at the text width (capped height), with its caption."""
+    from reportlab.platypus import Image as RLImage
+
+    path = image_file(b.get("image"))
+    if not path:
+        return []
+    try:
+        iw, ih = ImageReader(str(path)).getSize()
+    except Exception:  # noqa: BLE001 — unreadable image: skipped
+        return []
+    w = width
+    h = w * ih / iw
+    if h > max_h:
+        h, w = max_h, max_h * iw / ih
+    parts: list[Any] = [RLImage(str(path), width=w, height=h, hAlign="LEFT")]
+    if b.get("caption"):
+        cap = ParagraphStyle("cap", parent=st.body, fontSize=st.body.fontSize - 1.5, textColor=_hex(brand.c("muted")),
+                             spaceBefore=3)
+        parts.append(Paragraph(rich(b["caption"], st.f), cap))
+    return [KeepTogether([*parts, Spacer(1, 8)])]
 
 
 class _TocDoc(BaseDocTemplate):

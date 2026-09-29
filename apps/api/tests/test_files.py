@@ -611,3 +611,40 @@ def test_earlier_missions_outputs_are_readable_and_pdf_pptx_deliverables(roots):
     assert not bad.ok and "slides" in bad.text
     assert not tools.run("write_deliverable", {"filename": "x", "format": "pdf"}).ok
     assert not (earlier / "B200_Arzentia.pptx").exists()  # writes only to this mission's folder
+
+
+def test_documents_with_photos_from_the_readable_files(roots):
+    """Renders/photos the agent can read go into the deck and the PDF (cover, side and full slides, PDF block)."""
+    from PIL import Image
+
+    corp = roots["corp"]
+    (corp / "Renders").mkdir()
+    Image.new("RGB", (1600, 900), (40, 90, 140)).save(corp / "Renders" / "fachada.jpg")
+    Image.new("RGB", (800, 1200), (150, 120, 60)).save(corp / "Renders" / "lobby.webp")
+    (corp / "Renders" / "notas.txt").write_text("no soy imagen")
+    doc = {
+        "title": "Torre *Fiori*", "cover_image": "Renders/fachada.jpg", "summary": ["Resumen."],
+        "sections": [{"title": "Proyecto", "blocks": [{"type": "image", "image": "Renders/lobby.webp", "caption": "Lobby"},
+                                                      {"type": "paragraph", "text": "Texto."}]}],
+        "slides": [
+            {"type": "image", "image": "Renders/fachada.jpg", "title": "Fachada", "items": ["18 niveles"], "caption": "Render"},
+            {"type": "image", "image": str(corp / "Renders" / "lobby.webp"), "title": "Lobby", "layout": "full"},
+            {"type": "image", "image": "Renders/notas.txt", "title": "Mal"},
+            {"type": "image", "image": str(roots["outside"] / "secret.txt"), "title": "Fuera"},
+        ],
+    }
+    tools = corp_tools()
+    res = tools.run("write_deliverable", {"filename": "Fiori", "format": "pptx", "document": doc})
+    assert res.ok, res.text
+    assert "images: fachada.jpg, fachada.jpg, lobby.webp" in res.detail
+    assert "image left out" in res.text and "outside the allowed folders" in res.text
+    from pptx import Presentation
+
+    prs = Presentation(str(paths.outputs_dir("corporate", MID) / "Fiori.pptx"))
+    pics = [sh for sl in prs.slides for sh in sl.shapes if sh.shape_type == 13]  # PICTURE
+    assert len(pics) == 3  # cover + side + full; the two bad references are placeholders
+    texts = " ".join(sh.text_frame.text for sl in prs.slides for sh in sl.shapes if getattr(sh, "has_text_frame", False))
+    assert texts.count("Imagen no disponible") == 2
+    pdf = tools.run("write_deliverable", {"filename": "Fiori", "format": "pdf", "document": doc})
+    assert pdf.ok and "lobby.webp" in pdf.detail
+    assert b"/Subtype /Image" in (paths.outputs_dir("corporate", MID) / "Fiori.pdf").read_bytes()

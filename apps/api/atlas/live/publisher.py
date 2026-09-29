@@ -21,7 +21,7 @@ from ..core.models import AgentStatus, Attachment, MissionReport
 from ..publish.brand import Brand, load_brand
 from ..publish.deck import render_deck
 from ..publish.pdf import DocMeta, render_pdf
-from ..publish.spec import SUBMIT_DOCUMENTS_TOOL, normalize, plain, spec_text
+from ..publish.spec import SUBMIT_DOCUMENTS_TOOL, normalize, plain, spec_text, strip_images
 from . import auditor as audit_mod
 from .evidence import record
 from .files import FileAccessError, _size, download_url, extract_text
@@ -149,6 +149,7 @@ async def publish(live: Any, report: MissionReport) -> list[Attachment]:
     finally:
         current_agent.reset(token)
     spec, errors = normalize(data)
+    spec = strip_images(spec)  # SCRIBE reads no files: images go through write_deliverable
     if not spec.get("title") or not spec.get("sections"):
         raise LLMError("SCRIBE did not submit usable documents" + (f": {'; '.join(errors[:3])}" if errors else ""))
     if not spec["slides"] and "pptx" in cfg.publish_formats:

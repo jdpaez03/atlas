@@ -20,7 +20,7 @@ from pptx.util import Emu, Pt
 
 from .brand import Brand
 from .pdf import col_weights, fmt_num, is_numeric
-from .spec import DEFAULT_STYLE, accent_runs, normalize_style, plain
+from .spec import DEFAULT_STYLE, accent_runs, image_file, normalize_style, plain
 
 
 def _rgb(hex_: str) -> RGBColor:
@@ -162,6 +162,64 @@ class Deck:
         except Exception:  # noqa: BLE001 — a broken logo never breaks the deck
             return False
 
+    def picture(self, s: Any, path: Path | None, x: float, y: float, w: float, h: float) -> bool:
+        """The image filling the box (cropped to its proportions, like 'fill' in PowerPoint)."""
+        if not path:
+            return False
+        try:
+            from PIL import Image
+
+            with Image.open(path) as im:
+                iw, ih = im.size
+            pic = s.shapes.add_picture(str(path), self.e(x), self.e(y), self.e(w), self.e(h))
+            box, img = w / h, iw / ih
+            if img > box:  # wider than the box: crop the sides
+                cut = (1 - box / img) / 2
+                pic.crop_left = pic.crop_right = cut
+            elif img < box:  # taller: crop top and bottom
+                cut = (1 - img / box) / 2
+                pic.crop_top = pic.crop_bottom = cut
+            return True
+        except Exception:  # noqa: BLE001 — a bad image never breaks the deck
+            return False
+
+    def missing_image(self, s: Any, x: float, y: float, w: float, h: float) -> None:
+        self.rect(s, x, y, w, h, _mix(self.b.c("primary"), "#FFFFFF", 0.88))
+        self.text(s, x, y + h / 2 - 20, w, 40, "Imagen no disponible", size=18, color=self.b.c("muted"),
+                  align=PP_ALIGN.CENTER)
+
+    def image(self, sl: dict[str, Any]) -> None:
+        b = self.b
+        path = image_file(sl.get("image"))
+        if sl.get("layout") == "full":
+            s = self.new(b.c("dark"))
+            if not self.picture(s, path, 0, 0, 1920, 1080):
+                self.missing_image(s, 0, 0, 1920, 1080)
+            if sl.get("title"):
+                self.rect(s, 0, 850, 1920, 230, b.c("primary"))
+                self.text(s, 120, 880, 1500, 110, sl["title"], size=46, color="#FFFFFF", accents=True)
+                if sl.get("subtitle") or sl.get("caption"):
+                    self.text(s, 120, 985, 1500, 50, sl.get("subtitle") or sl.get("caption"), size=20,
+                              color=_mix(b.c("primary"), "#FFFFFF", 0.62))
+            self.page_no(s, dark=True)
+        else:
+            s = self.new("#FFFFFF")
+            if not self.picture(s, path, 820, 0, 1100, 1080):
+                self.missing_image(s, 820, 0, 1100, 1080)
+            self.rect(s, 120, 330, 6, 90, b.c("primary"))
+            self.text(s, 120, 110, 640, 220, sl.get("title") or "", size=50, color=b.c("primary"), accents=True,
+                      anchor=MSO_ANCHOR.BOTTOM)
+            if sl.get("subtitle"):
+                self.text(s, 150, 335, 610, 90, sl["subtitle"], size=22, color=b.c("muted"))
+            if sl.get("items"):
+                self.text(s, 120, 470, 640, 440, [f"▪  {i}" for i in sl["items"]], size=26 * self.scale,
+                          color=b.c("ink"), line=1.15)
+            if sl.get("caption"):
+                self.text(s, 120, 950, 640, 40, sl["caption"], size=15, color=b.c("muted"))
+            self.side_label(s)
+            self.page_no(s)
+        self.notes(s, sl.get("notes", ""))
+
     def notes(self, s: Any, text: str) -> None:
         if text:
             s.notes_slide.notes_text_frame.text = text
@@ -178,9 +236,14 @@ class Deck:
         self.rect(s, 120, 520, 70, 3, "#FFFFFF")
         if spec.get("doc_kind"):
             self.text(s, 120, 550, 1400, 40, spec["doc_kind"].upper(), size=17, color=light, spacing=5)
-        self.text(s, 120, 600, 1500, 250, spec["title"], size=76, color="#FFFFFF", accents=True, line=0.95)
+        photo = image_file(spec.get("cover_image"))
+        wide = 1500
+        if photo and self.picture(s, photo, 1160, 0, 760, 1080):
+            wide = 980  # the photo takes the right third
+        self.text(s, 120, 600, wide, 250, spec["title"], size=76 if wide > 1000 else 64, color="#FFFFFF",
+                  accents=True, line=0.95)
         if spec.get("subtitle"):
-            self.text(s, 120, 860, 1500, 80, spec["subtitle"], size=26, color=light)
+            self.text(s, 120, 860, wide, 80, spec["subtitle"], size=26, color=light)
         self.text(s, 120, 985, 900, 40, self.date_text, size=16, color="#FFFFFF")
         self.text(s, 1000, 985, 800, 40, b.footer, size=13, color=light, align=PP_ALIGN.RIGHT)
 

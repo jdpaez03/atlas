@@ -7,6 +7,7 @@ SCRIBE decides WHAT goes in the documents (structure, wording, which tables and 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 MAX_SECTIONS = 12
@@ -18,6 +19,7 @@ MAX_COLS = 9
 MAX_KPIS = 4
 MAX_SERIES = 4
 MAX_CATEGORIES = 24
+IMAGE_EXTS = (".png", ".jpg", ".jpeg")
 
 _TEXT = {"type": "string"}
 _TEXTS = {"type": "array", "items": {"type": "string"}}
@@ -51,13 +53,15 @@ _CHART = {
     },
     "required": ["chart_type", "categories", "series"],
 }
+_IMAGE = {"type": "string", "description": "path of a photo/render the agent can read (png/jpg), e.g. "
+          "onedrive:/Proyectos/B200/Renders/fachada.jpg; only the company's own images or ones with confirmed rights"}
 _BLOCK = {
     "type": "object",
     "description": "one of: paragraph {text} · bullets {items} · table {table} · kpis {kpis} · "
-                   "callout {title, text} · chart {chart}",
+                   "callout {title, text} · chart {chart} · image {image, caption} (write_deliverable only)",
     "properties": {
-        "type": {"type": "string", "enum": ["paragraph", "bullets", "table", "kpis", "callout", "chart"]},
-        "text": _TEXT, "items": _TEXTS, "title": _TEXT,
+        "type": {"type": "string", "enum": ["paragraph", "bullets", "table", "kpis", "callout", "chart", "image"]},
+        "text": _TEXT, "items": _TEXTS, "title": _TEXT, "image": _IMAGE, "caption": _TEXT,
         "table": _TABLE, "kpis": {"type": "array", "items": _KPI}, "chart": _CHART,
     },
     "required": ["type"],
@@ -66,12 +70,17 @@ _SLIDE = {
     "type": "object",
     "description": (
         "section {title} · bullets {title, subtitle?, items} · table {title, table} · kpis {title, kpis} · "
-        "chart {title, chart} · statement {text} (one big sentence) · quote {text, attribution}. "
+        "chart {title, chart} · statement {text} (one big sentence) · quote {text, attribution} · "
+        "image {image, title?, subtitle?, items? (up to 4 short points beside it), caption?, layout: side|full} "
+        "(image slides: write_deliverable only). "
         "Titles may mark ONE accent word in *asterisks* (rendered in italics)."
     ),
     "properties": {
-        "type": {"type": "string", "enum": ["section", "bullets", "table", "kpis", "chart", "statement", "quote"]},
+        "type": {"type": "string", "enum": ["section", "bullets", "table", "kpis", "chart", "statement", "quote",
+                                            "image"]},
         "title": _TEXT, "subtitle": _TEXT, "items": _TEXTS, "text": _TEXT, "attribution": _TEXT,
+        "image": _IMAGE, "caption": _TEXT,
+        "layout": {"type": "string", "enum": ["side", "full"], "description": "image slides: side (default) | full"},
         "table": _TABLE, "kpis": {"type": "array", "items": _KPI}, "chart": _CHART,
         "source": _TEXT, "notes": {"type": "string", "description": "speaker notes"},
     },
@@ -88,6 +97,7 @@ SUBMIT_DOCUMENTS_TOOL: dict[str, Any] = {
             "doc_kind": {"type": "string", "description": "e.g. 'Estudio de mercado', 'Reporte ejecutivo'"},
             "title": {"type": "string", "description": "document title; may mark one accent word in *asterisks*"},
             "subtitle": _TEXT,
+            "cover_image": {**_IMAGE, "description": "optional photo/render for the cover (write_deliverable only)"},
             "summary": {"type": "array", "items": {"type": "string"},
                         "description": "executive summary: 1-4 short paragraphs, answer first"},
             "highlights": {"type": "array", "items": _KPI, "description": "0-4 headline figures"},
@@ -207,6 +217,8 @@ def _block(b: Any, errors: list[str], where: str) -> dict[str, Any] | None:
     if t == "chart":
         ch = _chart(b.get("chart"), errors, where)
         return {"type": t, "chart": ch} if ch else None
+    if t == "image" and _s(b.get("image")):
+        return {"type": t, "image": _s(b.get("image"), 1000), "caption": _s(b.get("caption"), 240)}
     errors.append(f"{where}: block type '{t}' is missing its content")
     return None
 
@@ -231,6 +243,9 @@ def _slide(sl: Any, errors: list[str], where: str) -> dict[str, Any] | None:
         return {**out, "chart": ch} if ch else None
     if t in ("statement", "quote") and _s(sl.get("text")):
         return {**out, "text": _s(sl.get("text"), 400), "attribution": _s(sl.get("attribution"), 120)}
+    if t == "image" and _s(sl.get("image")):
+        return {**out, "image": _s(sl.get("image"), 1000), "caption": _s(sl.get("caption"), 240),
+                "items": _list(sl.get("items"), 4, 160), "layout": "full" if sl.get("layout") == "full" else "side"}
     errors.append(f"{where}: slide type '{t}' is missing its content")
     return None
 
@@ -255,6 +270,23 @@ def normalize_style(v: Any) -> dict[str, Any]:
     return out
 
 
+def image_file(v: Any) -> Path | None:
+    """An image reference the renderers can use: an absolute path to an existing png/jpg (write_deliverable resolves
+    the agent's path through the file sandbox first). Anything else is skipped by the renderers."""
+    if not v:
+        return None
+    p = Path(str(v))
+    return p if p.is_absolute() and p.suffix.lower() in IMAGE_EXTS and p.is_file() else None
+
+
+def strip_images(spec: dict[str, Any]) -> dict[str, Any]:
+    """The spec without image slides/blocks (SCRIBE's end-of-mission documents: SCRIBE reads no files)."""
+    return {**spec, "cover_image": "",
+            "slides": [sl for sl in spec.get("slides", []) if sl.get("type") != "image"],
+            "sections": [{**sec, "blocks": [b for b in sec["blocks"] if b.get("type") != "image"]}
+                         for sec in spec.get("sections", [])]}
+
+
 def normalize(data: dict[str, Any] | None) -> tuple[dict[str, Any], list[str]]:
     """(clean spec, errors). Errors go back to SCRIBE; a spec with errors is still renderable."""
     errors: list[str] = []
@@ -264,6 +296,7 @@ def normalize(data: dict[str, Any] | None) -> tuple[dict[str, Any], list[str]]:
         "doc_kind": _s(data.get("doc_kind"), 60),
         "title": _s(data.get("title"), 160),
         "subtitle": _s(data.get("subtitle"), 240),
+        "cover_image": _s(data.get("cover_image"), 1000),
         "summary": _list(data.get("summary"), 4, 1600),
         "highlights": _kpis(data.get("highlights")),
         "sources": _list(data.get("sources"), 30, 300),

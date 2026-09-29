@@ -88,7 +88,8 @@ MCP_TOOL_TIMEOUT_MS = str(24 * 3600 * 1000)
 
 SDK_TASK_NOTE = """# Runtime (Claude Code session)
 Your ATLAS tools are mcp__atlas__consult, mcp__atlas__request_approval, mcp__atlas__list_files,
-mcp__atlas__search_files, mcp__atlas__read_file, mcp__atlas__write_deliverable and mcp__atlas__submit_report{web}.
+mcp__atlas__search_files, mcp__atlas__read_file, mcp__atlas__write_deliverable, mcp__atlas__collect_site_images
+and mcp__atlas__submit_report{web}.
 Your ONLY file access is through those mcp__atlas__ file tools (read-only on the user's files; write_deliverable
 creates new files in the mission outputs). You have no shell and no other tool. Finish by calling
 mcp__atlas__submit_report; once it succeeds, stop (reply with one short line)."""

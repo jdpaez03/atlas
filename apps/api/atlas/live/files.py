@@ -659,9 +659,14 @@ def _csv_text(rows: list[Any]) -> str:
     return buf.getvalue()
 
 
-def render_document(fmt: str, document: Any, node: str) -> tuple[bytes, list[str]]:
+ImageResolver = Callable[[str], tuple[Path | None, str]]  # agent's path -> (local file | None, label or error)
+
+
+def render_document(fmt: str, document: Any, node: str, resolve: ImageResolver | None = None
+                    ) -> tuple[bytes, list[str], list[str]]:
     """A branded PDF report or PowerPoint deck from a document spec (the same one SCRIBE submits), in the node's
-    brand kit (docs/PUBLISHING.md). Returns (bytes, warnings). Raises FileAccessError on unusable input."""
+    brand kit (docs/PUBLISHING.md). Image references (cover_image, image slides/blocks) go through `resolve`
+    (the file sandbox). Returns (bytes, warnings, images used). Raises FileAccessError on unusable input."""
     import tempfile
 
     from ..publish.brand import load_brand
@@ -690,6 +695,7 @@ def render_document(fmt: str, document: Any, node: str) -> tuple[bytes, list[str
     brand = load_brand(node)
     date_text = date_es()
     with tempfile.TemporaryDirectory() as tmp:
+        used = _resolve_images(spec, resolve, Path(tmp), warnings)
         out = Path(tmp) / f"document.{fmt}"
         try:
             if fmt == "pdf":
@@ -701,7 +707,46 @@ def render_document(fmt: str, document: Any, node: str) -> tuple[bytes, list[str
             raise
         except Exception as exc:
             raise FileAccessError(f"could not render the {fmt}: {type(exc).__name__}: {exc}") from exc
-        return out.read_bytes(), warnings
+        return out.read_bytes(), warnings, used
+
+
+IMAGE_OK = (".png", ".jpg", ".jpeg")
+IMAGE_CONVERT = (".webp", ".gif", ".bmp", ".tif", ".tiff")
+MAX_IMAGES = 30
+
+
+def _resolve_images(spec: dict[str, Any], resolve: ImageResolver | None, tmp: Path, warnings: list[str]) -> list[str]:
+    """Replace every image reference in the spec with a local png/jpg (or drop it, with a warning)."""
+    refs: list[tuple[dict[str, Any], str]] = []
+    if spec.get("cover_image"):
+        refs.append((spec, "cover_image"))
+    refs += [(sl, "image") for sl in spec.get("slides", []) if sl.get("type") == "image"]
+    refs += [(b, "image") for sec in spec.get("sections", []) for b in sec["blocks"] if b.get("type") == "image"]
+    used: list[str] = []
+    for i, (obj, key) in enumerate(refs):
+        ref = str(obj.get(key) or "")
+        local, label = (None, "images are not available here") if resolve is None or i >= MAX_IMAGES else resolve(ref)
+        if local is not None:
+            ext = local.suffix.lower()
+            if ext in IMAGE_CONVERT:
+                try:
+                    from PIL import Image
+
+                    target = tmp / f"img{i}.png"
+                    with Image.open(local) as im:
+                        im.convert("RGB").save(target, "PNG")
+                    local = target
+                except Exception as exc:  # noqa: BLE001 — reported, not fatal
+                    local, label = None, f"could not convert {ref}: {exc}"
+            elif ext not in IMAGE_OK:
+                local, label = None, f"{ref}: not an image (png, jpg, webp, gif, bmp or tif)"
+        if local is None:
+            warnings.append(f"image left out ({label})")
+            obj[key] = ""
+        else:
+            obj[key] = str(local)
+            used.append(label)
+    return used
 
 
 def render_deliverable(fmt: str, content: str | None, sheets: dict[str, Any] | None) -> bytes:
@@ -787,7 +832,7 @@ def download_url(mission_id: str, name: str) -> str:
 
 
 class FileTools:
-    NAMES = ("list_files", "search_files", "read_file", "write_deliverable")
+    NAMES = ("list_files", "search_files", "read_file", "write_deliverable", "collect_site_images")
 
     def __init__(self, sandbox: FileSandbox, graph: GraphFiles | None = None):
         self.sb = sandbox
@@ -816,6 +861,8 @@ class FileTools:
             return _short(f"Listing {base(args.get('path')) or 'readable folders'}", 90)
         if name == "search_files":
             return _short(f"Searching files · {args.get('query', '')}", 90)
+        if name == "collect_site_images":
+            return _short(f"Collecting images · {args.get('url', '')}", 90)
         if name == "write_deliverable":
             fname = paths.safe_name(str(args.get("filename") or "deliverable"))
             fmt = str(args.get("format") or "").lower().lstrip(".")
@@ -826,13 +873,15 @@ class FileTools:
 
     def run(self, name: str, args: dict[str, Any]) -> FileResult:
         fn = {"list_files": self.list_files, "search_files": self.search_files, "read_file": self.read_file,
-              "write_deliverable": self.write_deliverable}[name]
-        kind = {"read_file": "file_read", "write_deliverable": "file_written"}.get(name, "file_listed")
+              "write_deliverable": self.write_deliverable, "collect_site_images": self.collect_site_images}[name]
+        kind = {"read_file": "file_read", "write_deliverable": "file_written",
+                "collect_site_images": "web_fetch"}.get(name, "file_listed")
         try:
             params = inspect.signature(fn).parameters
             return fn(**{k: v for k, v in args.items() if k in params and v is not None})
         except (FileAccessError, GraphFilesError) as exc:
-            ref = str(args.get("path") or args.get("filename") or args.get("under") or args.get("query") or "")
+            ref = str(args.get("path") or args.get("filename") or args.get("under") or args.get("query")
+                      or args.get("url") or "")
             return FileResult(f"Error: {exc}", False, kind, ref, str(exc))
         except OSError as exc:
             ref = str(args.get("path") or args.get("filename") or "")
@@ -1102,12 +1151,56 @@ class FileTools:
 
     # -- write --
 
+    def collect_site_images(self, url: str = "", max_images: Any = None, min_px: Any = None) -> FileResult:
+        """Large images of a page of the company's own website → outputs/…/imagenes/ (siteimages.py)."""
+        from . import siteimages as si
+
+        target = si.page_url(url)
+        try:
+            got = si.collect(target, self.sb.outputs / "imagenes",
+                             max_images=max(1, min(si.MAX_IMAGES, _int(max_images, si.MAX_IMAGES))),
+                             min_px=max(200, _int(min_px, si.MIN_PX)))
+        except si.SiteImagesError as exc:
+            raise FileAccessError(str(exc)) from exc
+        lines = [f"Page: {got.page}" + (f" · {got.title}" if got.title else ""),
+                 f"Saved {len(got.saved)} image(s) to the mission outputs (company material, usable in decks as "
+                 "`image`: 'imagenes/<name>')" + (f"; {got.skipped} skipped (small, duplicate or unreadable)"
+                                                    if got.skipped else "") + ":"]
+        lines += [f"- imagenes/{i['name']}  {i['width']}×{i['height']}" + (f"  · {i['alt']}" if i["alt"] else "")
+                  for i in got.saved]
+        if got.links:
+            lines.append("Other pages of this site you can collect from next:")
+            lines += [f"- {ln['url']}" + (f"  ({ln['text']})" if ln["text"] else "") for ln in got.links[:40]]
+        detail = f"{len(got.saved)} image(s) saved" + (": " + ", ".join(i["name"] for i in got.saved[:12])
+                                                       if got.saved else "")
+        return FileResult("\n".join(lines), True, "web_fetch", got.page, detail,
+                          extra={"images": [i["path"] for i in got.saved]})
+
+    def _image_file(self, ref: str) -> tuple[Path | None, str]:
+        """An image the document may use: any file this agent can read (local roots, OneDrive/SharePoint)."""
+        try:
+            remote = self._remote_target(ref)
+            if remote is not None:
+                item = self._remote_item(*remote)
+                if item.is_dir:
+                    return None, f"{ref} is a folder"
+                return self.graph.download(item), remote[0].label
+            p = self.sb.resolve(ref)
+            if p.is_dir():
+                return None, f"{ref} is a folder"
+            if p.stat().st_size > MAX_FILE_BYTES:
+                return None, f"{ref} is larger than {MAX_FILE_BYTES // (1024 * 1024)} MB"
+            return p, str(p)
+        except (FileAccessError, GraphFilesError) as exc:
+            return None, str(exc)
+
     def write_deliverable(self, filename: str = "", format: str = "", content: Any = None,
                           sheets: dict[str, Any] | None = None, document: Any = None) -> FileResult:
         fmt = str(format or "").lower().lstrip(".") or Path(str(filename)).suffix.lower().lstrip(".")
         warnings: list[str] = []
+        images: list[str] = []
         if fmt in DOCUMENT_FORMATS:
-            data, warnings = render_document(fmt, document, self.sb.node)
+            data, warnings, images = render_document(fmt, document, self.sb.node, self._image_file)
         else:
             data = render_deliverable(fmt, content, sheets)
         requested = _with_ext(paths.safe_name(str(filename or "deliverable")), fmt)
@@ -1130,6 +1223,8 @@ class FileTools:
         att = Attachment(name=name, kind=kind, size_bytes=len(data),
                          download_url=download_url(self.sb.mission_id, name))
         detail = f"{_size(len(data))}" + (f", requested as {requested}" if name != requested else "")
+        if images:
+            detail += " · images: " + ", ".join(Path(i.replace("\\", "/")).name for i in images[:12])
         text = (f"Wrote {name} ({_size(len(data))}) to the mission outputs. "
                 f"Download link for the human: {att.download_url}")
         if warnings:

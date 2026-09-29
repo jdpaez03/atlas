@@ -272,7 +272,8 @@ MEMORY_HEADER = (
     "(confirms, updates, contradicts). It may be out of date: re-verify any figure you rely on in this run; cite "
     "earlier work as \"Misión <id> (<date>)\"; anything you did not re-verify is an ASSUMPTION, never a FACT. "
     "Knowledge notes are the human's statements, dated: treat them as the current position unless newer "
-    "evidence contradicts them (then flag the contradiction)."
+    "evidence contradicts them (then flag the contradiction). What earlier work says ATLAS or its tools could not "
+    "do may be out of date: go by the tools you have now (e.g. write_deliverable formats), and try them."
 )
 
 

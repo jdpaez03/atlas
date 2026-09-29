@@ -43,9 +43,11 @@ Tools:
 - write_deliverable(filename, format, content?, sheets?, document?): create a file for the human (md, txt, csv,
   json, xlsx with sheets {{name: rows[][]}}, docx from markdown-style content, and branded pdf / pptx from a
   `document` spec: title, summary, sections of blocks for the PDF; slides for the deck, in the company's brand
-  kit). It goes to the mission's outputs folder and never overwrites anything. It is the ONLY way to produce a
+  kit; photos/renders from the files you can read via cover_image, image slides and image blocks). It goes to the mission's outputs folder and never overwrites anything. It is the ONLY way to produce a
   file. Deliverables of this node's earlier missions are readable under outputs/<node>/<mission_id>/: read them
   in place, no copy needed.
+- collect_site_images(url): renders and photos from a page of the company's own website, saved as imagenes/<name>
+  for your documents (the company's material; for other sites' images, rights must be confirmed first).
 - submit_report(...): deliver your result. It ends your work on the task. Always finish by calling it.
 - Role tools (e.g. web_search) when available.
 
@@ -324,7 +326,10 @@ WRITE_DELIVERABLE_TOOL: dict[str, Any] = {
         "download link). md/txt/csv/json take `content`; xlsx takes `sheets` {sheet name: rows[][]}; docx takes "
         "markdown-style `content` (# headings, - bullets, 1. lists, | tables |, **bold**); pdf (institutional "
         "report) and pptx (presentation) take `document` and are laid out in the company's brand kit: for pptx give "
-        "every slide in `slides` (cover and closing are added), for pdf give `summary` and `sections`."
+        "every slide in `slides` (cover and closing are added), for pdf give `summary` and `sections`. Photos and "
+        "renders: `cover_image`, image slides {type: image, image, title, items?, caption, layout: side|full} and "
+        "image blocks {type: image, image, caption}, where `image` is the path of a png/jpg/webp you can read "
+        "(e.g. onedrive:/…/Renders/fachada.jpg). Use only the company's own images or ones with confirmed rights."
     ),
     "input_schema": {
         "type": "object",
@@ -343,7 +348,28 @@ WRITE_DELIVERABLE_TOOL: dict[str, Any] = {
     },
 }
 
-FILE_TOOLS: list[dict[str, Any]] = [LIST_FILES_TOOL, SEARCH_FILES_TOOL, READ_FILE_TOOL, WRITE_DELIVERABLE_TOOL]
+COLLECT_SITE_IMAGES_TOOL: dict[str, Any] = {
+    "name": "collect_site_images",
+    "description": (
+        "Collect the large images (renders, photos) of a page of the company's OWN website (ATLAS_OWN_SITES): the "
+        "page opens in a real browser, lazy galleries load, and every image of at least min_px is saved to the "
+        "mission outputs as imagenes/<name>. They are the company's own material: use them in write_deliverable "
+        "(`image`: 'imagenes/<name>'). Also lists the site's other pages (open each project's page to get its "
+        "renders). Look at the sizes and names to pick; read nothing else into them."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "url": {"type": "string", "description": "a page of the company's site, e.g. https://pagadesarrollos.com/"},
+            "max_images": {"type": "integer", "minimum": 1, "maximum": 24, "description": "default 24"},
+            "min_px": {"type": "integer", "minimum": 200, "description": "smallest longest side kept (default 600)"},
+        },
+        "required": ["url"],
+    },
+}
+
+FILE_TOOLS: list[dict[str, Any]] = [LIST_FILES_TOOL, SEARCH_FILES_TOOL, READ_FILE_TOOL, WRITE_DELIVERABLE_TOOL,
+                                    COLLECT_SITE_IMAGES_TOOL]
 
 
 def _btool(name: str, description: str, props: dict[str, Any] | None = None,
@@ -639,4 +665,9 @@ def files_note(readable: list[str], attachments_dir: str, outputs: str) -> str:
                      "onedrive:/Folder/file.xlsx; search_files there also matches file contents)")
     lines.append(f"- the mission attachments folder: {attachments_dir} (a bare attachment name also works)")
     lines.append(f"Deliverables you create with write_deliverable go to: {outputs}")
+    from .siteimages import own_sites
+
+    if own_sites():
+        lines.append("Company websites (own material; collect_site_images saves their renders and photos): "
+                     + ", ".join(own_sites()))
     return "\n".join(lines)
