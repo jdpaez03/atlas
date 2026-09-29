@@ -53,7 +53,8 @@ MAX_HITS = 100
 MAX_DEPTH = 6  # recursive listing / search depth below the start folder
 MAX_VISITED = 5_000  # directories scanned per list/search call
 MAX_WRITE_CHARS = 5_000_000
-FORMATS = ("md", "txt", "csv", "json", "xlsx", "docx")
+FORMATS = ("md", "txt", "csv", "json", "xlsx", "docx", "pdf", "pptx")
+DOCUMENT_FORMATS = ("pdf", "pptx")  # branded, from a `document` spec (the one SCRIBE uses)
 SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "venv", ".tox", ".cache", ".next", ".mypy_cache",
              ".pytest_cache", ".ruff_cache", "site-packages", "$recycle.bin", "system volume information"}
 DENY_DIRS = {".git", ".ssh", ".gnupg", ".aws", ".claude"}
@@ -189,6 +190,9 @@ class FileSandbox:
         transcripts = paths.local_dir() / "transcripts" / paths.safe_name(node)  # Teams transcripts (ARGOS)
         if transcripts.is_dir():
             roots.append(_real(transcripts))
+        earlier = outputs.parent  # outputs/<node>/: deliverables of the node's earlier missions (read-only)
+        if earlier.is_dir():
+            roots.append(earlier)
         return cls(
             node=node, mission_id=mission_id,
             roots=[*roots, attachments, outputs],
@@ -203,9 +207,17 @@ class FileSandbox:
         return [r for r in self.roots if r not in (self.attachments, self.outputs)]
 
     @property
+    def earlier_outputs(self) -> Path:
+        return self.outputs.parent
+
+    @property
     def readable_labels(self) -> list[str]:
         """Every read root as the agent should write it (local folders, then remote labels)."""
-        return [str(r) for r in self.user_roots] + [r.label for r in self.remote]
+        def label(r: Path) -> str:
+            if r == self.earlier_outputs:
+                return f"{r}  (deliverables of this node's earlier missions: one folder per mission id)"
+            return str(r)
+        return [label(r) for r in self.user_roots] + [r.label for r in self.remote]
 
     def check_remote(self, path: RemotePath) -> str | None:
         """Why a remote path is not readable, or None when it is (same rules as local paths)."""
@@ -239,8 +251,9 @@ class FileSandbox:
             fold = (lambda x: x.lower()) if os.name == "nt" else (lambda x: x)
             rel = [fold(p) for p in path.relative_to(self.local).parts]
             node, mid = fold(self.node), fold(self.mission_id)
-            allowed = (["context", node], ["transcripts", node], ["missions", mid, "attachments"],
-                       ["outputs", node, mid])
+            # outputs of EVERY mission of this node are readable (earlier deliverables); writes stay in this
+            # mission's own folder (write_deliverable)
+            allowed = (["context", node], ["transcripts", node], ["missions", mid, "attachments"], ["outputs", node])
             ok = any(rel[:len(a)] == a for a in allowed)
             if not ok and traverse:
                 ok = any(len(rel) < len(a) and rel == a[:len(rel)] for a in allowed)
@@ -646,8 +659,55 @@ def _csv_text(rows: list[Any]) -> str:
     return buf.getvalue()
 
 
+def render_document(fmt: str, document: Any, node: str) -> tuple[bytes, list[str]]:
+    """A branded PDF report or PowerPoint deck from a document spec (the same one SCRIBE submits), in the node's
+    brand kit (docs/PUBLISHING.md). Returns (bytes, warnings). Raises FileAccessError on unusable input."""
+    import tempfile
+
+    from ..publish.brand import load_brand
+    from ..publish.deck import render_deck
+    from ..publish.pdf import DocMeta, render_pdf
+    from ..publish.spec import normalize
+
+    if isinstance(document, str):
+        try:
+            document = json.loads(document)
+        except json.JSONDecodeError as exc:
+            raise FileAccessError(f"`document` is not valid JSON: {exc}") from exc
+    if not isinstance(document, dict):
+        raise FileAccessError(f"{fmt} needs `document`: {{title, subtitle?, summary[], sections[{{title, blocks}}], "
+                              "slides[], highlights?, sources?, style?}")
+    spec, errors = normalize(document)
+    if not spec.get("title"):
+        raise FileAccessError("document.title is required")
+    if fmt == "pptx" and not spec.get("slides"):
+        raise FileAccessError("pptx needs document.slides (the deck body; cover and closing are added)")
+    if fmt == "pdf" and not (spec.get("sections") or spec.get("summary")):
+        raise FileAccessError("pdf needs document.summary and/or document.sections")
+    warnings = [e for e in errors if not (fmt == "pptx" and "section" in e) and not (fmt == "pdf" and "slide" in e)]
+    from .publisher import date_es
+
+    brand = load_brand(node)
+    date_text = date_es()
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / f"document.{fmt}"
+        try:
+            if fmt == "pdf":
+                render_pdf(spec, brand, DocMeta(date_text=date_text, author_line=brand.prepared_by), out)
+            else:
+                closing = [x for x in (brand.company, brand.prepared_by, date_text, brand.footer) if x]
+                render_deck(spec, brand, date_text, closing, out)
+        except FileAccessError:
+            raise
+        except Exception as exc:
+            raise FileAccessError(f"could not render the {fmt}: {type(exc).__name__}: {exc}") from exc
+        return out.read_bytes(), warnings
+
+
 def render_deliverable(fmt: str, content: str | None, sheets: dict[str, Any] | None) -> bytes:
     """Bytes of a deliverable. Raises FileAccessError on bad input."""
+    if fmt in DOCUMENT_FORMATS:
+        raise FileAccessError(f"{fmt} is rendered from `document` (render_document)")
     if fmt not in FORMATS:
         raise FileAccessError(f"unsupported format '{fmt}' (use one of: {', '.join(FORMATS)})")
     if content is not None and not isinstance(content, str):
@@ -813,8 +873,8 @@ class FileTools:
 
     def _roots_listing(self) -> FileResult:
         lines = ["Readable folders (read-only):"]
-        for r in self.sb.user_roots:
-            lines.append(f"- {r}" + ("" if r.is_dir() else "  (not found)"))
+        for r, lab in zip(self.sb.user_roots, self.sb.readable_labels, strict=False):
+            lines.append(f"- {lab}" + ("" if r.is_dir() else "  (not found)"))
         for rr in self.sb.remote:
             lines.append(f"- {rr.label}  (OneDrive/SharePoint through Microsoft 365)")
         if not self.sb.user_roots and not self.sb.remote:
@@ -1043,9 +1103,13 @@ class FileTools:
     # -- write --
 
     def write_deliverable(self, filename: str = "", format: str = "", content: Any = None,
-                          sheets: dict[str, Any] | None = None) -> FileResult:
+                          sheets: dict[str, Any] | None = None, document: Any = None) -> FileResult:
         fmt = str(format or "").lower().lstrip(".") or Path(str(filename)).suffix.lower().lstrip(".")
-        data = render_deliverable(fmt, content, sheets)
+        warnings: list[str] = []
+        if fmt in DOCUMENT_FORMATS:
+            data, warnings = render_document(fmt, document, self.sb.node)
+        else:
+            data = render_deliverable(fmt, content, sheets)
         requested = _with_ext(paths.safe_name(str(filename or "deliverable")), fmt)
         out = self.sb.outputs
         out.mkdir(parents=True, exist_ok=True)
@@ -1068,6 +1132,8 @@ class FileTools:
         detail = f"{_size(len(data))}" + (f", requested as {requested}" if name != requested else "")
         text = (f"Wrote {name} ({_size(len(data))}) to the mission outputs. "
                 f"Download link for the human: {att.download_url}")
+        if warnings:
+            text += "\nNotes on the document (fix and write again if they matter): " + "; ".join(warnings[:6])
         return FileResult(text, True, "file_written", str(target), detail, attachment=att)
 
 

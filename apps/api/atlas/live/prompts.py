@@ -13,6 +13,7 @@ from ..core.models import (
     Priority,
     Task,
 )
+from ..publish.spec import SUBMIT_DOCUMENTS_TOOL
 
 LANGUAGE_RULE = (
     "Language: write every free-text field in the same language as the mission objective "
@@ -39,9 +40,12 @@ Tools:
   attachments. list_files with no path shows those folders. read_file extracts text (txt/md/csv/json, PDF, Excel
   with one block per sheet, Word, PowerPoint); long files come in pages: continue with the offset it tells you.
   You can never modify, move or delete the user's files.
-- write_deliverable(filename, format, content?, sheets?): create a file for the human (md, txt, csv, json, xlsx
-  with sheets {{name: rows[][]}}, docx from markdown-style content). It goes to the mission's outputs folder and
-  never overwrites anything. It is the ONLY way to produce a file.
+- write_deliverable(filename, format, content?, sheets?, document?): create a file for the human (md, txt, csv,
+  json, xlsx with sheets {{name: rows[][]}}, docx from markdown-style content, and branded pdf / pptx from a
+  `document` spec: title, summary, sections of blocks for the PDF; slides for the deck, in the company's brand
+  kit). It goes to the mission's outputs folder and never overwrites anything. It is the ONLY way to produce a
+  file. Deliverables of this node's earlier missions are readable under outputs/<node>/<mission_id>/: read them
+  in place, no copy needed.
 - submit_report(...): deliver your result. It ends your work on the task. Always finish by calling it.
 - Role tools (e.g. web_search) when available.
 
@@ -305,24 +309,35 @@ READ_FILE_TOOL: dict[str, Any] = {
     },
 }
 
+# pdf / pptx deliverables: the document spec SCRIBE uses (publish/spec.py), nothing required but the title
+_DOCUMENT_SCHEMA: dict[str, Any] = {
+    **{k: v for k, v in SUBMIT_DOCUMENTS_TOOL["input_schema"].items() if k != "required"},
+    "description": "pdf / pptx only: {title, subtitle?, summary[], highlights?, sections[{title, blocks}], "
+                   "slides[], sources?, style?}",
+    "required": ["title"],
+}
+
 WRITE_DELIVERABLE_TOOL: dict[str, Any] = {
     "name": "write_deliverable",
     "description": (
         "Create a deliverable file for the human in the mission outputs folder (never overwrites; returns its "
         "download link). md/txt/csv/json take `content`; xlsx takes `sheets` {sheet name: rows[][]}; docx takes "
-        "markdown-style `content` (# headings, - bullets, 1. lists, | tables |, **bold**)."
+        "markdown-style `content` (# headings, - bullets, 1. lists, | tables |, **bold**); pdf (institutional "
+        "report) and pptx (presentation) take `document` and are laid out in the company's brand kit: for pptx give "
+        "every slide in `slides` (cover and closing are added), for pdf give `summary` and `sections`."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "filename": {"type": "string", "description": "file name, e.g. 'resumen_q3'"},
-            "format": {"type": "string", "enum": ["md", "txt", "csv", "json", "xlsx", "docx"]},
+            "format": {"type": "string", "enum": ["md", "txt", "csv", "json", "xlsx", "docx", "pdf", "pptx"]},
             "content": {"type": "string"},
             "sheets": {
                 "type": "object",
                 "description": "xlsx: {sheet name: rows}, each row an array of cell values",
                 "additionalProperties": {"type": "array", "items": {"type": "array"}},
             },
+            "document": _DOCUMENT_SCHEMA,
         },
         "required": ["filename", "format"],
     },

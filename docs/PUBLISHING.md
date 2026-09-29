@@ -96,3 +96,15 @@ SCRIBE's PAGA prompt lives privately in `<ATLAS_LOCAL_DIR>/agents/scribe.md`. It
 | `ATLAS_PUBLISH_MAX_TOKENS` | `16000` | output budget for SCRIBE's spec |
 
 Per mission: the **Institutional documents** checkbox when you launch a live mission (API: `"publish": false`).
+
+## Decks and PDFs made by agents during a mission
+
+SCRIBE formats the final report when a mission closes. Any agent can also produce a branded document during the mission, for example ALFRED building a 15-slide investor deck from an approved script.
+
+- **How:** call `write_deliverable` with `format: "pptx"` or `"pdf"` and a `document`. The `document` is the same spec SCRIBE submits:
+  - `pptx` renders `slides`, and adds the cover and closing slides.
+  - `pdf` renders `summary` + `sections`.
+- **Look:** the node's brand kit is used, so the result looks like SCRIBE's documents.
+- **Where it goes:** the file lands in the mission outputs, like any other deliverable.
+- **Inputs from earlier missions:** a mission can read the node's earlier deliverables in place (`outputs/<node>/<mission_id>/`, read-only). An approved script or workbook from a previous mission needs no copying.
+

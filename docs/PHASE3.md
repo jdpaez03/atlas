@@ -32,7 +32,7 @@ current mission is always readable too. A node never reads another node's roots.
 | `list_files(path, pattern?, recursive?)` | ≤ 500 entries: name, size, modified date |
 | `search_files(query, under?)` | find by name under the allowed roots (≤ 100 hits) |
 | `read_file(path, offset?, max_chars?, sheet?)` | text extraction: txt/md/csv/json/code; PDF (pypdf); xlsx/xlsm (openpyxl, cell values, one block per sheet with the sheet name; `sheet` selects one); docx (paragraphs + tables); pptx (slide text) |
-| `write_deliverable(filename, format, content? , sheets?)` | formats `md`, `txt`, `csv`, `json`, `xlsx` (sheets: `{name: rows[][]}`), `docx` (markdown-ish content → headings/paragraphs/bullets/tables). Written **only** to `outputs/<node>/<mission_id>/`, never overwriting (`name (2).ext`). Returns an `Attachment` with `download_url = /missions/{id}/files/outputs/{name}` |
+| `write_deliverable(filename, format, content? , sheets?, document?)` | formats `md`, `txt`, `csv`, `json`, `xlsx` (sheets: `{name: rows[][]}`), `docx` (markdown-ish content → headings/paragraphs/bullets/tables), and branded `pdf` / `pptx` from `document` (the SCRIBE spec: title, summary, sections of blocks, slides; node brand kit, docs/PUBLISHING.md). Deliverables of the node's earlier missions (`outputs/<node>/*/`) are readable in place. Written **only** to `outputs/<node>/<mission_id>/`, never overwriting (`name (2).ext`). Returns an `Attachment` with `download_url = /missions/{id}/files/outputs/{name}` |
 
 **Evidence:** every call to one of these tools, plus consult, approval, web search and web fetch, records an `Evidence` item
 through `store.record_evidence` (with `ok=false` and the reason on failure). The activity line an agent shows comes

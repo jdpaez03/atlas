@@ -121,7 +121,7 @@ def test_sandbox_atlas_local_rules(roots, monkeypatch):
         f"missions/{MID}/attachments/brief.pdf": True,
         "missions/msn_other/attachments/theirs.pdf": False,
         f"outputs/corporate/{MID}/memo.md": True,
-        "outputs/corporate/msn_other/memo.md": False,
+        "outputs/corporate/msn_other/memo.md": True,  # earlier deliverables of the same node (read-only)
         f"outputs/personal/{MID}/memo.md": False,
     }
     for rel in files:
@@ -572,3 +572,42 @@ def test_corporate_default_is_the_work_onedrive(monkeypatch, tmp_path):
     assert node_roots("corporate")[0].name == "Documents"
     monkeypatch.setenv("ATLAS_FILE_ROOTS_CORPORATE", str(personal))
     assert node_roots("corporate") == [personal] and node_roots("personal") == []
+
+
+def test_earlier_missions_outputs_are_readable_and_pdf_pptx_deliverables(roots):
+    """Agents read the node's earlier deliverables in place and write branded PDF / PowerPoint (docs/PUBLISHING.md)."""
+    earlier = paths.outputs_dir("corporate", "msn_earlier01")
+    earlier.mkdir(parents=True, exist_ok=True)
+    (earlier / "guion_v3.md").write_text("# Guion B200\n1. Portada\n2. Ubicación", encoding="utf-8")
+    other = paths.outputs_dir("personal", "msn_other01")
+    other.mkdir(parents=True, exist_ok=True)
+    (other / "secret.md").write_text("personal", encoding="utf-8")
+    tools = corp_tools()
+    listing = tools.run("list_files", {}).text
+    assert "earlier missions" in listing
+    read = tools.run("read_file", {"path": str(earlier / "guion_v3.md")})
+    assert read.ok and "Guion B200" in read.text
+    assert tools.run("read_file", {"path": "msn_earlier01/guion_v3.md"}).ok  # relative to the earlier-outputs root
+    assert not tools.run("read_file", {"path": str(other / "secret.md")}).ok  # another node's outputs
+
+    doc = {
+        "title": "B200 · *Arzentia* Capital", "subtitle": "Material para inversionista",
+        "summary": ["B200 es viable a 72,000 MXN/m²."],
+        "sections": [{"title": "Mercado", "blocks": [{"type": "bullets", "items": ["Absorción 2.1 u/mes"]}]}],
+        "slides": [{"type": "bullets", "title": "Ubicación", "items": ["San Pedro", "Frente a parque"]},
+                   {"type": "kpis", "title": "Cifras", "kpis": [{"label": "Precio", "value": "72,000 MXN/m²"}]}],
+    }
+    deck = tools.run("write_deliverable", {"filename": "B200_Arzentia", "format": "pptx", "document": doc})
+    assert deck.ok and deck.attachment and deck.attachment.name == "B200_Arzentia.pptx", deck.text
+    from pptx import Presentation
+
+    prs = Presentation(str(paths.outputs_dir("corporate", MID) / "B200_Arzentia.pptx"))
+    texts = " ".join(sh.text_frame.text for sl in prs.slides for sh in sl.shapes if getattr(sh, "has_text_frame", False))
+    assert "Ubicación" in texts and "72,000 MXN/m²" in texts and len(prs.slides) == 4  # cover + 2 + closing
+    pdf = tools.run("write_deliverable", {"filename": "B200_Arzentia", "format": "pdf", "document": json.dumps(doc)})
+    assert pdf.ok and pdf.attachment.name == "B200_Arzentia.pdf"
+    assert (paths.outputs_dir("corporate", MID) / "B200_Arzentia.pdf").read_bytes().startswith(b"%PDF")
+    bad = tools.run("write_deliverable", {"filename": "x", "format": "pptx", "document": {"title": "Sin láminas"}})
+    assert not bad.ok and "slides" in bad.text
+    assert not tools.run("write_deliverable", {"filename": "x", "format": "pdf"}).ok
+    assert not (earlier / "B200_Arzentia.pptx").exists()  # writes only to this mission's folder
