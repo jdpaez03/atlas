@@ -113,10 +113,14 @@ SCRIBE formats the final report when a mission closes. Any agent can also produc
   - Image blocks in the PDF: `{type: image, image, caption}`.
   - `image` is the path of a png, jpg, webp, gif, bmp or tif that the agent can read (local roots, `onedrive:` / `sharepoint:`, earlier missions' outputs). It goes through the same sandbox as `read_file`, and images of other nodes or outside the roots are refused.
   - A reference that can't be used becomes an "Imagen no disponible" placeholder, and the agent is told why.
-  - Only use the company's own images or images with confirmed rights; the prompt says so. SCRIBE's end-of-mission documents carry no images, because SCRIBE reads no files.
-  - **Images from the company's own website:** `collect_site_images(url)` opens a page of a site listed in `ATLAS_OWN_SITES` (e.g. `pagadesarrollos.com`) in a headless browser. It scrolls to load lazy galleries and saves every image at least `min_px` (default 600 px) on its longest side into the mission outputs under `imagenes/`.
+  - Images that aren't the company's own are credited in the caption ("Fuente: <domain>"); the prompt says so. SCRIBE's end-of-mission documents carry no images, because SCRIBE reads no files.
+  - **Images from websites:** `collect_site_images(url)` opens any public web page in a headless browser. It scrolls to load lazy galleries and saves every image at least `min_px` (default 600 px) on its longest side into the mission outputs.
     - Sources: `<img>` with the largest `srcset` candidate, `<picture>`, CSS backgrounds and `og:image`.
     - Icons, logos, SVGs and duplicates are skipped.
     - It also returns the page's links to the same site, so the agent can walk from the home page to each project page.
-    - The saved files are then used as `imagenes/<name>.jpg` in `cover_image` or in image slides.
-    - Other sites are refused. No login, a fresh browser each call. Images on the company's own site count as the company's material.
+    - Where images land depends on the site:
+      - The company's own sites (`ATLAS_OWN_SITES`, e.g. `pagadesarrollos.com`) save to `imagenes/<name>`, as company material.
+      - Any other site (a project microsite, a partner) saves to `imagenes/<domain>/<name>`. Those images are used too, with "Fuente: <domain>" in the caption.
+    - `imagenes/fuentes.csv` records each image's origin, URL and page, so every picture can be credited.
+    - Private addresses are never opened: localhost, the LAN and the tailnet are all refused.
+    - No login, a fresh browser each call (never the agents' signed-in profiles).

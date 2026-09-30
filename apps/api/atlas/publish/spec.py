@@ -54,7 +54,8 @@ _CHART = {
     "required": ["chart_type", "categories", "series"],
 }
 _IMAGE = {"type": "string", "description": "path of a photo/render the agent can read (png/jpg), e.g. "
-          "onedrive:/Proyectos/B200/Renders/fachada.jpg; only the company's own images or ones with confirmed rights"}
+          "onedrive:/Proyectos/B200/Renders/fachada.jpg, or imagenes/<name> from collect_site_images; "
+          "credit third-party images in the caption"}
 _BLOCK = {
     "type": "object",
     "description": "one of: paragraph {text} · bullets {items} · table {table} · kpis {kpis} · "

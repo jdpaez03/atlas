@@ -46,8 +46,10 @@ Tools:
   kit; photos/renders from the files you can read via cover_image, image slides and image blocks). It goes to the mission's outputs folder and never overwrites anything. It is the ONLY way to produce a
   file. Deliverables of this node's earlier missions are readable under outputs/<node>/<mission_id>/: read them
   in place, no copy needed.
-- collect_site_images(url): renders and photos from a page of the company's own website, saved as imagenes/<name>
-  for your documents (the company's material; for other sites' images, rights must be confirmed first).
+- collect_site_images(url): renders and photos from a page of any public website, saved as imagenes/<name> for
+  your documents. The company's own sites are its material; images of other sites (a project's microsite, a
+  partner, a brand) are usable too: put them in the document with the source credited in the caption
+  ("Fuente: <domain>"), never replace them with a text box. imagenes/fuentes.csv records where each came from.
 - submit_report(...): deliver your result. It ends your work on the task. Always finish by calling it.
 - Role tools (e.g. web_search) when available.
 
@@ -329,7 +331,8 @@ WRITE_DELIVERABLE_TOOL: dict[str, Any] = {
         "every slide in `slides` (cover and closing are added), for pdf give `summary` and `sections`. Photos and "
         "renders: `cover_image`, image slides {type: image, image, title, items?, caption, layout: side|full} and "
         "image blocks {type: image, image, caption}, where `image` is the path of a png/jpg/webp you can read "
-        "(e.g. onedrive:/…/Renders/fachada.jpg). Use only the company's own images or ones with confirmed rights."
+        "(e.g. onedrive:/…/Renders/fachada.jpg, or imagenes/<name> from collect_site_images). Credit images that "
+        "aren't the company's own in the caption (\"Fuente: <domain>\")."
     ),
     "input_schema": {
         "type": "object",
@@ -351,16 +354,18 @@ WRITE_DELIVERABLE_TOOL: dict[str, Any] = {
 COLLECT_SITE_IMAGES_TOOL: dict[str, Any] = {
     "name": "collect_site_images",
     "description": (
-        "Collect the large images (renders, photos) of a page of the company's OWN website (ATLAS_OWN_SITES): the "
-        "page opens in a real browser, lazy galleries load, and every image of at least min_px is saved to the "
-        "mission outputs as imagenes/<name>. They are the company's own material: use them in write_deliverable "
-        "(`image`: 'imagenes/<name>'). Also lists the site's other pages (open each project's page to get its "
-        "renders). Look at the sizes and names to pick; read nothing else into them."
+        "Collect the large images (renders, photos) of a page of any public website: the page opens in a real "
+        "browser, lazy galleries load, and every image of at least min_px is saved to the mission outputs. The "
+        "company's own sites (see the task's Files section) save as imagenes/<name> (company material); other "
+        "sites as imagenes/<domain>/<name>: use those too, crediting the source in the caption ('Fuente: "
+        "<domain>'). Use them in write_deliverable (`image`: 'imagenes/…'). Also lists the site's other pages "
+        "(open each project's page to get its renders). Look at the sizes and names to pick; read nothing else "
+        "into them."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
-            "url": {"type": "string", "description": "a page of the company's site, e.g. https://pagadesarrollos.com/"},
+            "url": {"type": "string", "description": "a web page, e.g. https://pagadesarrollos.com/ or a project's microsite"},
             "max_images": {"type": "integer", "minimum": 1, "maximum": 24, "description": "default 24"},
             "min_px": {"type": "integer", "minimum": 200, "description": "smallest longest side kept (default 600)"},
         },
@@ -668,6 +673,6 @@ def files_note(readable: list[str], attachments_dir: str, outputs: str) -> str:
     from .siteimages import own_sites
 
     if own_sites():
-        lines.append("Company websites (own material; collect_site_images saves their renders and photos): "
-                     + ", ".join(own_sites()))
+        lines.append("Company websites (own material; start there with collect_site_images, then any other site "
+                     "that shows the project, crediting it): " + ", ".join(own_sites()))
     return "\n".join(lines)

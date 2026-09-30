@@ -94,7 +94,17 @@ def test_own_sites_parsing(monkeypatch):
     assert si.page_url("pagadesarrollos.com/fiori") == "https://pagadesarrollos.com/fiori"
 
 
+def test_private_addresses_are_refused(monkeypatch):
+    monkeypatch.delenv("ATLAS_SITE_IMAGES_ALLOW_PRIVATE", raising=False)
+    for url in ("http://127.0.0.1:8000/", "http://localhost:3000/", "http://192.168.101.145/", "http://100.84.153.3/",
+                "http://[::1]/", "file:///etc/passwd", "http://169.254.169.254/latest/meta-data"):
+        assert not si.url_allowed(url), url
+    with pytest.raises(si.SiteImagesError, match="only public"):
+        si.collect("http://127.0.0.1:9/", Path("/nonexistent"))
+
+
 def test_collects_large_images_and_uses_them_in_a_deck(site, browser_env, monkeypatch, tmp_path):
+    monkeypatch.setenv("ATLAS_SITE_IMAGES_ALLOW_PRIVATE", "1")
     monkeypatch.setenv("ATLAS_OWN_SITES", "127.0.0.1")
     monkeypatch.setenv("ATLAS_FILE_ROOTS_CORPORATE", str(tmp_path))
     tools = FileTools(FileSandbox.for_mission("corporate", MID))
@@ -102,7 +112,7 @@ def test_collects_large_images_and_uses_them_in_a_deck(site, browser_env, monkey
     assert res.ok and res.kind == "web_fetch", res.text
     out = paths.outputs_dir("corporate", MID) / "imagenes"
     names = sorted(p.name for p in out.iterdir())
-    assert names == ["fachada-torre-fiori.jpg", "lobby.png", "roof-garden.jpg"], names  # icon, svg, dup og skipped
+    assert names == ["fachada-torre-fiori.jpg", "fuentes.csv", "lobby.png", "roof-garden.jpg"], names  # icon, svg, og dup
     with Image.open(out / "fachada-torre-fiori.jpg") as im:
         assert im.size == (1600, 900)  # the largest srcset candidate
     assert "imagenes/lobby.png  1200×800" in res.text and f"{site}/fiori" in res.text and "elsewhere" not in res.text
@@ -111,7 +121,20 @@ def test_collects_large_images_and_uses_them_in_a_deck(site, browser_env, monkey
         "slides": [{"type": "image", "image": "imagenes/lobby.png", "title": "Lobby"}]}})
     assert deck.ok and "images: fachada-torre-fiori.jpg, lobby.png" in deck.detail, deck.text
 
-    refused = tools.run("collect_site_images", {"url": "https://example.com/"})
-    assert not refused.ok and "not one of the company's own sites" in refused.text
-    monkeypatch.delenv("ATLAS_OWN_SITES")
-    assert "ATLAS_OWN_SITES" in tools.run("collect_site_images", {"url": site}).text
+    assert "company material" in res.text
+
+    # any other site is collected too, into imagenes/<domain>/, marked as third party
+    monkeypatch.setenv("ATLAS_OWN_SITES", "pagadesarrollos.com")
+    third = tools.run("collect_site_images", {"url": site.replace("127.0.0.1", "localhost") + "/fiori"})
+    assert third.ok and "third-party site localhost" in third.text and "Fuente: localhost" in third.text, third.text
+    assert sorted(p.name for p in (out / "localhost").iterdir()) == ["fachada-torre-fiori.jpg", "lobby.png",
+                                                                     "roof-garden.jpg"]
+    assert "imagenes/localhost/lobby.png" in third.text
+    rows = (out / "fuentes.csv").read_text(encoding="utf-8").splitlines()
+    assert rows[0] == "archivo,origen,dominio,imagen,pagina" and len(rows) == 7
+    assert any(r.startswith("imagenes/localhost/lobby.png,terceros,localhost,") for r in rows)
+    assert any(r.startswith("imagenes/lobby.png,propia,127.0.0.1,") for r in rows)
+    deck2 = tools.run("write_deliverable", {"filename": "Fiori2", "format": "pptx", "document": {
+        "title": "Torre Fiori", "slides": [{"type": "image", "image": "imagenes/localhost/lobby.png",
+                                            "title": "Lobby", "caption": "Fuente: localhost"}]}})
+    assert deck2.ok, deck2.text

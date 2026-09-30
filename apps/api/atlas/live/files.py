@@ -1152,7 +1152,7 @@ class FileTools:
     # -- write --
 
     def collect_site_images(self, url: str = "", max_images: Any = None, min_px: Any = None) -> FileResult:
-        """Large images of a page of the company's own website → outputs/…/imagenes/ (siteimages.py)."""
+        """Large images of a page of any public website → outputs/…/imagenes/ (siteimages.py)."""
         from . import siteimages as si
 
         target = si.page_url(url)
@@ -1162,8 +1162,11 @@ class FileTools:
                              min_px=max(200, _int(min_px, si.MIN_PX)))
         except si.SiteImagesError as exc:
             raise FileAccessError(str(exc)) from exc
+        origin = ("the company's own website: company material" if got.own else
+                  f"third-party site {got.domain}: usable, credit the source (e.g. caption 'Fuente: {got.domain}')")
         lines = [f"Page: {got.page}" + (f" · {got.title}" if got.title else ""),
-                 f"Saved {len(got.saved)} image(s) to the mission outputs (company material, usable in decks as "
+                 f"Origin: {origin}. Sources of every image: imagenes/fuentes.csv",
+                 f"Saved {len(got.saved)} image(s) to the mission outputs (usable in decks as "
                  "`image`: 'imagenes/<name>')" + (f"; {got.skipped} skipped (small, duplicate or unreadable)"
                                                     if got.skipped else "") + ":"]
         lines += [f"- imagenes/{i['name']}  {i['width']}×{i['height']}" + (f"  · {i['alt']}" if i["alt"] else "")
@@ -1171,8 +1174,8 @@ class FileTools:
         if got.links:
             lines.append("Other pages of this site you can collect from next:")
             lines += [f"- {ln['url']}" + (f"  ({ln['text']})" if ln["text"] else "") for ln in got.links[:40]]
-        detail = f"{len(got.saved)} image(s) saved" + (": " + ", ".join(i["name"] for i in got.saved[:12])
-                                                       if got.saved else "")
+        detail = (f"{len(got.saved)} image(s) saved ({'own site' if got.own else 'third party: ' + got.domain})"
+                  + (": " + ", ".join(i["name"] for i in got.saved[:12]) if got.saved else ""))
         return FileResult("\n".join(lines), True, "web_fetch", got.page, detail,
                           extra={"images": [i["path"] for i in got.saved]})
 
