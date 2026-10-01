@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import collections
 import concurrent.futures
 import contextlib
 import io
@@ -52,7 +53,7 @@ from .files import FileAccessError, _size, download_url, render_deliverable
 NAMES = (
     "browser_open", "browser_snapshot", "browser_click", "browser_type", "browser_select", "browser_press",
     "browser_scroll", "browser_wait", "browser_back", "browser_tables", "browser_download", "browser_charts",
-    "browser_screenshot",
+    "browser_data", "browser_screenshot",
 )
 # Clicks whose target text matches this need a human approval first (then confirm=true).
 RISKY = re.compile(
@@ -68,6 +69,8 @@ DEFAULT_ELEMENTS = 150
 MAX_ELEMENTS = 400
 DOWNLOAD_WAIT_S = 90
 MAX_CHART_POINTS = 400
+MAX_RESPONSES = 80          # data responses remembered per session (newest kept)
+MAX_DATA_CHARS = 20_000     # JSON shown to the agent per call (save_as keeps all of it)
 SCREENSHOT_MAX_SIDE = 1568
 SCREENSHOT_MAX_H = 4000
 ACTION_TIMEOUT_MS = 15_000
@@ -444,6 +447,41 @@ _X_KEYS = ("x", "label", "category", "name", "date", "fecha", "periodo", "mes", 
 _Y_KEYS = ("y", "value", "valor", "v", "count", "total")
 
 
+def _shape(v: Any, depth: int = 0) -> str:
+    """A short description of a JSON value: {data: list[24] of {periodo, absorcion, …}}."""
+    if isinstance(v, dict):
+        if depth >= 2:
+            return "{…}"
+        keys = list(v)[:8]
+        inner = ", ".join(f"{k}: {_shape(v[k], depth + 1)}" if isinstance(v[k], (dict, list)) else str(k) for k in keys)
+        return "{" + inner + (", …" if len(v) > 8 else "") + "}"
+    if isinstance(v, list):
+        if not v:
+            return "list[0]"
+        first = v[0]
+        if isinstance(first, dict):
+            return f"list[{len(v)}] of {{{', '.join(list(first)[:8])}{', …' if len(first) > 8 else ''}}}"
+        return f"list[{len(v)}] of {type(first).__name__}"
+    return type(v).__name__
+
+
+def _records(v: Any, depth: int = 0) -> list[dict[str, Any]]:
+    """The largest list of flat records inside a JSON value (what a chart or table is drawn from)."""
+    best: list[dict[str, Any]] = []
+    if isinstance(v, list) and v and all(isinstance(x, dict) for x in v[:50]):
+        flat = [{k: x for k, x in r.items() if not isinstance(x, (dict, list))} for r in v if isinstance(r, dict)]
+        if any(flat):
+            best = flat
+    if depth < 4:
+        children = v.values() if isinstance(v, dict) else (v if isinstance(v, list) and len(v) <= 50 else [])
+        for c in children:
+            if isinstance(c, (dict, list)):
+                got = _records(c, depth + 1)
+                if len(got) > len(best):
+                    best = got
+    return best
+
+
 def _x_label(v: Any) -> Any:
     if isinstance(v, list):
         return " ".join(str(x) for x in v if x is not None)
@@ -548,6 +586,7 @@ class BrowserSession:
         self._downloads: list[Any] = []
         self._seen_downloads = 0
         self._visited: set[str] = set()
+        self._responses: collections.deque[Any] = collections.deque(maxlen=MAX_RESPONSES)
         self.closed = False
 
     # -- plumbing --------------------------------------------------------------
@@ -619,9 +658,22 @@ class BrowserSession:
         self._ctx.set_default_timeout(ACTION_TIMEOUT_MS)
         self._ctx.set_default_navigation_timeout(NAV_TIMEOUT_MS)
         self._ctx.on("page", self._adopt)
+        self._ctx.on("response", self._on_response)
         for p in self._ctx.pages:
             p.on("download", self._on_download)
         self._page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
+
+    def _on_response(self, response: Any) -> None:
+        """Remember the data the pages fetch (JSON from the allowed sites): it's what their charts draw."""
+        try:
+            req = response.request
+            if req.resource_type not in ("xhr", "fetch") or not host_allowed(response.url, self.cfg.domains):
+                return
+            if "json" not in (response.headers.get("content-type") or "").lower():
+                return
+            self._responses.append(response)
+        except Exception:  # noqa: BLE001 — a response we can't inspect is simply not remembered
+            return
 
     def _on_download(self, download: Any) -> None:
         self._downloads.append(download)
@@ -965,6 +1017,70 @@ class BrowserSession:
             res.text += f"\n\nSaved {target.name} ({_size(len(data))}) to the mission outputs: {target}"
         return res
 
+    def _data(self, args: dict[str, Any], approved: bool) -> BrowserResult:
+        """The JSON the pages fetched from the site's own API (the numbers behind charts and KPI cards)."""
+        items: list[tuple[Any, Any]] = []
+        for resp in reversed(self._responses):
+            try:
+                if resp.status >= 400:
+                    continue
+                items.append((resp, json.loads(resp.body())))
+            except Exception:  # noqa: BLE001, S112 — gone after a navigation, or not JSON after all
+                continue
+        flt = str(args.get("filter") or "").strip().lower()
+        if flt:
+            items = [(r, d) for r, d in items if flt in r.url.lower() or flt in json.dumps(d, ensure_ascii=False)[:200_000].lower()]
+        if not items:
+            return BrowserResult(
+                "No data responses captured" + (f" matching '{flt}'" if flt else "") + ". They are captured while "
+                "pages load: open or reload the view (or change a filter) and call browser_data again; if the "
+                "site sends its data some other way, use browser_screenshot.", ok=False)
+        index = args.get("index")
+        if index in (None, "", 0):
+            lines = [f"{len(items)} data response(s), newest first (browser_data index=N shows one; save_as keeps it):"]
+            for k, (r, d) in enumerate(items[:40], 1):
+                lines.append(f"#{k} {r.request.method} {_short(urlparse(r.url).path + ('?' + urlparse(r.url).query if urlparse(r.url).query else ''), 110)} · {_shape(d)}")
+            res = BrowserResult("\n".join(lines))
+            self._visit(res, f"{len(items)} data responses")
+            return res
+        try:
+            k = int(index)
+        except (TypeError, ValueError):
+            raise BrowserError("index must be a number from the list") from None
+        if not 1 <= k <= len(items):
+            raise BrowserError(f"there are {len(items)} responses; index must be 1-{len(items)}")
+        resp, data = items[k - 1]
+        text = json.dumps(data, ensure_ascii=False, indent=1)
+        lines = [f"#{k} {resp.request.method} {resp.url}", f"Shape: {_shape(data)}"]
+        records = _records(data)
+        if records:
+            rows = chart_rows({"rows": records})
+            lines.append(f"\nRecords ({len(records)}):")
+            lines += [" | ".join(_short(str("" if v is None else v), 28) for v in r) for r in rows[:40]]
+            if len(rows) > 41:
+                lines.append(f"… {len(rows) - 41} more (save_as keeps them all)")
+        lines.append(f"\nJSON ({len(text):,} chars" + (", truncated" if len(text) > MAX_DATA_CHARS else "") + "):")
+        lines.append(text[:MAX_DATA_CHARS])
+        res = BrowserResult("\n".join(lines))
+        self._visit(res, f"data response {_short(urlparse(resp.url).path, 60)}")
+        save_as = str(args.get("save_as") or "").strip()
+        if save_as:
+            stem = Path(save_as).stem or "datos"
+            raw = json.dumps(data, ensure_ascii=False, indent=1).encode("utf-8")
+            target = _save_unique(self.outputs, f"{stem}.json", lambda p: p.write_bytes(raw))
+            saved = [target]
+            if records:
+                book = render_deliverable("xlsx", None, {"datos": [[_cell(v) if isinstance(v, str) else v for v in r]
+                                                                   for r in chart_rows({"rows": records})]})
+                saved.append(_save_unique(self.outputs, f"{stem}.xlsx", lambda p: p.write_bytes(book)))
+            for t in saved:
+                size = t.stat().st_size
+                res.attachments.append(Attachment(name=t.name, kind="file", size_bytes=size,
+                                                  download_url=download_url(self.mission_id, t.name)))
+                res.evidence.append(("file_written", str(t), f"{_size(size)}, data from {_short(resp.url, 80)}", True))
+            res.text += "\n\nSaved " + ", ".join(t.name for t in saved) + " to the mission outputs."
+        return res
+
     def _charts(self, args: dict[str, Any], approved: bool) -> BrowserResult:
         """The data behind the page's charts (see _CHARTS_JS), as tables; save_as writes them to the outputs."""
         charts: list[dict[str, Any]] = []
@@ -979,7 +1095,8 @@ class BrowserSession:
         tables = [(c, rows) for c, rows in tables if len(rows) > 1]
         if not tables:
             return BrowserResult(
-                "Found no readable chart data on this page (the chart library keeps it out of reach). Use "
+                "Found no readable chart data on this page (the chart library keeps it out of reach). Try "
+                "browser_data: the numbers the page downloaded from the site to draw its charts. Otherwise "
                 "browser_screenshot (of the chart's ref, or the page) and read the values off the image; hover "
                 "tooltips and 'Cómo se calcula'-style dialogs are text: browser_snapshot reads them.", ok=False)
         lines = [f"{len(tables)} chart(s) with data on {self.page.url}:"]
@@ -1086,6 +1203,7 @@ def activity(name: str, args: dict[str, Any]) -> str:
         "browser_download": "Browser · downloading an export",
         "browser_charts": "Browser · reading the charts' data",
         "browser_screenshot": "Browser · taking a screenshot",
+        "browser_data": "Browser · reading the data the page loaded",
     }.get(name, "Browser")
 
 
@@ -1100,8 +1218,9 @@ def browser_note(cfg: ResolvedBrowser) -> str:
         "- Data: browser_tables reads (and with save_as saves) visible tables; for full datasets use the site's "
         "export with browser_download — the file lands in your outputs folder; then read_file it.\n"
         "- Charts are images: their numbers are NOT in the page text. browser_charts reads the data behind them "
-        "(save_as keeps it as xlsx); if it finds none, browser_screenshot the chart and read the values off the "
-        "image. Dialogs like 'Cómo se calcula' are text: browser_snapshot right after opening them and quote it.\n"
+        "(save_as keeps it as xlsx); if it finds none, browser_data lists the data the page downloaded from the "
+        "site (open the view or change the filter first; save_as keeps it as json + xlsx); last resort, "
+        "browser_screenshot the chart and read the values off the image. Dialogs like 'Cómo se calcula' are text: browser_snapshot right after opening them and quote it.\n"
         "- Write down each figure the moment you see it (value, unit, page, filters, period) and keep it in your "
         "reply text; your report must quote them. Don't spend your turns re-opening pages: when the budget warning "
         "appears, submit_report with what you have.\n"

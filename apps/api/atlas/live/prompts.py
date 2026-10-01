@@ -435,6 +435,13 @@ BROWSER_TOOLS: list[dict[str, Any]] = [
            "the page text). Lists each chart with its title and a table of labels × series. With save_as, saves "
            "them all to the mission outputs as xlsx (one sheet per chart).",
            {"save_as": {"type": "string", "description": "file name"}}),
+    _btool("browser_data",
+           "The data the pages downloaded from the site's own API while loading (JSON): usually the exact numbers "
+           "behind the charts and KPI cards. No index = the list (newest first, with each response's shape); "
+           "index = that response, its records as a table and the JSON. save_as saves it as json (+ xlsx of the "
+           "records). Captured while pages load: open the view or change a filter first.",
+           {"index": {"type": "integer", "minimum": 1}, "filter": {"type": "string", "description": "only "
+            "responses whose URL or content contains this"}, "save_as": {"type": "string"}}),
     _btool("browser_screenshot",
            "Take a screenshot and LOOK at it: the page's visible area, the full page, or one element (a chart's "
            "ref). Use it when browser_charts finds no data, or to check what the screen shows. Saved to the "

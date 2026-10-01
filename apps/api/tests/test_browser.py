@@ -105,6 +105,20 @@ class Site(BaseHTTPRequestHandler):
 </body></html>""")
         if url.path == "/graficas":
             return self._send(200, CHARTS_PAGE)
+        if url.path == "/tablero":  # draws a bare canvas from data it fetches: nothing to read but the network
+            return self._send(200, """<html><head><title>Por absorción</title></head><body><h3>Por absorción</h3>
+<canvas id="c" width="300" height="150"></canvas><script>
+fetch('/api/absorcion?torre=Fiori').then(r => r.json()).then(d => {
+  const g = document.getElementById('c').getContext('2d');
+  d.data.serie.forEach((p, i) => g.fillRect(20 + i * 60, 140 - p.absorcion * 100, 40, p.absorcion * 100));
+  document.title = 'Por absorción · listo';
+});
+fetch('/api/otra').catch(() => {});
+</script></body></html>""")
+        if url.path == "/api/absorcion":
+            return self._send(200, json.dumps({"torre": "Fiori", "data": {"definicion": "ventas / inventario inicial",
+                "serie": [{"periodo": "2026-Q1", "absorcion": 0.5, "ventas": 3},
+                          {"periodo": "2026-Q2", "absorcion": 0.67, "ventas": 2}]}}), ctype="application/json")
         if url.path == "/export.csv":
             mun = q.get("mun", "Monterrey")
             body = "desarrollo,precio_m2,unidades\n" + "".join(
@@ -567,3 +581,37 @@ def test_sdk_tool_result_carries_images():
     assert out["content"][0] == {"type": "text", "text": "mira"}
     assert out["content"][1] == {"type": "image", "data": "/9h4", "mimeType": "image/jpeg"}
     assert _mcp_result("solo texto") == {"content": [{"type": "text", "text": "solo texto"}]}
+
+
+def test_data_behind_a_canvas_comes_from_the_network(site, browser_env, tmp_path):
+    human_login("mercato", site)
+    cfg = B.resolve("mercato", BrowserConfig(profile="mercato", start_url=f"{site}/tablero",
+                                             allowed_domains=["127.0.0.1"]))
+    out = tmp_path / "outputs"
+
+    async def go():
+        s = B.BrowserSession(cfg, outputs=out, mission_id="msn_d1")
+        await s.run("browser_open", {})
+        await s.run("browser_wait", {"seconds": 1})
+        r = {"charts": await s.run("browser_charts", {}),
+             "list": await s.run("browser_data", {}),
+             "one": await s.run("browser_data", {"index": 1, "save_as": "absorcion_fiori"}),
+             "filtered": await s.run("browser_data", {"filter": "nada-que-ver"})}
+        await s.close()
+        return r
+
+    r = asyncio.run(go())
+    assert not r["charts"].ok and "browser_data" in r["charts"].text
+    lst = r["list"]
+    assert lst.ok and "1 data response(s)" in lst.text, lst.text  # /api/otra was a 404: not listed
+    assert "GET /api/absorcion?torre=Fiori · {torre, data: {definicion, serie: list[2] of {periodo, absorcion, ventas}}}" in lst.text
+    one = r["one"]
+    assert one.ok and "Records (2):" in one.text and "2026-Q2 | 0.67 | 2" in one.text
+    assert '"definicion": "ventas / inventario inicial"' in one.text
+    assert json.loads((out / "absorcion_fiori.json").read_text())["data"]["serie"][1]["absorcion"] == 0.67
+    import openpyxl
+
+    ws = openpyxl.load_workbook(out / "absorcion_fiori.xlsx").active
+    assert [c.value for c in ws[3]] == ["2026-Q2", 0.67, 2]
+    assert [e[0] for e in one.evidence if e[0] == "file_written"] == ["file_written", "file_written"]
+    assert not r["filtered"].ok
