@@ -353,6 +353,7 @@ class AgentRun:
         await self._evidence(res.kind, res.ref, res.detail, res.ok)
         if res.attachment is not None:
             self.deliverables.append(res.attachment)
+        self.last_images = res.images
         return res.text, res.ok
 
     # -- browser ---------------------------------------------------------------
@@ -458,8 +459,9 @@ class AgentRun:
                 elif name == "request_approval":
                     results.append(await self._request_approval(tu.id, data))
                 elif name in FileTools.NAMES:
+                    self.last_images = []
                     out, ok = await self._file_tool(name, data)
-                    results.append(_tool_result(tu.id, out, error=not ok))
+                    results.append(_tool_result(tu.id, out, error=not ok, images=self.last_images))
                 elif name in browser_mod.NAMES:
                     out, ok = await self._browser_tool(name, data)
                     results.append(_tool_result(tu.id, out, error=not ok, images=self.last_images))

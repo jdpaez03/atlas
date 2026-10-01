@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 from pathlib import Path
@@ -648,3 +649,34 @@ def test_documents_with_photos_from_the_readable_files(roots):
     pdf = tools.run("write_deliverable", {"filename": "Fiori", "format": "pdf", "document": doc})
     assert pdf.ok and "lobby.webp" in pdf.detail
     assert b"/Subtype /Image" in (paths.outputs_dir("corporate", MID) / "Fiori.pdf").read_bytes()
+
+
+def test_read_file_shows_images_and_scanned_pdfs_to_the_model(tmp_path, monkeypatch):
+    """An attached screenshot is a picture, not text: the agent gets to see it (2026-10-01: 4 failed reads)."""
+    from PIL import Image, ImageDraw
+
+    from atlas.live.files import FileSandbox, FileTools
+
+    monkeypatch.setenv("ATLAS_FILE_ROOTS_CORPORATE", str(tmp_path))
+    big = Image.new("RGB", (3000, 1500), (255, 255, 255))
+    ImageDraw.Draw(big).text((50, 50), "Absorcion 0.67", fill=(0, 0, 0))
+    big.save(tmp_path / "redi captura.png")
+    big.save(tmp_path / "escaneo.pdf")  # a PDF that is only an image: no text layer
+    (tmp_path / "roto.png").write_bytes(b"not an image")
+    tools = FileTools(FileSandbox.for_mission("corporate", "msn_img00001"))
+
+    res = tools.run("read_file", {"path": str(tmp_path / "redi captura.png")})
+    assert res.ok and res.kind == "file_read" and "image, 3000×1500" in res.text and "look at it" in res.text
+    (mt, data), = res.images
+    assert mt == "image/jpeg"
+    with Image.open(io.BytesIO(data)) as seen:
+        assert max(seen.size) == 1568  # scaled for the model; the file is untouched
+
+    pdf = tools.run("read_file", {"path": str(tmp_path / "escaneo.pdf")})
+    assert pdf.ok and len(pdf.images) == 1 and "no text layer" in pdf.text and "page image" in pdf.detail
+
+    bad = tools.run("read_file", {"path": str(tmp_path / "roto.png")})
+    assert not bad.ok and "could not be opened as an image" in bad.text
+
+    txt = tools.run("read_file", {"path": str(tmp_path / "redi captura.png").replace(".png", ".txt")})
+    assert not txt.images

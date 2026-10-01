@@ -711,6 +711,9 @@ def render_document(fmt: str, document: Any, node: str, resolve: ImageResolver |
 
 
 IMAGE_OK = (".png", ".jpg", ".jpeg")
+READ_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff")
+VIEW_MAX_SIDE = 1568      # what the model sees (the file itself is untouched)
+SCANNED_PDF_PAGES = 5     # page images sent for a PDF without a text layer
 IMAGE_CONVERT = (".webp", ".gif", ".bmp", ".tif", ".tiff")
 MAX_IMAGES = 30
 
@@ -797,6 +800,60 @@ class FileResult:
     detail: str = ""
     attachment: Attachment | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    images: list[tuple[str, bytes]] = field(default_factory=list)  # (media type, bytes) shown to the model
+
+
+def _view(im: Any) -> bytes:
+    """An image as the model sees it: RGB JPEG, longest side VIEW_MAX_SIDE."""
+    im = im.convert("RGB")
+    im.thumbnail((VIEW_MAX_SIDE, VIEW_MAX_SIDE))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=85)
+    return buf.getvalue()
+
+
+def _image_result(path: Path, label: str, size: int) -> FileResult:
+    """read_file on a picture (a screenshot, a scanned page, a photo of a board): the agent gets to SEE it."""
+    from PIL import Image
+
+    try:
+        with Image.open(path) as im:
+            im.seek(0)  # first frame of a gif / multi-page tif
+            w, h = im.size
+            data = _view(im)
+    except Exception as exc:
+        raise FileAccessError(f"'{path.name}' could not be opened as an image ({type(exc).__name__})") from exc
+    text = (f"File: {label} (image, {w}×{h}, {_size(size)}). The image is attached: look at it. Quote the "
+            "figures and text it shows exactly; if a value is only implied by a bar or a line (no label), say it "
+            "is read off the chart and approximate. Never invent what is not legible.")
+    res = FileResult(text, True, "file_read", label, f"image {w}×{h}")
+    res.images.append(("image/jpeg", data))
+    return res
+
+
+def _scanned_pages(path: Path, text: str, kind: str, res: FileResult) -> None:
+    """A PDF with no text layer (a scan, an exported image): send its first pages as pictures."""
+    if not kind.startswith("pdf") or "[no extractable text" not in text:
+        return
+    try:
+        import pypdfium2 as pdfium
+
+        doc = pdfium.PdfDocument(str(path))
+    except Exception:  # noqa: BLE001 — leave the text answer as it is
+        return
+    try:
+        n = len(doc)
+        for i in range(min(n, SCANNED_PDF_PAGES)):
+            res.images.append(("image/jpeg", _view(doc[i].render(scale=1.6).to_pil())))
+    except Exception:  # noqa: BLE001, S110 — whatever rendered is still useful
+        pass
+    finally:
+        doc.close()
+    if res.images:
+        shown = len(res.images)
+        res.text += (f"\n\n[The PDF has no text layer: its first {shown} page(s) are attached as images — read "
+                     "them. " + (f"Only {shown} of {n} pages are shown. " if n > shown else "") + "]")
+        res.detail += f", {shown} page image(s)"
 
 
 def _size(n: int) -> str:
@@ -1113,8 +1170,12 @@ class FileTools:
         p = self.sb.resolve(path)
         if p.is_dir():
             raise FileAccessError(f"'{path}' is a folder (use list_files)")
+        if p.suffix.lower() in READ_IMAGE_EXTS:
+            return _image_result(p, str(p), p.stat().st_size)
         text, kind = extract_text(p, sheet or None)
-        return self._page(str(p), p.stat().st_size, text, kind, offset, max_chars, sheet)
+        res = self._page(str(p), p.stat().st_size, text, kind, offset, max_chars, sheet)
+        _scanned_pages(p, text, kind, res)
+        return res
 
     def _remote_read(self, rp: RemotePath, item: gf.Item | None, offset: Any, max_chars: Any,
                      sheet: str | None) -> FileResult:
@@ -1125,11 +1186,16 @@ class FileTools:
         if ext in UNSUPPORTED:
             raise FileAccessError(UNSUPPORTED[ext])
         local = self.graph.download(item)
+        if ext in READ_IMAGE_EXTS:
+            res = _image_result(local, rp.label, item.size or local.stat().st_size)
+            res.extra["web_url"] = item.web_url
+            return res
         try:
             text, kind = extract_text(local, sheet or None)
         except FileAccessError as exc:
             raise FileAccessError(str(exc).replace(local.name, item.name)) from exc
         res = self._page(rp.label, item.size or local.stat().st_size, text, kind, offset, max_chars, sheet)
+        _scanned_pages(local, text, kind, res)
         res.extra["web_url"] = item.web_url
         return res
 

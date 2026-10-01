@@ -39,6 +39,8 @@ Tools:
   sheet?): read-only access to the user's files, limited to the folders this node allows plus the mission's
   attachments. list_files with no path shows those folders. read_file extracts text (txt/md/csv/json, PDF, Excel
   with one block per sheet, Word, PowerPoint); long files come in pages: continue with the offset it tells you.
+  Images (png/jpg/webp/gif/bmp/tif: screenshots, photos, scans) come back as a picture you can see, and so do the
+  first pages of a PDF without a text layer: read them.
   You can never modify, move or delete the user's files.
 - write_deliverable(filename, format, content?, sheets?, document?): create a file for the human (md, txt, csv,
   json, xlsx with sheets {{name: rows[][]}}, docx from markdown-style content, and branded pdf / pptx from a
@@ -301,8 +303,9 @@ SEARCH_FILES_TOOL: dict[str, Any] = {
 READ_FILE_TOOL: dict[str, Any] = {
     "name": "read_file",
     "description": (
-        "Read a file's text (read-only): txt/md/csv/json/code, PDF, Excel (xlsx/xlsm: one block per sheet), "
-        "Word (docx: paragraphs and tables), PowerPoint (pptx). Long files are paged: use `offset`."
+        "Read a file (read-only): the text of txt/md/csv/json/code, PDF, Excel (xlsx/xlsm: one block per sheet), "
+        "Word (docx: paragraphs and tables), PowerPoint (pptx); long files are paged: use `offset`. Images "
+        "(png/jpg/webp/gif/bmp/tif) and scanned PDFs come back as pictures for you to look at."
     ),
     "input_schema": {
         "type": "object",

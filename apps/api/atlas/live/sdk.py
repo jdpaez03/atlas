@@ -451,8 +451,9 @@ class SdkAgentRun(AgentRun):
         async def handler(args: dict[str, Any]) -> dict[str, Any]:
             if self.report is not None:
                 return _mcp_result("Your report is already submitted. Stop now.", error=True)
+            self.last_images = []
             text, ok = await self._file_tool(name, args)
-            return _mcp_result(text, error=not ok)
+            return _mcp_result(text, error=not ok, images=self.last_images)
 
         return handler
 
