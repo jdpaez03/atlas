@@ -218,6 +218,13 @@ def validate_plan(
     return ordered, []
 
 
+def _tools_note() -> str:
+    from . import suitetools
+
+    note = suitetools.note()
+    return (note + " Plan Suite work as a normal task (no extra approval task: the tool asks).") if note else ""
+
+
 def _roster_entry(r: ResolvedAgent) -> dict[str, Any]:
     a = r.agent
     entry: dict[str, Any] = {"id": a.id, "name": a.name, "title": a.title, "description": a.description,
@@ -405,7 +412,8 @@ class LiveMission:
     async def _plan(self) -> list[dict[str, Any]] | None:
         allowed = set(self.scope.agents)
         prompt = with_mission_notes(
-            planning_message(self.scope.objective, self.scope.node, [_roster_entry(r) for r in self.roster]),
+            planning_message(self.scope.objective, self.scope.node, [_roster_entry(r) for r in self.roster],
+                             _tools_note()),
             self._notes(), self._attachment_names(),
         )
         errors: list[str] = []

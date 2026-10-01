@@ -103,3 +103,8 @@ work in parallel against it without colliding.
   `deploy/linux/install-server.sh` sets up everything (systemd services, lid/sleep, battery conservation) and
   publishes ATLAS on the tailnet only (`tailscale serve`, HTTPS); `pack-for-server.ps1` + `import-from-pc.sh`
   move the data from the PC (docs/SERVER_LINUX.md).
+- 2026-09-30 · **Agents use PAGA Suite**: every agent can read Level 10 live (`suite_read`: to-dos, issues, the
+  meeting view, the week, Rocks). With `ATLAS_SUITE_WRITE=1` (and `ATLAS_API_KEY_WRITE=1` in the Suite) they can also
+  add NEW to-dos (e.g. from the weekly meeting's transcript) and open/close the week. The approval is inside the
+  tool: the human sees the exact rows, and only those are sent. The Suite's key can still never edit or close an
+  existing to-do, report progress, or touch anything outside L10 (docs/SUITE_TOOLS.md).

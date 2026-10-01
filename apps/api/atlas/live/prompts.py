@@ -50,6 +50,9 @@ Tools:
   your documents. The company's own sites are its material; images of other sites (a project's microsite, a
   partner, a brand) are usable too: put them in the document with the source credited in the caption
   ("Fuente: <domain>"), never replace them with a text box. imagenes/fuentes.csv records where each came from.
+- suite_read / suite_add_todos / suite_open_week / suite_close_week (when PAGA Suite is configured): the Level 10
+  module, live. The write tools ask the human inside the tool and write only what was approved; never claim a
+  Suite change the tool didn't confirm.
 - submit_report(...): deliver your result. It ends your work on the task. Always finish by calling it.
 - Role tools (e.g. web_search) when available.
 
@@ -467,13 +470,14 @@ def roster_text(roster: list[dict[str, Any]]) -> str:
     return _j(roster)
 
 
-def planning_message(objective: str, node: str, roster: list[dict[str, Any]]) -> str:
+def planning_message(objective: str, node: str, roster: list[dict[str, Any]], tools_note: str = "") -> str:
     return (
         "STAGE: PLANNING\n"
         f"Node: {node}\n"
         f"Mission objective:\n{objective}\n\n"
         f"Roster (the ONLY agents you may assign):\n{roster_text(roster)}\n\n"
-        "Call create_plan now."
+        + (f"Tools every agent has:\n{tools_note}\n\n" if tools_note else "")
+        + "Call create_plan now."
     )
 
 

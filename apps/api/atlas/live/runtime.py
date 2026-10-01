@@ -33,6 +33,7 @@ from ..core.models import (
 )
 from ..core.store import StoreError, WorldStore
 from . import browser as browser_mod
+from . import suitetools
 from .agent_loader import ModelConfig, ResolvedAgent
 from .context import NodeContext
 from .evidence import apply_claim_check, record
@@ -283,6 +284,7 @@ class AgentRun:
         tools += [*FILE_TOOLS, REQUEST_APPROVAL_TOOL, SUBMIT_REPORT_TOOL]
         if self.has_browser:
             tools += BROWSER_TOOLS
+        tools += suitetools.tools()
         if cfg.web_search and "web_search" in self.agent.agent.tools:
             tools.append(web_search_tool(cfg.web_search_tool, cfg.web_search_max_uses))
         return tools
@@ -315,10 +317,12 @@ class AgentRun:
 
     def _task_message(self) -> str:
         sc = self.scope
+        suite = suitetools.note()
         msg = task_message(
             sc.objective, sc.node, self.task, self.dep_reports,
             consultable=[f"{a} ({sc.name(a)})" for a in self._consultable()],
-            approval_required=self.task.requires_approval, files_note=self._files_note(),
+            approval_required=self.task.requires_approval,
+            files_note=self._files_note() + ("\n\n" + suite if suite else ""),
         )
         return msg + ("\n\n" + sc.memory if sc.memory else "")
 
@@ -434,6 +438,9 @@ class AgentRun:
                 elif name in browser_mod.NAMES:
                     out, ok = await self._browser_tool(name, data)
                     results.append(_tool_result(tu.id, out, error=not ok))
+                elif name in suitetools.NAMES:
+                    out, ok = await self._suite_tool(name, data)
+                    results.append(_tool_result(tu.id, out, error=not ok))
                 else:
                     results.append(_tool_result(tu.id, f"Unknown tool '{name}'.", error=True))
             _add_user(messages, results)
@@ -543,12 +550,26 @@ class AgentRun:
             await self.store.reset_agent(agent_id, mission_id=self.scope.mission_id)
 
     async def _request_approval(self, tool_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        s, task = self.store, self.task
+        task = self.task
         default = task.approval_reason or ApprovalReason.CONSEQUENTIAL_DECISION
         reason = _enum(data.get("reason"), ApprovalReason, default)
         title = _short(str(data.get("title") or task.title), 120)
         detail = str(data.get("detail") or "").strip() or title
         proposed = str(data.get("proposed_action") or "").strip() or None
+        approved, state, note = await self._ask_human(reason, title, detail, proposed)
+        payload = {"decision": state, "note": note}
+        guidance = (
+            "The human approved. You may proceed as proposed (you still only prepare/recommend)."
+            if approved
+            else "The human did NOT approve. Do not perform the action; adapt, and record it in your report."
+        )
+        return _tool_result(tool_id, json.dumps(payload, ensure_ascii=False) + "\n" + guidance)
+
+    async def _ask_human(self, reason: ApprovalReason, title: str, detail: str,
+                         proposed: str | None, *, unlocks: bool = True) -> tuple[bool, str, str]:
+        """Raise an approval and wait for the decision → (approved, state, note). `unlocks`: an approval
+        given through request_approval also unlocks the browser's confirm=true clicks; a Suite write's doesn't."""
+        s, task = self.store, self.task
         approval = await s.request_approval(
             self.scope.mission_id, self.aid, reason, title, detail, proposed_action=proposed, task_id=task.id
         )
@@ -557,7 +578,8 @@ class AgentRun:
         await self._activity("Awaiting human approval", AgentStatus.WAITING)
         decided = await s.wait_for_decision(approval.id)
         approved = decided.state == ApprovalState.APPROVED.value
-        self.approved = self.approved or approved
+        if unlocks:
+            self.approved = self.approved or approved
         await self._evidence(
             "approval", approval.id, f"{decided.state}: {title}" + (f" · {decided.decision_note}"
                                                                     if decided.decision_note else ""),
@@ -566,13 +588,44 @@ class AgentRun:
         if s.task(task.id).status == TaskStatus.AWAITING_APPROVAL.value:
             await s.update_task(task.id, status=TaskStatus.IN_PROGRESS)
         await self._activity(f"{'Approved' if approved else 'Rejected'} · {title}")
-        payload = {"decision": decided.state, "note": decided.decision_note or ""}
-        guidance = (
-            "The human approved. You may proceed as proposed (you still only prepare/recommend)."
-            if approved
-            else "The human did NOT approve. Do not perform the action; adapt, and record it in your report."
-        )
-        return _tool_result(tool_id, json.dumps(payload, ensure_ascii=False) + "\n" + guidance)
+        return approved, decided.state, decided.decision_note or ""
+
+    # -- PAGA Suite --------------------------------------------------------------
+
+    async def _suite_tool(self, name: str, data: dict[str, Any]) -> tuple[str, bool]:
+        """suite_read, or a Suite write that first asks the human (suitetools.py). Evidence = the real call."""
+        if name not in {t["name"] for t in suitetools.tools()}:
+            return ("Error: this PAGA Suite tool is not available here ("
+                    + ("writing is off: ATLAS_SUITE_WRITE" if suitetools.suite_configured() else
+                       "the Suite is not configured") + ").", False)
+        if name == "suite_read":
+            await self._activity(f"Reading PAGA Suite · {_short(str(data.get('what') or ''), 30)}")
+            try:
+                text, ref = await suitetools.read(data)
+            except suitetools.SuiteToolError as exc:
+                await self._evidence("external_call", f"PAGA Suite {data.get('what') or ''}", str(exc), ok=False)
+                return f"Error: {exc}", False
+            await self._evidence("external_call", f"PAGA Suite GET {ref}", "read")
+            return text, True
+        try:
+            plan = suitetools.plan_write(name, data)
+        except suitetools.SuiteToolError as exc:
+            return f"Error: {exc}", False
+        approved, state, note = await self._ask_human(
+            ApprovalReason.CONSEQUENTIAL_DECISION, _short(plan.title, 120), plan.detail, plan.proposed_action,
+            unlocks=False)
+        if not approved:
+            return (json.dumps({"decision": state, "note": note}, ensure_ascii=False)
+                    + "\nThe human did NOT approve: nothing was written to PAGA Suite. Adapt (the note may say "
+                      "what to change) and record it in your report."), True
+        await self._activity(_short(plan.title, 80))
+        try:
+            text = await suitetools.execute(plan)
+        except suitetools.SuiteToolError as exc:
+            await self._evidence("external_call", f"PAGA Suite POST {plan.ref}", str(exc), ok=False)
+            return f"Approved, but the write failed: {exc}", False
+        await self._evidence("external_call", f"PAGA Suite POST {plan.ref}", _short(text, 300))
+        return text + (f"\nThe human's note: {note}" if note else ""), True
 
     # -- reports -------------------------------------------------------------
 

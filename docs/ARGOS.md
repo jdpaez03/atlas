@@ -72,7 +72,7 @@ mail source (`atlas.inbox.sources.make_source()`), `paths`, the loaded `watch.ya
 - `unreported_todo`: no report for the current open week.
 - `stale_issue`: open for more than `watch.yaml` → `l10.stale_issue_days` (default 14), or with no decider.
 
-Severity depends on the age. Fingerprints are `l10:<kind>:<id>`. The rule "don't report on behalf of others" applies: ATLAS only reads and never writes to the Suite.
+Severity depends on the age. Fingerprints are `l10:<kind>:<id>`. The rule "don't report on behalf of others" applies: ARGOS only reads the Suite. The agents' Suite tools can add new to-dos and open or close the week, each only after a human approval (docs/SUITE_TOOLS.md); nothing ever reports progress on anyone's behalf.
 
 **Rocks from PAGA Suite** (default when the Suite is configured; `watch.yaml` → `rocks.source: auto | suite | file`): the Suite's Rocks module (`GET /rocks`) computes each Rock's status itself — the owner declares on/off-track weekly and the Suite's pace rule overrides an on-track below 50% of the required pace. ARGOS maps it: `on_track` → ON_TRACK, `off_track` → OFF_TRACK (alert `rock_at_risk`, HIGH when the pace rule overrode the owner or ≤ 2 weeks remain), `por_declarar` (past due, not declared) → FAILED (alert `rock_failed`, HIGH), `sin_registro` → UNKNOWN (alert `other`, LOW), `cumplido`/`no_cumplido` → DONE/FAILED. The evidence quotes the Suite's own reason. Rock ids are `<quarter>-<code>` (`2026-Q4-R1`). In this mode `PATCH /rocks/{id}` answers 409 — progress is reported in the Suite, ATLAS only reads it — and the brief uses the Rocks from the last check. The Suite's ATLAS key must allow `GET /rocks` (paga-app `ATLAS_GET_EXACT`).
 

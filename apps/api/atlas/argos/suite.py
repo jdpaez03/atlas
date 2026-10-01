@@ -11,7 +11,8 @@ Endpoints: GET /l10/admin/todos, GET /l10/issues, GET /l10/resumen/{semana_id}, 
 
 The Suite's field names are not a published contract, so every record is mapped through alias lists
 (`responsable`, `fecha`, `avance_pct`, `semaforo`, `estado`/`status`, `decide`, `abierto_desde`/`created_at`, …).
-Unmapped field names are logged once per endpoint. ATLAS only reads; it never writes to the Suite.
+Unmapped field names are logged once per endpoint. ARGOS only reads. The agents' Suite tools
+(atlas/live/suitetools.py) may add to-dos and open/close the L10 week, each only after a human approval.
 """
 
 from __future__ import annotations
@@ -328,18 +329,30 @@ class SuiteClient:
         return {self.auth_header: value, "Accept": "application/json"}
 
     async def get(self, path: str) -> Any:
+        return await self.request("GET", path)
+
+    async def post(self, path: str, body: Any = None) -> Any:
+        """Only the agents' Suite tools write (atlas/live/suitetools.py), each after a human approval."""
+        return await self.request("POST", path, body)
+
+    async def request(self, method: str, path: str, body: Any = None) -> Any:
         url = f"{self.base_url}/{path.lstrip('/')}"
-        where = f"PAGA Suite GET /{path.lstrip('/')}"
+        where = f"PAGA Suite {method} /{path.lstrip('/')}"
         try:
             headers = self._headers(await self._bearer())
             async with httpx.AsyncClient(timeout=self.timeout, transport=self._transport,
                                          headers=headers, follow_redirects=True) as client:
-                resp = await client.get(url)
+                resp = await client.request(method, url, json=body if method != "GET" else None)
         except httpx.TimeoutException as exc:
             raise SuiteError(f"{where} timed out after {self.timeout:g}s") from exc
         except httpx.HTTPError as exc:
             raise SuiteError(f"{where} failed: {type(exc).__name__}: {exc}") from exc
         if resp.status_code in (401, 403):
+            body_text = " ".join(resp.text.split())[:200]
+            if method != "GET" and resp.status_code == 403:
+                raise SuiteError(f"{where} was refused (HTTP 403): the Suite's ATLAS key can't write this"
+                                 + (f" · {body_text}" if body_text else "")
+                                 + " — writes need ATLAS_API_KEY_WRITE=1 in the Suite's docker/.env")
             if self.auth is not None:
                 raise SuiteError(f"{where} was refused (HTTP {resp.status_code}): the Suite rejected ATLAS's "
                                  "Microsoft token — check that its backend accepts tokens for ATLAS_SUITE_SCOPE "
@@ -348,8 +361,8 @@ class SuiteClient:
                              + ("" if self.auth_header.lower() == "authorization"
                                 else f" and ATLAS_SUITE_AUTH_HEADER ({self.auth_header})"))
         if resp.status_code >= 400:
-            body = " ".join(resp.text.split())[:200]
-            raise SuiteError(f"{where} failed: HTTP {resp.status_code}" + (f" · {body}" if body else ""))
+            body_text = " ".join(resp.text.split())[:300]
+            raise SuiteError(f"{where} failed: HTTP {resp.status_code}" + (f" · {body_text}" if body_text else ""))
         try:
             return resp.json()
         except ValueError as exc:

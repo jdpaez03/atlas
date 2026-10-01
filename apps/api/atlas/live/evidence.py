@@ -29,7 +29,7 @@ _URL_RE = re.compile(r"\b(?:https?|ftp)://\S+|\bwww\.\S+", re.IGNORECASE)
 _VERBS = {
     "file_listed": "listed", "file_read": "read", "file_written": "wrote", "web_search": "searched the web ·",
     "web_fetch": "fetched", "consult": "consulted", "approval": "requested approval ·",
-    "browser_visit": "opened", "browser_action": "in the browser:", "browser_download": "downloaded",
+    "external_call": "called", "browser_visit": "opened", "browser_action": "in the browser:", "browser_download": "downloaded",
 }
 
 
