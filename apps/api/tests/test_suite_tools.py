@@ -74,14 +74,14 @@ def test_write_plans_are_exact_and_validated(suite):
     p = suitetools.plan_write("suite_add_todos", {"fuente": "Junta semanal 2026-09-28", "todos": [
         {"titulo": "  Enviar   minuta ", "responsable": "Ana", "fecha_compromiso": "2026-10-02",
          "contexto": "min 12", "codigo": "PC-001", "estado": "cumplido"},
-        {"titulo": "Revisar precios Fiori", "proyecto": "Fiori"}]})
+        {"titulo": "Revisar precios Fiori", "proyecto": "SONOMA", "torre": "FIORI"}]})
     assert p.path == "/l10/admin/importar"
     assert p.body == {"items": [  # no codigo/estado can get through: only new to-dos
         {"titulo": "Enviar minuta", "responsable": "Ana", "fecha_compromiso": "2026-10-02", "contexto": "min 12",
          "origen": "junta"},
-        {"titulo": "Revisar precios Fiori", "proyecto": "Fiori", "origen": "junta"}]}
+        {"titulo": "Revisar precios Fiori", "proyecto": "SONOMA", "torre": "FIORI", "origen": "junta"}]}
     assert "1. Enviar minuta · responsable: Ana · fecha: 2026-10-02" in p.detail
-    assert "2. Revisar precios Fiori · responsable: (sin dueño) · fecha: (sin fecha) · proyecto: Fiori" in p.detail
+    assert "2. Revisar precios Fiori · responsable: (sin dueño) · fecha: (sin fecha) · proyecto: SONOMA · torre: FIORI" in p.detail
     for bad, msg in (({"todos": []}, "non-empty"), ({"todos": [{"responsable": "x"}]}, "no titulo"),
                      ({"todos": [{"titulo": "x", "fecha_compromiso": "el viernes"}]}, "not a date")):
         with pytest.raises(suitetools.SuiteToolError, match=msg):

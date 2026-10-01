@@ -26,7 +26,8 @@ from typing import Any
 READ_WHAT = ("todos", "issues", "junta", "contexto", "resumen", "rocks")
 MAX_READ_CHARS = 60_000
 MAX_TODOS = 40
-TODO_FIELDS = ("titulo", "responsable", "fecha_compromiso", "proyecto", "contexto", "decide", "involucrados")
+TODO_FIELDS = ("titulo", "responsable", "fecha_compromiso", "proyecto", "torre", "contexto", "decide",
+               "involucrados")
 
 
 def suite_configured() -> bool:
@@ -75,7 +76,8 @@ SUITE_ADD_TODOS_TOOL: dict[str, Any] = {
         "(estado 'vivos') and leave out anything already there. One row per commitment: titulo (a verb, what "
         "will be done), responsable (the person's name or email as in the Suite's people catalog; '' if the "
         "meeting didn't name one), fecha_compromiso (YYYY-MM-DD, or '' if none was said), proyecto (as in the "
-        "Suite's catalog; '' = corporativo), contexto (one line: where it came from, e.g. the minute of the "
+        "Suite's catalog; '' = corporativo), torre (only for SONOMA: PIETRA/FIORI/ACQUA and BALCONES: B600/B200, when the meeting names "
+        "the tower; suite_read 'contexto' lists them under torres), contexto (one line: where it came from, e.g. the minute of the "
         "transcript). Never invent an owner or a date."
     ),
     "input_schema": {
@@ -249,6 +251,7 @@ def plan_write(name: str, data: dict[str, Any]) -> WritePlan:
             lines.append(f"{n}. {item['titulo']} · responsable: {item.get('responsable') or '(sin dueño)'} · "
                          f"fecha: {item.get('fecha_compromiso') or '(sin fecha)'}"
                          + (f" · proyecto: {item['proyecto']}" if item.get("proyecto") else "")
+                         + (f" · torre: {item['torre']}" if item.get("torre") else "")
                          + (f"\n   {item['contexto']}" if item.get("contexto") else ""))
         fuente = " ".join(str(data.get("fuente") or "").split())[:200]
         title = f"PAGA Suite · dar de alta {len(items)} to-do{'s' if len(items) != 1 else ''}"
