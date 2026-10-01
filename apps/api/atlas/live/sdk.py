@@ -108,8 +108,11 @@ def mcp_name(tool: str) -> str:
     return f"mcp__{SERVER}__{tool}"
 
 
-def _mcp_result(text: str, *, error: bool = False) -> dict[str, Any]:
-    out: dict[str, Any] = {"content": [{"type": "text", "text": text}]}
+def _mcp_result(text: str, *, error: bool = False, images: list[tuple[str, bytes]] | None = None) -> dict[str, Any]:
+    import base64
+
+    out: dict[str, Any] = {"content": [{"type": "text", "text": text}] + [
+        {"type": "image", "data": base64.b64encode(b).decode(), "mimeType": mt} for mt, b in images or []]}
     if error:
         out["is_error"] = True
     return out
@@ -467,7 +470,7 @@ class SdkAgentRun(AgentRun):
             if self.report is not None:
                 return _mcp_result("Your report is already submitted. Stop now.", error=True)
             text, ok = await self._browser_tool(name, args)
-            return _mcp_result(text, error=not ok)
+            return _mcp_result(text, error=not ok, images=self.last_images)
 
         return handler
 
@@ -519,6 +522,7 @@ class SdkAgentRun(AgentRun):
                 self._message_id = msg.message_id
                 text = "\n".join(b.text for b in msg.content if isinstance(b, TextBlock) and b.text).strip()
                 last_text = text or last_text
+                self._note(text)
                 for b in msg.content:  # evidence for the CLI's built-in web tools, from their tool-use blocks
                     if isinstance(b, ToolUseBlock) and b.name in WEB_TOOLS:
                         await self._web_evidence(b.name, b.input or {})

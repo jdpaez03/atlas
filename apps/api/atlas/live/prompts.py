@@ -430,6 +430,17 @@ BROWSER_TOOLS: list[dict[str, Any]] = [
            {"ref": _REF, "filename": {"type": "string", "description": "optional name to save it as"},
             "wait_seconds": {"type": "number", "minimum": 5, "maximum": 300}, "confirm": _CONFIRM},
            ["ref"]),
+    _btool("browser_charts",
+           "Read the numbers behind the charts on the page (charts are drawn as images: their values are not in "
+           "the page text). Lists each chart with its title and a table of labels × series. With save_as, saves "
+           "them all to the mission outputs as xlsx (one sheet per chart).",
+           {"save_as": {"type": "string", "description": "file name"}}),
+    _btool("browser_screenshot",
+           "Take a screenshot and LOOK at it: the page's visible area, the full page, or one element (a chart's "
+           "ref). Use it when browser_charts finds no data, or to check what the screen shows. Saved to the "
+           "mission outputs under capturas/.",
+           {"ref": _REF, "full_page": {"type": "boolean"},
+            "name": {"type": "string", "description": "file name, e.g. absorcion_fiori"}}),
 ]
 
 

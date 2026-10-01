@@ -26,6 +26,7 @@ import argparse
 import asyncio
 import concurrent.futures
 import contextlib
+import io
 import json
 import os
 import re
@@ -50,7 +51,8 @@ from .files import FileAccessError, _size, download_url, render_deliverable
 
 NAMES = (
     "browser_open", "browser_snapshot", "browser_click", "browser_type", "browser_select", "browser_press",
-    "browser_scroll", "browser_wait", "browser_back", "browser_tables", "browser_download",
+    "browser_scroll", "browser_wait", "browser_back", "browser_tables", "browser_download", "browser_charts",
+    "browser_screenshot",
 )
 # Clicks whose target text matches this need a human approval first (then confirm=true).
 RISKY = re.compile(
@@ -65,6 +67,9 @@ MAX_TEXT_CHARS = 30_000
 DEFAULT_ELEMENTS = 150
 MAX_ELEMENTS = 400
 DOWNLOAD_WAIT_S = 90
+MAX_CHART_POINTS = 400
+SCREENSHOT_MAX_SIDE = 1568
+SCREENSHOT_MAX_H = 4000
 ACTION_TIMEOUT_MS = 15_000
 NAV_TIMEOUT_MS = 45_000
 _REF = re.compile(r"^(?:f(\d+))?e(\d+)$")
@@ -314,7 +319,170 @@ _LABEL_JS = r"""
   el.getAttribute('href') || '']
 """
 
+# The numbers behind the page's charts. Dashboards draw charts on <canvas> / SVG, so the page text has the axis
+# labels at most, never the values. Read them from the chart libraries (globals when the site loads them as
+# scripts) and, for bundled React apps, from the chart components' props (react-chartjs-2, react-apexcharts,
+# Recharts, Nivo ...). Everything returned is plain JSON (bounded).
+_CHARTS_JS = r"""
+([maxPoints]) => {
+  const out = [];
+  const seen = new Set();
+  const clean = (t) => (t || '').replace(/\s+/g, ' ').trim();
+  const prim = (v) => v === null || ['string', 'number', 'boolean'].includes(typeof v);
+  const safe = (v, depth) => {
+    if (prim(v)) return typeof v === 'string' ? v.slice(0, 120) : v;
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    if (Array.isArray(v)) return depth > 2 ? null : v.slice(0, maxPoints).map((x) => safe(x, depth + 1));
+    if (v && typeof v === 'object' && depth <= 2) {
+      const o = {};
+      let n = 0;
+      for (const k of Object.keys(v)) {
+        if (n >= 16 || k.startsWith('_') || typeof v[k] === 'function') continue;
+        const x = v[k];
+        if (prim(x) || x instanceof Date || (Array.isArray(x) && depth < 2)) { o[k] = safe(x, depth + 1); n += 1; }
+      }
+      return o;
+    }
+    return null;
+  };
+  const vis = (el) => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; } catch (e) { return true; } };
+  const titleNear = (el) => {
+    let node = el;
+    for (let d = 0; node && d < 6; d++, node = node.parentElement) {
+      const h = node.querySelector && node.querySelector('h1,h2,h3,h4,h5,h6,[class*="title" i],[class*="header" i]');
+      const t = h ? clean(h.innerText) : '';
+      if (t && t.length <= 140) return t;
+    }
+    return clean((el && el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title'))) || '');
+  };
+  const push = (source, el, title, labels, series, rows) => {
+    if (el) { if (seen.has(el)) return; seen.add(el); if (!vis(el)) return; }
+    const t = clean(typeof title === 'string' ? title : Array.isArray(title) ? title.join(' ') : '');
+    out.push({source, title: t || titleNear(el), labels: safe(labels || null, 0), series: safe(series || null, 0),
+              rows: safe(rows || null, 0)});
+  };
+  const fromProps = (p) => {
+    if (!p || typeof p !== 'object') return null;
+    const d = p.data;
+    if (d && typeof d === 'object' && !Array.isArray(d) && Array.isArray(d.datasets))
+      return {labels: d.labels, series: d.datasets.map((s) => ({name: s.label, data: s.data})), title: p.options && p.options.plugins && p.options.plugins.title && p.options.plugins.title.text};
+    if (Array.isArray(p.series) && (p.options || p.type)) {
+      const o = p.options || {};
+      const numeric = p.series.length && typeof p.series[0] === 'number';
+      return {labels: (o.xaxis && o.xaxis.categories) || o.labels, title: o.title && o.title.text,
+              series: numeric ? [{name: 'valor', data: p.series}] : p.series.map((s) => ({name: s.name, data: s.data}))};
+    }
+    if (Array.isArray(d) && d.length && typeof d[0] === 'object' && d[0] !== null) {
+      if (Array.isArray(d[0].data)) return {series: d.map((s) => ({name: s.id || s.name || s.label, data: s.data}))};
+      return {rows: d};
+    }
+    return null;
+  };
+  try {
+    const C = window.Chart;
+    if (C && C.instances) for (const ch of Object.values(C.instances)) {
+      const d = (ch.config && ch.config.data) || ch.data || {};
+      const o = ch.options || {};
+      push('chart.js', ch.canvas, (o.plugins && o.plugins.title && o.plugins.title.text) || (o.title && o.title.text),
+           d.labels, (d.datasets || []).map((s) => ({name: s.label, data: s.data})));
+    }
+  } catch (e) {}
+  try {
+    for (const it of ((window.Apex && window.Apex._chartInstances) || [])) {
+      const w = it.chart && it.chart.w;
+      if (!w) continue;
+      const cfg = w.config;
+      const numeric = cfg.series.length && typeof cfg.series[0] === 'number';
+      push('apexcharts', it.chart.el, cfg.title && cfg.title.text,
+           (cfg.xaxis && cfg.xaxis.categories && cfg.xaxis.categories.length) ? cfg.xaxis.categories : (cfg.labels && cfg.labels.length ? cfg.labels : w.globals.labels),
+           numeric ? [{name: 'valor', data: cfg.series}] : cfg.series.map((s) => ({name: s.name, data: s.data})));
+    }
+  } catch (e) {}
+  try {
+    for (const ch of ((window.Highcharts && window.Highcharts.charts) || [])) {
+      if (!ch) continue;
+      push('highcharts', ch.renderTo, ch.title && ch.title.textStr, null,
+           ch.series.map((s) => ({name: s.name, data: s.points.map((pt) => [pt.category !== undefined ? pt.category : (pt.name || pt.x), pt.y])})));
+    }
+  } catch (e) {}
+  try {
+    if (window.echarts) for (const el of document.querySelectorAll('[_echarts_instance_]')) {
+      const inst = window.echarts.getInstanceByDom(el);
+      const o = inst && inst.getOption();
+      if (!o) continue;
+      const ax = ((o.xAxis || [])[0] || {}).data || ((o.yAxis || [])[0] || {}).data;
+      push('echarts', el, ((o.title || [])[0] || {}).text, ax, (o.series || []).map((s) => ({name: s.name, data: s.data})));
+    }
+  } catch (e) {}
+  for (const el of document.querySelectorAll('.js-plotly-plot')) {
+    try {
+      push('plotly', el, el.layout && el.layout.title && (el.layout.title.text || el.layout.title), null,
+           (el.data || []).map((tr) => ({name: tr.name, data: (tr.y || tr.values || []).map((y, i) => [((tr.x || tr.labels || [])[i]), y])})));
+    } catch (e) {}
+  }
+  const fiberKey = (el) => Object.keys(el).find((k) => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+  const CANDIDATES = 'canvas, .recharts-wrapper, .apexcharts-canvas, .highcharts-container, [_echarts_instance_], [class*="chart" i] svg, svg[class*="chart" i]';
+  for (const el of document.querySelectorAll(CANDIDATES)) {
+    if (seen.has(el)) continue;
+    const k = fiberKey(el);
+    if (!k) continue;
+    let f = el[k];
+    for (let d = 0; f && d < 30; d++, f = f.return) {
+      let got = null;
+      try { got = fromProps(f.memoizedProps); } catch (e) { got = null; }
+      if (got) { push('react', el, got.title, got.labels, got.series, got.rows); break; }
+    }
+  }
+  return out;
+}
+"""
+
 _NUMBER = re.compile(r"^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?$|^-?\d+(?:\.\d+)?$")
+
+
+_X_KEYS = ("x", "label", "category", "name", "date", "fecha", "periodo", "mes", "id")
+_Y_KEYS = ("y", "value", "valor", "v", "count", "total")
+
+
+def _x_label(v: Any) -> Any:
+    if isinstance(v, list):
+        return " ".join(str(x) for x in v if x is not None)
+    return v
+
+
+def chart_rows(chart: dict[str, Any]) -> list[list[Any]]:
+    """One chart from _CHARTS_JS → a table: [label, series 1, series 2, ...] (first row = header)."""
+    rows_in = chart.get("rows")
+    if isinstance(rows_in, list) and rows_in and isinstance(rows_in[0], dict):
+        cols: list[str] = []
+        for r in rows_in:
+            for k in r:
+                if k not in cols and len(cols) < 12:
+                    cols.append(k)
+        return [cols] + [[r.get(c) for c in cols] for r in rows_in if isinstance(r, dict)]
+    labels = chart.get("labels") if isinstance(chart.get("labels"), list) else []
+    series = [s for s in (chart.get("series") or []) if isinstance(s, dict) and isinstance(s.get("data"), list)]
+    if not series:
+        return []
+    order: list[Any] = []
+    table: dict[Any, dict[int, Any]] = {}
+    for j, s in enumerate(series):
+        for i, v in enumerate(s["data"]):
+            if isinstance(v, list) and len(v) >= 2:
+                x, y = v[0], v[1]
+            elif isinstance(v, dict):
+                x = next((v[k] for k in _X_KEYS if v.get(k) is not None), i + 1)
+                y = next((v[k] for k in _Y_KEYS if v.get(k) is not None), None)
+            else:
+                x, y = (labels[i] if i < len(labels) else i + 1), v
+            x = _x_label(x)
+            key = str(x)
+            if key not in table:
+                table[key] = {}
+                order.append(x)
+            table[key][j] = y
+    header = [""] + [str(s.get("name") or f"serie {j + 1}") for j, s in enumerate(series)]
+    return [header] + [[x] + [table[str(x)].get(j) for j in range(len(series))] for x in order]
 
 
 def _cell(value: str) -> Any:
@@ -341,6 +509,7 @@ class BrowserResult:
     ok: bool = True
     evidence: list[tuple[str, str, str, bool]] = field(default_factory=list)  # (kind, ref, detail, ok)
     attachments: list[Attachment] = field(default_factory=list)
+    images: list[tuple[str, bytes]] = field(default_factory=list)  # (media type, bytes) shown to the model
 
 
 def _save_unique(folder: Path, name: str, write: Any) -> Path:
@@ -796,6 +965,81 @@ class BrowserSession:
             res.text += f"\n\nSaved {target.name} ({_size(len(data))}) to the mission outputs: {target}"
         return res
 
+    def _charts(self, args: dict[str, Any], approved: bool) -> BrowserResult:
+        """The data behind the page's charts (see _CHARTS_JS), as tables; save_as writes them to the outputs."""
+        charts: list[dict[str, Any]] = []
+        for i, frame in enumerate(self.page.frames):
+            if frame.is_detached() or (i and not host_allowed(frame.url, self.cfg.domains)):
+                continue
+            try:
+                charts += frame.evaluate(_CHARTS_JS, [MAX_CHART_POINTS])
+            except PWError:
+                continue
+        tables = [(c, chart_rows(c)) for c in charts]
+        tables = [(c, rows) for c, rows in tables if len(rows) > 1]
+        if not tables:
+            return BrowserResult(
+                "Found no readable chart data on this page (the chart library keeps it out of reach). Use "
+                "browser_screenshot (of the chart's ref, or the page) and read the values off the image; hover "
+                "tooltips and 'Cómo se calcula'-style dialogs are text: browser_snapshot reads them.", ok=False)
+        lines = [f"{len(tables)} chart(s) with data on {self.page.url}:"]
+        for k, (c, rows) in enumerate(tables, 1):
+            lines.append(f"\n#{k} {c.get('title') or '(untitled)'} · {c.get('source')} · {len(rows) - 1} point(s)")
+            for r in rows[:40]:
+                lines.append(" | ".join(_short(str("" if v is None else v), 32) for v in r))
+            if len(rows) > 40:
+                lines.append(f"… {len(rows) - 41} more rows (save_as keeps them all)")
+        res = BrowserResult("\n".join(lines))
+        self._visit(res, f"{len(tables)} charts")
+        save_as = str(args.get("save_as") or "").strip()
+        if save_as:
+            sheets = {_short(f"{k} {c.get('title') or 'grafica'}", 28).replace("…", ""): [[_cell(str(v)) if isinstance(v, str) else v for v in r] for r in rows]
+                      for k, (c, rows) in enumerate(tables, 1)}
+            data = render_deliverable("xlsx", None, sheets)
+            name = f"{Path(save_as).stem or 'graficas'}.xlsx"
+            target = _save_unique(self.outputs, name, lambda p: p.write_bytes(data))
+            res.attachments.append(Attachment(name=target.name, kind="file", size_bytes=len(data),
+                                              download_url=download_url(self.mission_id, target.name)))
+            res.evidence.append(("file_written", str(target),
+                                 f"{_size(len(data))}, {len(tables)} chart(s) from {_short(self.page.url, 80)}", True))
+            res.text += f"\n\nSaved {target.name} ({_size(len(data))}) to the mission outputs: {target}"
+        return res
+
+    def _screenshot(self, args: dict[str, Any], approved: bool) -> BrowserResult:
+        """A picture of the page (or of one element) for the agent to look at, also saved to capturas/."""
+        from PIL import Image
+
+        page = self.page
+        ref = args.get("ref")
+        if ref:
+            loc, ref = self._locate(ref)
+            png = loc.screenshot(timeout=ACTION_TIMEOUT_MS)
+            what = f"element [{ref}]"
+        else:
+            png = page.screenshot(full_page=bool(args.get("full_page")), timeout=ACTION_TIMEOUT_MS)
+            what = "full page" if args.get("full_page") else "visible area"
+        raw = str(args.get("name") or "").strip()
+        name = paths.safe_name(raw) if raw else "captura"
+        if not name.lower().endswith(".png"):
+            name = f"{Path(name).stem}.png"
+        target = _save_unique(self.outputs / "capturas", name, lambda p: p.write_bytes(png))
+        with Image.open(io.BytesIO(png)) as im:
+            im = im.convert("RGB")
+            w, h = im.size
+            if h > SCREENSHOT_MAX_H:  # a very long page: the model sees the top part; save keeps it all
+                im = im.crop((0, 0, w, SCREENSHOT_MAX_H))
+            im.thumbnail((SCREENSHOT_MAX_SIDE, SCREENSHOT_MAX_SIDE))
+            buf = io.BytesIO()
+            im.save(buf, "JPEG", quality=82)
+        res = BrowserResult(
+            f"Screenshot of the {what} of {page.url} (saved as capturas/{target.name}). Read the figures off it "
+            "and quote them in your report with the page and filters they came from; never estimate a value "
+            "the image doesn't show clearly.",
+            evidence=[("browser_action", page.url, f"screenshot · {what}", True),
+                      ("file_written", str(target), f"{_size(len(png))}, screenshot of {_short(page.url, 80)}", True)])
+        res.images.append(("image/jpeg", buf.getvalue()))
+        return res
+
     def _download(self, args: dict[str, Any], approved: bool) -> BrowserResult:
         loc, ref = self._locate(args.get("ref"))
         label = self._check_risky(loc, approved, bool(args.get("confirm")))
@@ -840,6 +1084,8 @@ def activity(name: str, args: dict[str, Any]) -> str:
         "browser_back": "Browser · going back",
         "browser_tables": "Browser · extracting tables",
         "browser_download": "Browser · downloading an export",
+        "browser_charts": "Browser · reading the charts' data",
+        "browser_screenshot": "Browser · taking a screenshot",
     }.get(name, "Browser")
 
 
@@ -853,6 +1099,12 @@ def browser_note(cfg: ResolvedBrowser) -> str:
         "browser_type / browser_select → browser_snapshot again. Refs change when the page changes.\n"
         "- Data: browser_tables reads (and with save_as saves) visible tables; for full datasets use the site's "
         "export with browser_download — the file lands in your outputs folder; then read_file it.\n"
+        "- Charts are images: their numbers are NOT in the page text. browser_charts reads the data behind them "
+        "(save_as keeps it as xlsx); if it finds none, browser_screenshot the chart and read the values off the "
+        "image. Dialogs like 'Cómo se calcula' are text: browser_snapshot right after opening them and quote it.\n"
+        "- Write down each figure the moment you see it (value, unit, page, filters, period) and keep it in your "
+        "reply text; your report must quote them. Don't spend your turns re-opening pages: when the budget warning "
+        "appears, submit_report with what you have.\n"
         "- If you land on a login page, the session expired: do NOT try to log in. Stop and say the human must "
         "run `atlas-browser login` again.\n"
         "- Clicks that delete, spend credits, buy, send, publish or log out need request_approval first, then "

@@ -53,6 +53,12 @@ IS the login: delete it after the import (docs/SERVER_LINUX.md § Agents' browse
 | `browser_wait` | Waits for a report that takes time to build, or for a given text to appear. |
 | `browser_tables` | Extracts the visible tables and grids. With `save_as`, saves them to the mission outputs as xlsx (one sheet per table) or csv. |
 | `browser_download` | Clicks an export button and saves the file it produces to the mission outputs. |
+| `browser_charts` | Reads the numbers behind the page's charts. Charts are drawn on canvas or SVG, so the page text never has their values. It reads them from the chart library: Chart.js, ApexCharts, Highcharts, ECharts and Plotly, plus bundled React charts through the component's props (react-chartjs-2, react-apexcharts, Recharts, Nivo). Each chart comes back as a table of labels × series. With `save_as` it saves them to an xlsx, one sheet per chart. |
+| `browser_screenshot` | A screenshot the agent actually looks at, of the visible area, the full page, or one element by ref. Use it when `browser_charts` finds no data. It is also saved to `capturas/` in the outputs, so you can check what the agent saw. |
+
+**Long browsing tasks.** Two safeguards keep a long browsing task from ending with nothing (2026-10-01; MERCATO in REDI's Análisis avanzado navigated for 8 runs without reporting a figure):
+- **Turn-budget warning.** In the last 5 turns of the budget, every browser result tells the agent to stop and call `submit_report` with what it has.
+- **Nothing written is lost.** If a run still ends without a report, the auto-wrapped report keeps all the text the agent wrote along the way, not only its last message.
 
 Every file lands in `outputs/<node>/<mission>/`. It appears as a deliverable in the report, and the agent reads it
 with `read_file`. Files that a normal click happens to download are saved the same way.

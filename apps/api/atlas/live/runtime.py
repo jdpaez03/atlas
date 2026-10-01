@@ -59,6 +59,8 @@ from .prompts import (
 
 log = logging.getLogger("atlas.live")
 
+BUDGET_WARNING_TURNS = 5
+FALLBACK_MAX_CHARS = 12_000
 DEFAULT_WEB_SEARCH_TOOL = "web_search_20260318"
 
 
@@ -214,8 +216,16 @@ def to_claims(items: Any) -> list[Claim]:
     return claims
 
 
-def _tool_result(tool_use_id: str, content: str, *, error: bool = False) -> dict[str, Any]:
-    out: dict[str, Any] = {"type": "tool_result", "tool_use_id": tool_use_id, "content": content}
+def _tool_result(tool_use_id: str, content: str, *, error: bool = False,
+                 images: list[tuple[str, bytes]] | None = None) -> dict[str, Any]:
+    body: Any = content
+    if images:
+        import base64
+
+        body = [{"type": "text", "text": content}] + [
+            {"type": "image", "source": {"type": "base64", "media_type": mt, "data": base64.b64encode(b).decode()}}
+            for mt, b in images]
+    out: dict[str, Any] = {"type": "tool_result", "tool_use_id": tool_use_id, "content": body}
     if error:
         out["is_error"] = True
     return out
@@ -242,6 +252,9 @@ class AgentRun:
         self.approval_requested = False
         self.deliverables: list[Attachment] = []
         self._files: FileTools | None = None
+        self.notes: list[str] = []  # the agent's text along the way (for the fallback report)
+        self.turns = 0  # assistant turns so far (the turn-budget warning in browser results uses it)
+        self.last_images: list[tuple[str, bytes]] = []  # images of the last browser result, for the model
         self.approved = False  # the human approved a request_approval of this run (unlocks confirm=true clicks)
         self._browser: browser_mod.BrowserSession | None = None
         cfg = self.agent.agent.browser
@@ -361,7 +374,17 @@ class AgentRun:
         for kind, ref, detail, ok in res.evidence:
             await self._evidence(kind, ref, detail, ok)
         self.deliverables += res.attachments
-        return res.text, res.ok
+        self.last_images = res.images
+        return res.text + self._budget_warning(), res.ok
+
+    def _budget_warning(self) -> str:
+        """Browser work eats turns; without a warning the run ends mid-browse and everything seen is lost."""
+        left = self.max_turns - self.turns - 1
+        if left > BUDGET_WARNING_TURNS:
+            return ""
+        return (f"\n\n⚠ Turn budget: about {max(left, 0)} turn(s) left. Stop browsing now and call submit_report "
+                "with every figure you have already seen (value, unit, page, filters, period), the files you saved, "
+                "and in `unresolved` what you could not read.")
 
     async def close(self) -> None:
         """Release what the run opened (the browser)."""
@@ -391,6 +414,7 @@ class AgentRun:
         last_text = ""
         max_turns = self.max_turns
         for turn in range(max_turns):
+            self.turns = turn
             final = turn == max_turns - 1
             if turn:  # the activity line only changes on real tool calls (never from model text)
                 await s.update_task(task.id, progress=round(min(0.9, 0.05 + 0.85 * turn / max_turns), 2))
@@ -408,6 +432,7 @@ class AgentRun:
             if content:
                 messages.append({"role": "assistant", "content": content})
             last_text = response_text(resp) or last_text
+            self._note(response_text(resp))
             await self._record_server_tools(resp)
             if resp.stop_reason == "pause_turn" and content:
                 continue  # a server tool (web search) paused the turn: send it back to resume
@@ -437,7 +462,7 @@ class AgentRun:
                     results.append(_tool_result(tu.id, out, error=not ok))
                 elif name in browser_mod.NAMES:
                     out, ok = await self._browser_tool(name, data)
-                    results.append(_tool_result(tu.id, out, error=not ok))
+                    results.append(_tool_result(tu.id, out, error=not ok, images=self.last_images))
                 elif name in suitetools.NAMES:
                     out, ok = await self._suite_tool(name, data)
                     results.append(_tool_result(tu.id, out, error=not ok))
@@ -659,13 +684,23 @@ class AgentRun:
         await s.update_task(task.id, status=TaskStatus.COMPLETED)
         return report
 
+    def _note(self, text: str | None) -> None:
+        """Keep what the agent wrote along the way: if it runs out of turns, the fallback report has it."""
+        text = (text or "").strip()
+        if text and (not self.notes or self.notes[-1] != text):
+            self.notes.append(text)
+
     async def _fallback(self, last_text: str) -> AgentReport:
         s, task = self.store, self.task
         await s.log(
             f"{self.agent.agent.name} ended without submit_report · wrapping its output",
             mission_id=self.scope.mission_id, agent_id=self.aid,
         )
-        statement = last_text.strip()[:4000] or "The agent ended without producing a result."
+        # Everything it wrote along the way (newest kept when long): figures noted mid-browse are not lost.
+        written = "\n\n".join(self.notes or [last_text]).strip()
+        if len(written) > FALLBACK_MAX_CHARS:
+            written = "… " + written[-FALLBACK_MAX_CHARS:]
+        statement = written or "The agent ended without producing a result."
         report = await s.submit_report(
             self.scope.mission_id, task.id, self.aid, task.title,
             actions_taken=["Worked on the task without submitting a structured report"],

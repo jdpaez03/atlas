@@ -32,6 +32,31 @@ ROWS = {
 }
 
 
+# A dashboard whose numbers live only in charts: a Chart.js global, an ApexCharts instance and a bundled React chart
+# (data only in the component's props, reachable through the React fiber), plus a definition dialog.
+CHARTS_PAGE = """<html><head><title>Insights · Análisis avanzado</title></head><body>
+<h1>Análisis avanzado</h1>
+<div><h3>Precio por m² · Torre Fiori</h3><canvas id="c1" width="400" height="200"></canvas></div>
+<div><h3>Ventas por absorción</h3><div id="apex" style="width:400px;height:200px;background:#eee"></div></div>
+<div class="chart-card"><h3>Inventario disponible</h3><canvas id="c3" width="400" height="200"></canvas></div>
+<div role="dialog"><h4>Cómo se calcula: Ventas por absorción</h4>
+<p>Unidades vendidas en el trimestre entre el inventario disponible al inicio.</p></div>
+<script>
+const c1 = document.getElementById('c1');
+c1.getContext('2d').fillRect(10, 10, 300, 150);
+window.Chart = {instances: {0: {canvas: c1, options: {plugins: {title: {text: ''}}},
+  config: {data: {labels: ['2025-Q4', '2026-Q1', '2026-Q2'],
+    datasets: [{label: 'Fiori', data: [79800, 81200, 82285]}, {label: 'Zona', data: [70100, 71000, 72950]}]}}}}};
+const apexEl = document.getElementById('apex');
+window.Apex = {_chartInstances: [{id: 'a', chart: {el: apexEl, w: {globals: {labels: []},
+  config: {title: {text: 'Ventas por absorción'}, xaxis: {categories: ['2026-Q1', '2026-Q2']},
+           series: [{name: 'Fiori', data: [0.5, 0.67]}]}}}}]};
+const c3 = document.getElementById('c3');
+c3['__reactFiber$x1'] = {memoizedProps: {width: 400}, return: {memoizedProps: {className: 'card'},
+  return: {memoizedProps: {data: [{tipologia: '2 rec', disponibles: 4}, {tipologia: '3 rec', disponibles: 2}]}}}};
+</script></body></html>"""
+
+
 class Site(BaseHTTPRequestHandler):
     """A tiny logged-in market-study site on 127.0.0.1 (localhost counts as ANOTHER site)."""
 
@@ -78,6 +103,8 @@ class Site(BaseHTTPRequestHandler):
 <a href="http://localhost:{port}/estudio">Ver en otro sitio</a>
 <input type="password" aria-label="PIN">
 </body></html>""")
+        if url.path == "/graficas":
+            return self._send(200, CHARTS_PAGE)
         if url.path == "/export.csv":
             mun = q.get("mun", "Monterrey")
             body = "desarrollo,precio_m2,unidades\n" + "".join(
@@ -433,3 +460,110 @@ def test_session_export_import_moves_the_login_to_another_profile(site, browser_
         ctx.close()
     assert B._cookie_for(".4srealestate.com", ["redi.4srealestate.com"])
     assert not B._cookie_for("evil.com", ["redi.4srealestate.com"])
+
+
+# ---------------------------------------------------------------------------
+# charts and screenshots
+# ---------------------------------------------------------------------------
+
+
+def test_chart_rows_shapes():
+    assert B.chart_rows({"labels": ["Q1", "Q2"], "series": [{"name": "A", "data": [1, 2]},
+                                                             {"name": "B", "data": [3, 4]}]}) == [
+        ["", "A", "B"], ["Q1", 1, 3], ["Q2", 2, 4]]
+    assert B.chart_rows({"series": [{"name": "A", "data": [{"x": "Ene", "y": 5}, ["Feb", 6]]}]}) == [
+        ["", "A"], ["Ene", 5], ["Feb", 6]]
+    assert B.chart_rows({"rows": [{"mes": "Ene", "v": 1}, {"mes": "Feb", "v": 2}]}) == [
+        ["mes", "v"], ["Ene", 1], ["Feb", 2]]
+    assert B.chart_rows({"series": []}) == []
+
+
+def test_charts_and_screenshot_on_a_dashboard(site, browser_env, tmp_path):
+    human_login("mercato", site)
+    cfg = B.resolve("mercato", BrowserConfig(profile="mercato", start_url=f"{site}/graficas",
+                                             allowed_domains=["127.0.0.1"]))
+    out = tmp_path / "outputs"
+
+    async def go():
+        s = B.BrowserSession(cfg, outputs=out, mission_id="msn_c1")
+        r = {"open": await s.run("browser_open", {}),
+             "snap": await s.run("browser_snapshot", {}),
+             "charts": await s.run("browser_charts", {"save_as": "graficas_fiori"}),
+             "shot": await s.run("browser_screenshot", {"name": "absorcion fiori"}),
+             "full": await s.run("browser_screenshot", {"full_page": True})}
+        r["nochart"] = await s.run("browser_open", {"url": f"{site}/estudio"})
+        r["nochart"] = await s.run("browser_charts", {})
+        await s.close()
+        return r
+
+    r = asyncio.run(go())
+    assert "82285" not in r["snap"].text  # the numbers are not in the page text ...
+    assert "Unidades vendidas en el trimestre" in r["snap"].text  # ... the dialog is
+    c = r["charts"]
+    assert c.ok and "3 chart(s) with data" in c.text, c.text
+    assert "#1 Precio por m² · Torre Fiori · chart.js · 3 point(s)" in c.text
+    assert "2026-Q2 | 82285 | 72950" in c.text
+    assert "#2 Ventas por absorción · apexcharts · 2 point(s)" in c.text and "2026-Q2 | 0.67" in c.text
+    assert "#3 Inventario disponible · react" in c.text and "3 rec | 2" in c.text
+    import openpyxl
+
+    wb = openpyxl.load_workbook(out / "graficas_fiori.xlsx")
+    assert len(wb.sheetnames) == 3 and [x.value for x in wb.worksheets[0][4]] == ["2026-Q2", 82285, 72950]
+    assert c.evidence[-1][0] == "file_written"
+
+    shot = r["shot"]
+    assert shot.ok and (out / "capturas" / "absorcion fiori.png").is_file(), shot.text
+    (mt, img), = shot.images
+    assert mt == "image/jpeg" and img[:2] == b"\xff\xd8"
+    assert [e[0] for e in shot.evidence] == ["browser_action", "file_written"]
+    assert r["full"].ok and (out / "capturas" / "captura.png").is_file()
+    assert not r["nochart"].ok and "browser_screenshot" in r["nochart"].text
+
+
+def test_screenshot_reaches_the_model_and_budget_warning_and_notes(site, browser_env):
+    """API backend: the image goes into the tool result; near the end of the budget every browser result says to
+    submit; a run that still ends without a report keeps everything the agent wrote along the way."""
+    human_login("oracle-test", site)
+    reg = browser_registry(site)
+    llm = FakeLLM()
+    llm.when(lambda kw: "STAGE: PLANNING" in call_text(kw), tool_use("create_plan", {"tasks": PLAN}))
+    steps = [tool_use("browser_open", {"url": f"{site}/graficas"}),
+             tool_use("browser_charts", {}, say="Fiori: $82,285/m² en 2026-Q2 (Precio por m², Torre Fiori)."),
+             tool_use("browser_screenshot", {})]
+    steps += [tool_use("browser_snapshot", {"elements_only": True}) for _ in range(12)]
+    llm.when(lambda kw: "Your task: Comparables" in call_text(kw), *steps)
+    llm.when(lambda kw: "Your task: Summarize" in call_text(kw), tool_use("submit_report", SUMMARY))
+    llm.when(lambda kw: "STAGE: REVIEW" in call_text(kw), tool_use("request_followups", {"tasks": []}))
+    llm.when(lambda kw: "STAGE: CONSOLIDATION" in call_text(kw), tool_use("submit_mission_report", FINAL))
+
+    async def go():
+        store = WorldStore(reg, EventBus())
+        engine = LiveEngine(store, loader=AgentLoader(reg, MODELS),
+                            context=NodeContext(reg, local_dir=Path("/nonexistent")),
+                            config=LiveConfig(models=MODELS, max_turns=4), llm=llm, prices=PriceTable())
+        m = await engine.start("Comparables San Pedro", "corporate")
+        await asyncio.wait_for(engine.wait(m.id), 90)
+        return store
+
+    store = asyncio.run(go())
+    calls = [c for c in llm.calls if "Your task: Comparables" in call_text(c)]
+    assert len(calls) == 15  # the browser budget
+    results = [b for m in calls[-1]["messages"] if m["role"] == "user" and isinstance(m["content"], list)
+               for b in m["content"] if b.get("type") == "tool_result"]
+    assert len(results) == 15
+    shot = results[2]  # browser_screenshot: the picture goes to the model
+    assert isinstance(shot["content"], list) and shot["content"][1]["type"] == "image"
+    warned = [k for k, b in enumerate(results) if "Turn budget: about" in json.dumps(b, ensure_ascii=False)]
+    assert warned == list(range(9, 15)), warned  # from 5 turns left (budget 15) on
+    rep = next(r for r in store.snapshot().agent_reports if r.agent_id == "oracle")
+    assert "Auto-wrapped" in " ".join(rep.limitations)
+    assert "$82,285/m² en 2026-Q2" in rep.findings[0].statement  # noted along the way, not lost
+
+
+def test_sdk_tool_result_carries_images():
+    from atlas.live.sdk import _mcp_result
+
+    out = _mcp_result("mira", images=[("image/jpeg", b"\xff\xd8x")])
+    assert out["content"][0] == {"type": "text", "text": "mira"}
+    assert out["content"][1] == {"type": "image", "data": "/9h4", "mimeType": "image/jpeg"}
+    assert _mcp_result("solo texto") == {"content": [{"type": "text", "text": "solo texto"}]}
