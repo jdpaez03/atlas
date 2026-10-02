@@ -463,18 +463,30 @@ def name_matches(name: str, query: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _login(files_only: bool) -> int:
+def _login(files_only: bool, extra: str = "") -> int:
     from ..argos.transcripts import TRANSCRIPT_SCOPES, transcripts_wanted
     from ..inbox.sources.graph import DRAFT_SCOPES, READ_SCOPES
 
     app = msal_app()
-    scopes = list(FILE_SCOPES)
-    if transcripts_wanted():
-        scopes += TRANSCRIPT_SCOPES
-    if not files_only:
-        scopes += READ_SCOPES
-        if os.getenv("ATLAS_MS_DRAFTS", "1").strip().lower() not in ("0", "false", "no", "off"):
-            scopes += DRAFT_SCOPES
+    if extra:  # one sign-in asks for ONE resource: Power Automate / Dataverse go separately from Graph
+        from . import flowtools
+
+        if extra == "flow":
+            scopes = flowtools.login_scopes()
+        else:
+            dv = flowtools.dataverse_url()
+            if not dv:
+                print("Set ATLAS_FLOW_DATAVERSE_URL in .env first (e.g. https://<org>.crm.dynamics.com)")
+                return 1
+            scopes = [f"{dv}/user_impersonation"]
+    else:
+        scopes = list(FILE_SCOPES)
+        if transcripts_wanted():
+            scopes += TRANSCRIPT_SCOPES
+        if not files_only:
+            scopes += READ_SCOPES
+            if os.getenv("ATLAS_MS_DRAFTS", "1").strip().lower() not in ("0", "false", "no", "off"):
+                scopes += DRAFT_SCOPES
     flow = app.initiate_device_flow(scopes=scopes)
     if "user_code" not in flow:
         print("Could not start the sign-in:", flow.get("error_description") or flow)
@@ -504,6 +516,17 @@ def _status() -> int:
     if transcripts_wanted():
         tr = app.acquire_token_silent(TRANSCRIPT_SCOPES, account=acc)
         print("Teams transcripts: " + ("OK" if tr and "access_token" in tr else "no token (run: atlas-graph login)"))
+    from . import flowtools
+
+    if flowtools.enabled():
+        fl = app.acquire_token_silent(flowtools.login_scopes(), account=acc)
+        print("Power Automate: " + ("OK" if fl and "access_token" in fl else
+                                    "no token (grant the permission, then: atlas-graph login --flow)"))
+        dv = flowtools.dataverse_url()
+        if dv and flowtools.write_enabled():
+            d = app.acquire_token_silent([f"{dv}/user_impersonation"], account=acc)
+            print("Dataverse (create flows): " + ("OK" if d and "access_token" in d else
+                                                  "no token (run: atlas-graph login --dataverse)"))
     return 0 if ok and "access_token" in ok else 1
 
 
@@ -554,6 +577,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     lg = sub.add_parser("login", help="sign in with a device code (mail + files)")
     lg.add_argument("--files-only", action="store_true", help="only Files.Read.All / Sites.Read.All")
+    lg.add_argument("--flow", action="store_true", help="Power Automate (Flows.Read.All, Flows.Manage.All)")
+    lg.add_argument("--dataverse", action="store_true", help="Dataverse (to create flows): ATLAS_FLOW_DATAVERSE_URL")
     sub.add_parser("status", help="who is signed in and whether files can be read")
     sub.add_parser("roots", help="check every onedrive:/sharepoint: root in ATLAS_FILE_ROOTS_*")
     ls = sub.add_parser("ls", help="list a remote folder, e.g. onedrive:/ or onedrive:/PAGA")
@@ -561,7 +586,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     try:
         if args.cmd == "login":
-            return _login(args.files_only)
+            return _login(args.files_only, "flow" if args.flow else "dataverse" if args.dataverse else "")
         if args.cmd == "status":
             return _status()
         if args.cmd == "roots":

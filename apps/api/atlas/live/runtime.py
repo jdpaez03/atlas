@@ -33,7 +33,7 @@ from ..core.models import (
 )
 from ..core.store import StoreError, WorldStore
 from . import browser as browser_mod
-from . import suitetools
+from . import flowtools, suitetools
 from .agent_loader import ModelConfig, ResolvedAgent
 from .context import NodeContext
 from .evidence import apply_claim_check, record
@@ -298,6 +298,7 @@ class AgentRun:
         if self.has_browser:
             tools += BROWSER_TOOLS
         tools += suitetools.tools()
+        tools += flowtools.tools()
         if cfg.web_search and "web_search" in self.agent.agent.tools:
             tools.append(web_search_tool(cfg.web_search_tool, cfg.web_search_max_uses))
         return tools
@@ -330,7 +331,7 @@ class AgentRun:
 
     def _task_message(self) -> str:
         sc = self.scope
-        suite = suitetools.note()
+        suite = "\n\n".join(n for n in (suitetools.note(), flowtools.note()) if n)
         msg = task_message(
             sc.objective, sc.node, self.task, self.dep_reports,
             consultable=[f"{a} ({sc.name(a)})" for a in self._consultable()],
@@ -467,6 +468,9 @@ class AgentRun:
                     results.append(_tool_result(tu.id, out, error=not ok, images=self.last_images))
                 elif name in suitetools.NAMES:
                     out, ok = await self._suite_tool(name, data)
+                    results.append(_tool_result(tu.id, out, error=not ok))
+                elif name in flowtools.NAMES:
+                    out, ok = await self._flow_tool(name, data)
                     results.append(_tool_result(tu.id, out, error=not ok))
                 else:
                     results.append(_tool_result(tu.id, f"Unknown tool '{name}'.", error=True))
@@ -616,6 +620,42 @@ class AgentRun:
             await s.update_task(task.id, status=TaskStatus.IN_PROGRESS)
         await self._activity(f"{'Approved' if approved else 'Rejected'} · {title}")
         return approved, decided.state, decided.decision_note or ""
+
+    # -- Power Automate ----------------------------------------------------------
+
+    async def _flow_tool(self, name: str, data: dict[str, Any]) -> tuple[str, bool]:
+        """flow_read, or a Power Automate change that first asks the human (flowtools.py)."""
+        if name not in {t["name"] for t in flowtools.tools()}:
+            return ("Error: this Power Automate tool is not available here ("
+                    + ("changes are off: ATLAS_FLOW_WRITE" if flowtools.enabled() else "Power Automate is not "
+                       "configured: ATLAS_FLOW_ENABLED") + ").", False)
+        if name == "flow_read":
+            await self._activity(f"Reading Power Automate · {_short(str(data.get('what') or ''), 30)}")
+            try:
+                text, ref = await asyncio.to_thread(flowtools.read, data)
+            except flowtools.FlowToolError as exc:
+                await self._evidence("external_call", f"Power Automate {data.get('what') or ''}", str(exc), ok=False)
+                return f"Error: {exc}", False
+            await self._evidence("external_call", f"Power Automate GET {ref}", "read")
+            return text, True
+        try:
+            plan = await asyncio.to_thread(flowtools.plan_write, name, data)
+        except flowtools.FlowToolError as exc:
+            return f"Error: {exc}", False
+        approved, state, note = await self._ask_human(
+            ApprovalReason.CONSEQUENTIAL_DECISION, _short(plan.title, 120), plan.detail, plan.proposed_action,
+            unlocks=False)
+        if not approved:
+            return (json.dumps({"decision": state, "note": note}, ensure_ascii=False)
+                    + "\nThe human did NOT approve: nothing was changed in Power Automate. Adapt and record it."), True
+        await self._activity(_short(plan.title, 80))
+        try:
+            text = await asyncio.to_thread(flowtools.execute, plan)
+        except flowtools.FlowToolError as exc:
+            await self._evidence("external_call", f"Power Automate {plan.ref}", str(exc), ok=False)
+            return f"Approved, but it failed: {exc}", False
+        await self._evidence("external_call", f"Power Automate {plan.ref}", _short(text, 300))
+        return text + (f"\nThe human's note: {note}" if note else ""), True
 
     # -- PAGA Suite --------------------------------------------------------------
 

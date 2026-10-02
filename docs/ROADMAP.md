@@ -108,3 +108,6 @@ work in parallel against it without colliding.
   add NEW to-dos (e.g. from the weekly meeting's transcript) and open/close the week. The approval is inside the
   tool: the human sees the exact rows, and only those are sent. The Suite's key can still never edit or close an
   existing to-do, report progress, or touch anything outside L10 (docs/SUITE_TOOLS.md).
+- 2026-10-02 · **Agents use Power Automate**: read flows, definitions and run history; run instant flows, turn
+  flows on/off and create draft flows (Dataverse, solution-aware) — every change approved inside the tool
+  (docs/POWER_AUTOMATE.md).

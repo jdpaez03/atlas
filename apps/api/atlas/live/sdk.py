@@ -45,7 +45,7 @@ from uuid import uuid4
 
 from .. import __version__
 from ..core.models import AgentReport, Task, TaskStatus
-from . import suitetools
+from . import flowtools, suitetools
 from .agent_loader import ResolvedAgent
 from .executor import Validator, invalid_input_message
 from .lessons import with_lessons
@@ -443,6 +443,9 @@ class SdkAgentRun(AgentRun):
         for spec in suitetools.tools():
             tools.append(ex.tool(spec["name"], spec["description"], spec["input_schema"],
                                  self._suite_handler(spec["name"])))
+        for spec in flowtools.tools():
+            tools.append(ex.tool(spec["name"], spec["description"], spec["input_schema"],
+                                 self._flow_handler(spec["name"])))
         for spec, handler in ((REQUEST_APPROVAL_TOOL, self._on_approval), (SUBMIT_REPORT_TOOL, self._on_submit)):
             tools.append(ex.tool(spec["name"], spec["description"], spec["input_schema"], handler))
         return tools
@@ -454,6 +457,15 @@ class SdkAgentRun(AgentRun):
             self.last_images = []
             text, ok = await self._file_tool(name, args)
             return _mcp_result(text, error=not ok, images=self.last_images)
+
+        return handler
+
+    def _flow_handler(self, name: str) -> Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]:
+        async def handler(args: dict[str, Any]) -> dict[str, Any]:
+            if self.report is not None:
+                return _mcp_result("Your report is already submitted. Stop now.", error=True)
+            text, ok = await self._flow_tool(name, args)
+            return _mcp_result(text, error=not ok)
 
         return handler
 
@@ -507,7 +519,9 @@ class SdkAgentRun(AgentRun):
             SDK_TASK_NOTE.format(web=", plus WebSearch and WebFetch for research" if web else "")
             + (SDK_BROWSER_NOTE if self.has_browser else "")
             + ("\nPAGA Suite tools: " + ", ".join("mcp__atlas__" + t["name"] for t in suitetools.tools())
-               if suitetools.tools() else ""),
+               if suitetools.tools() else "")
+            + ("\nPower Automate tools: " + ", ".join("mcp__atlas__" + t["name"] for t in flowtools.tools())
+               if flowtools.tools() else ""),
             context_block(sc.context_for(self.agent.agent)),
         ]
         system = with_lessons(system, s, self.aid, sc.node)

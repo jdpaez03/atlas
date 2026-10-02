@@ -219,10 +219,10 @@ def validate_plan(
 
 
 def _tools_note() -> str:
-    from . import suitetools
+    from . import flowtools, suitetools
 
-    note = suitetools.note()
-    return (note + " Plan Suite work as a normal task (no extra approval task: the tool asks).") if note else ""
+    note = " ".join(n for n in (suitetools.note(), flowtools.note()) if n)
+    return (note + " Plan this work as normal tasks (no extra approval task: the tools ask).") if note else ""
 
 
 def _roster_entry(r: ResolvedAgent) -> dict[str, Any]:
