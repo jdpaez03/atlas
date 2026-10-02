@@ -79,8 +79,13 @@ These are enforced in `atlas/live/browser.py`, not just asked of the model.
 - **Evidence.** Each page opened (`browser_visit`), action taken (`browser_action`, e.g. `click "Exportar"`) and
   file saved (`browser_download`, `file_written`) is recorded by the system. AUDITOR and the claim check can
   therefore verify "exported comparables.csv" the same way they verify files that were read.
-- Browser tasks get their own turn budget (`browser.max_turns`, 40 by default), because a site flow takes many
-  steps.
+- Browser tasks get their own turn budget (`browser.max_turns`, 40 by default; MERCATO's YAML sets 80), because
+  a site flow takes many steps. `ATLAS_<PROFILE>_BROWSER_MAX_TURNS` in `.env` overrides it without touching the
+  YAML (e.g. `ATLAS_MERCATO_BROWSER_MAX_TURNS=120`, range 4-200); restart the API after changing it.
+- **Site playbooks.** Write what a site needs (its API endpoints, the ids of each city / zone / project, which view
+  has what) in `<ATLAS_LOCAL_DIR>/context/<node>/`, e.g. `context/corporate/redi.md`. Every agent of that node
+  reads it with its task, so the next run goes straight to the data instead of exploring screens. It stays private,
+  out of the repo.
 
 By default the window is visible (`ATLAS_BROWSER_HEADLESS=0`). Many sites block headless browsers, and a visible
 window lets you watch the agent work. On an always-on PC the window simply opens and closes with each task.

@@ -11,16 +11,16 @@ from pathlib import Path
 from typing import Any
 
 from pptx import Presentation
-from pptx.chart.data import CategoryChartData
+from pptx.chart.data import CategoryChartData, XyChartData
 from pptx.dml.color import RGBColor
-from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION, XL_MARKER_STYLE
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Emu, Pt
 
 from .brand import Brand
 from .pdf import col_weights, fmt_num, is_numeric
-from .spec import DEFAULT_STYLE, accent_runs, image_file, normalize_style, plain
+from .spec import DEFAULT_STYLE, accent_runs, image_file, nice_bounds, normalize_style, plain
 
 
 def _rgb(hex_: str) -> RGBColor:
@@ -369,6 +369,9 @@ class Deck:
         ch = sl["chart"]
         s = self.new("#FFFFFF")
         self.title(s, sl.get("title") or ch.get("title") or "", sl.get("subtitle", ""))
+        if ch["chart_type"] == "scatter":
+            self.scatter(s, sl, ch)
+            return
         data = CategoryChartData()
         data.categories = ch["categories"]
         for sr in ch["series"]:
@@ -418,6 +421,70 @@ class Deck:
         ca = c.category_axis
         ca.format.line.color.rgb = _rgb(b.c("rule"))
         ca.tick_labels.font.color.rgb = _rgb(b.c("ink"))
+
+    def scatter(self, s: Any, sl: dict[str, Any], ch: dict[str, Any]) -> None:
+        """Positioning chart: every point labeled (its project), one color per group, both axes titled."""
+        b = self.b
+        data = XyChartData()
+        longest = max(len(sr["points"]) for sr in ch["series"])
+        for sr in ch["series"]:
+            xs = data.add_series(sr["name"])
+            for p in sr["points"]:
+                xs.add_data_point(p["x"], p["y"])
+            # LibreOffice hides a series that has fewer points than a later one: pad it by repeating its last
+            # point (same spot, no label), so every viewer draws every group
+            for _ in range(longest - len(sr["points"])):
+                xs.add_data_point(sr["points"][-1]["x"], sr["points"][-1]["y"])
+        top = 300 if sl.get("subtitle") else 250
+        gf = s.shapes.add_chart(XL_CHART_TYPE.XY_SCATTER, self.e(120), self.e(top), self.e(1680),
+                                self.e(960 - top), data)
+        c = gf.chart
+        pal = [b.c("primary"), b.c("accent"), _mix(b.c("primary"), "#FFFFFF", 0.45), b.c("muted")]
+        c.has_title = False
+        c.font.size = self.pt(18)
+        c.font.name = self.font
+        c.font.color.rgb = _rgb(b.c("ink"))
+        c.has_legend = len(ch["series"]) > 1
+        if c.has_legend:
+            c.legend.position = XL_LEGEND_POSITION.TOP
+            c.legend.include_in_layout = False
+        for i, (series, sr) in enumerate(zip(c.series, ch["series"], strict=False)):
+            color = _rgb(pal[i % len(pal)])
+            series.format.line.fill.background()  # points only, never joined
+            series.marker.style = XL_MARKER_STYLE.CIRCLE
+            series.marker.size = 13
+            series.marker.format.fill.solid()
+            series.marker.format.fill.fore_color.rgb = color
+            series.marker.format.line.color.rgb = _rgb("#FFFFFF")
+            for j, p in enumerate(sr["points"]):
+                if not p["label"]:
+                    continue
+                dl = series.points[j].data_label
+                dl.has_text_frame = True
+                dl.text_frame.text = p["label"]
+                dl.position = XL_LABEL_POSITION.RIGHT
+                run = dl.text_frame.paragraphs[0].runs[0]
+                run.font.size = self.pt(20)
+                run.font.color.rgb = _rgb(b.c("ink"))
+        xs = [p["x"] for sr in ch["series"] for p in sr["points"]]
+        ys = [p["y"] for sr in ch["series"] for p in sr["points"]]
+        for axis, vals, title in ((c.category_axis, xs, ch.get("x_title")), (c.value_axis, ys, ch.get("y_title"))):
+            axis.has_major_gridlines = axis is c.value_axis
+            if axis.has_major_gridlines:
+                axis.major_gridlines.format.line.color.rgb = _rgb(b.c("rule"))
+            axis.format.line.color.rgb = _rgb(b.c("rule"))
+            axis.tick_labels.font.color.rgb = _rgb(b.c("muted"))
+            axis.tick_labels.number_format = "#,##0.##" if any(not float(v).is_integer() for v in vals) else "#,##0"
+            axis.tick_labels.number_format_is_linked = False
+            lo, hi, step = nice_bounds(min(vals), max(vals))
+            axis.minimum_scale, axis.maximum_scale, axis.major_unit = lo, hi, step
+            if title:
+                axis.has_title = True
+                axis.axis_title.text_frame.text = title
+                r = axis.axis_title.text_frame.paragraphs[0].runs[0]
+                r.font.size = self.pt(18)
+                r.font.bold = False
+                r.font.color.rgb = _rgb(b.c("muted"))
         if ch.get("unit"):
             self.text(s, 120, top - 36, 600, 30, ch["unit"], size=13, color=b.c("muted"))
         self.side_label(s)

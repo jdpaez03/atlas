@@ -311,3 +311,41 @@ def test_formats_can_be_limited(fmt):
     mid = _run(_engine(store, reg, config=LiveConfig(models=MODELS, max_turns=4, audit=False,
                                                       publish_formats=(fmt,)), llm=llm))
     assert [d.name.rsplit(".", 1)[-1] for d in store.mission_reports_for(mid)[-1].documents] == [fmt]
+
+
+SCATTER = {"chart_type": "scatter", "title": "Posicionamiento: $/m² vs ticket", "x_title": "Precio por m² (MXN)",
+           "y_title": "Ticket promedio (MDP)", "source": "REDI API, 2026-Q2",
+           "points": [{"label": "Torre Fiori", "x": 82285, "y": 9.8, "group": "PAGA"},
+                      {"label": "Comp A", "x": 74100, "y": 7.2, "group": "Competencia"},
+                      {"label": "Comp B", "x": 90500, "y": 12.4, "group": "Competencia"},
+                      {"label": "Sin y", "x": 1, "y": None, "group": "Competencia"}]}
+
+
+def test_scatter_chart_in_spec_deck_and_pdf(tmp_path):
+    from pptx.enum.chart import XL_CHART_TYPE
+
+    spec, errors = normalize({"title": "Fiori", "summary": ["s"], "sections": [{"title": "Mercado", "blocks": [
+        {"type": "chart", "chart": copy.deepcopy(SCATTER)}]}],
+        "slides": [{"type": "chart", "title": "Posicionamiento", "chart": copy.deepcopy(SCATTER)}]})
+    assert errors == ["section 1 block 1: scatter point 'Sin y' needs numeric x and y",
+                      "slide 1: scatter point 'Sin y' needs numeric x and y"], errors
+    ch = spec["slides"][0]["chart"]
+    assert ch["chart_type"] == "scatter" and [s["name"] for s in ch["series"]] == ["PAGA", "Competencia"]
+    assert "Torre Fiori 82285 9.8" in spec_text(spec)
+    errs = normalize({"title": "x", "summary": ["s"], "sections": [], "slides": [
+        {"type": "chart", "title": "t", "chart": {"chart_type": "scatter", "points": []}}]})[1]
+    assert any(e.endswith("a scatter chart needs points with numeric x and y") for e in errs), errs
+
+    brand = load_brand("personal")
+    deck = Presentation(str(render_deck(spec, brand, "1 de octubre de 2026", [], tmp_path / "s.pptx")))
+    chart = next(sh.chart for sh in deck.slides[1].shapes if sh.has_chart)
+    assert chart.chart_type == XL_CHART_TYPE.XY_SCATTER
+    assert [s.name for s in chart.series] == ["PAGA", "Competencia"]
+    assert chart.series[0].points[0].data_label.text_frame.text == "Torre Fiori"
+    assert chart.category_axis.axis_title.text_frame.text == "Precio por m² (MXN)"
+    assert chart.value_axis.axis_title.text_frame.text == "Ticket promedio (MDP)"
+
+    pdf = render_pdf(spec, brand, DocMeta("1 de octubre de 2026"), tmp_path / "s.pdf")
+    text = "\n".join(p.extract_text() for p in PdfReader(str(pdf)).pages)
+    for needle in ("Torre Fiori", "Comp B", "Precio por m² (MXN)", "Ticket promedio (MDP)", "REDI API"):
+        assert needle in text, needle

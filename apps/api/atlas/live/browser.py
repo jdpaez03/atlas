@@ -29,6 +29,7 @@ import concurrent.futures
 import contextlib
 import io
 import json
+import logging
 import os
 import re
 import sys
@@ -75,6 +76,7 @@ SCREENSHOT_MAX_SIDE = 1568
 SCREENSHOT_MAX_H = 4000
 ACTION_TIMEOUT_MS = 15_000
 NAV_TIMEOUT_MS = 45_000
+log = logging.getLogger("atlas.live.browser")
 _REF = re.compile(r"^(?:f(\d+))?e(\d+)$")
 
 
@@ -133,7 +135,18 @@ def resolve(agent_id: str, cfg: BrowserConfig) -> ResolvedBrowser:
                 domains.append(host)
     if not domains and start:
         domains = [_host(start)]
-    return ResolvedBrowser(agent_id, cfg.profile, start, domains, cfg.max_turns)
+    return ResolvedBrowser(agent_id, cfg.profile, start, domains, max_turns_for(cfg))
+
+
+def max_turns_for(cfg: BrowserConfig) -> int:
+    """The YAML's browser.max_turns, unless ATLAS_<PROFILE>_BROWSER_MAX_TURNS overrides it (4-200)."""
+    name = f"ATLAS_{re.sub(r'[^A-Z0-9]', '_', cfg.profile.upper())}_BROWSER_MAX_TURNS"
+    raw = os.getenv(name, "").strip()
+    try:
+        return max(4, min(200, int(raw))) if raw else cfg.max_turns
+    except ValueError:
+        log.warning("%s=%r is not a number; using %d", name, raw, cfg.max_turns)
+        return cfg.max_turns
 
 
 def host_allowed(url: str, domains: list[str]) -> bool:

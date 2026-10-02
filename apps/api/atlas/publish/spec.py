@@ -19,6 +19,7 @@ MAX_COLS = 9
 MAX_KPIS = 4
 MAX_SERIES = 4
 MAX_CATEGORIES = 24
+MAX_POINTS = 40
 IMAGE_EXTS = (".png", ".jpg", ".jpeg")
 
 _TEXT = {"type": "string"}
@@ -41,17 +42,25 @@ _TABLE = {
 }
 _CHART = {
     "type": "object",
+    "description": "bar / line: categories + series of values. scatter (positioning, e.g. $/m² vs ticket): points "
+                   "{label, x, y, group?} with x_title / y_title; group colors the points (e.g. the project vs "
+                   "the competition) and each point is labeled.",
     "properties": {
-        "chart_type": {"type": "string", "enum": ["bar", "line"]},
+        "chart_type": {"type": "string", "enum": ["bar", "line", "scatter"]},
         "title": _TEXT,
         "categories": _TEXTS,
         "series": {"type": "array", "items": {"type": "object", "properties": {
             "name": _TEXT, "values": {"type": "array", "items": {"type": ["number", "null"]}}},
             "required": ["name", "values"]}},
+        "points": {"type": "array", "items": {"type": "object", "properties": {
+            "label": _TEXT, "x": {"type": "number"}, "y": {"type": "number"}, "group": _TEXT},
+            "required": ["x", "y"]}},
+        "x_title": _TEXT,
+        "y_title": _TEXT,
         "unit": _TEXT,
         "source": _TEXT,
     },
-    "required": ["chart_type", "categories", "series"],
+    "required": ["chart_type"],
 }
 _IMAGE = {"type": "string", "description": "path of a photo/render the agent can read (png/jpg), e.g. "
           "onedrive:/Proyectos/B200/Renders/fachada.jpg, or imagenes/<name> from collect_site_images; "
@@ -172,10 +181,58 @@ def _table(v: Any, errors: list[str], where: str, max_rows: int = MAX_TABLE_ROWS
             "truncated": max(0, len(rows) - max_rows)}
 
 
+def nice_bounds(lo: float, hi: float, ticks: int = 5) -> tuple[float, float, float]:
+    """Axis (min, max, step) on round numbers around [lo, hi] with a little air; min stays ≥ 0 for positive data."""
+    import math
+
+    span = hi - lo or abs(hi) * 0.2 or 1.0
+    raw = span / ticks
+    mag = 10 ** math.floor(math.log10(raw))
+    step = next(m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw)
+    lo2 = math.floor((lo - span * 0.05) / step) * step
+    hi2 = math.ceil((hi + span * 0.05) / step) * step
+    if lo >= 0:
+        lo2 = max(0.0, lo2)
+    return lo2, hi2, step
+
+
+def _num_or_none(x: Any) -> float | None:
+    try:
+        return None if x is None or x == "" or isinstance(x, bool) else float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def _scatter(v: dict[str, Any], errors: list[str], where: str) -> dict[str, Any] | None:
+    """{label, x, y, group} points → series per group (first seen first), each with its points."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for pt in (v.get("points") or [])[:MAX_POINTS]:
+        if not isinstance(pt, dict):
+            continue
+        x, y = _num_or_none(pt.get("x")), _num_or_none(pt.get("y"))
+        if x is None or y is None:
+            errors.append(f"{where}: scatter point '{pt.get('label') or '?'}' needs numeric x and y")
+            continue
+        group = _s(pt.get("group"), 40) or "Serie"
+        if group not in groups and len(groups) >= MAX_SERIES:
+            errors.append(f"{where}: at most {MAX_SERIES} groups in a scatter")
+            continue
+        groups.setdefault(group, []).append({"label": _s(pt.get("label"), 40), "x": x, "y": y})
+    if not groups:
+        errors.append(f"{where}: a scatter chart needs points with numeric x and y")
+        return None
+    return {"chart_type": "scatter", "title": _s(v.get("title"), 120), "categories": [],
+            "series": [{"name": g, "points": pts, "values": [p["y"] for p in pts]} for g, pts in groups.items()],
+            "x_title": _s(v.get("x_title"), 60), "y_title": _s(v.get("y_title"), 60),
+            "unit": _s(v.get("unit"), 30), "source": _s(v.get("source"), 240)}
+
+
 def _chart(v: Any, errors: list[str], where: str) -> dict[str, Any] | None:
     if not isinstance(v, dict):
         errors.append(f"{where}: chart must be an object")
         return None
+    if str(v.get("chart_type") or "").lower() == "scatter":
+        return _scatter(v, errors, where)
     cats = _list(v.get("categories"), MAX_CATEGORIES, 40)
     series = []
     for sr in (v.get("series") or [])[:MAX_SERIES]:
@@ -338,6 +395,7 @@ def spec_text(spec: dict[str, Any]) -> str:
 
     def chart(c: dict[str, Any]) -> None:
         parts.extend(" ".join("" if v is None else _num(v) for v in s["values"]) for s in c["series"])
+        parts.extend(f"{p['label']} {_num(p['x'])} {_num(p['y'])}" for s in c["series"] for p in s.get("points", []))
 
     for sec in spec.get("sections", []):
         for b in sec["blocks"]:

@@ -43,7 +43,7 @@ from reportlab.platypus import (
 from reportlab.platypus.tableofcontents import TableOfContents
 
 from .brand import Brand
-from .spec import image_file, normalize_style, plain
+from .spec import image_file, nice_bounds, normalize_style, plain
 
 W, H = letter
 ML, MR, MT, MB = 70, 58, 70, 64
@@ -259,7 +259,70 @@ def palette(brand: Brand) -> list[colors.Color]:
             _hex(brand.c("muted"))]
 
 
+def scatter_drawing(ch: dict[str, Any], brand: Brand, st: Styles, width: float) -> Drawing:
+    """Positioning chart: labeled points, one color per group, titled axes."""
+    from reportlab.graphics.charts.lineplots import ScatterPlot
+    from reportlab.graphics.widgets.markers import makeMarker
+
+    h = 230
+    d = Drawing(width, h)
+    series = ch["series"]
+    pal = palette(brand)
+    legend_h = 16 if len(series) > 1 else 0
+    c = ScatterPlot()
+    c.x, c.y, c.width, c.height = 46, 34, width - 80, h - 62 - legend_h
+    c.data = [[(p["x"], p["y"]) for p in sr["points"]] for sr in series]
+    for i in range(len(series)):
+        c.lines[i].strokeColor = None
+        c.lines[i].symbol = makeMarker("FilledCircle", size=5.5, fillColor=pal[i % len(pal)],
+                                       strokeColor=colors.white, strokeWidth=0.6)
+    c.lineLabelFormat = "values"
+    c.lineLabelArray = [[p["label"] for p in sr["points"]] for sr in series]
+    c.lineLabels.fontName, c.lineLabels.fontSize = st.f["regular"], 6.3
+    c.lineLabels.fillColor = _hex(brand.c("ink"))
+    c.lineLabels.boxAnchor, c.lineLabels.dx, c.lineLabels.dy = "w", 6, 0
+    c.xLabel = c.yLabel = ""  # ScatterPlot's default axis captions ("X Lable"); ours are drawn below
+    c.outerBorderOn = 0
+    c.background = None
+    xs = [p["x"] for sr in series for p in sr["points"]]
+    ys = [p["y"] for sr in series for p in sr["points"]]
+    for axis, vals in ((c.xValueAxis, xs), (c.yValueAxis, ys)):
+        lo, hi, step = nice_bounds(min(vals), max(vals))
+        axis.valueMin, axis.valueMax, axis.valueStep = lo, hi, step
+        axis.labels.fontName, axis.labels.fontSize = st.f["regular"], 6.8
+        axis.labels.fillColor = _hex(brand.c("muted"))
+        axis.labelTextFormat = lambda v: fmt_num(round(v, 2))
+        axis.strokeColor = _hex(brand.c("rule"))
+    c.yValueAxis.visibleGrid = 1
+    c.yValueAxis.gridStrokeColor = _hex(brand.c("rule"))
+    c.yValueAxis.gridStrokeWidth = 0.3
+    c.xValueAxis.visibleGrid = 0
+    d.add(c)
+    if ch.get("x_title"):
+        d.add(String(c.x + c.width / 2, 4, ch["x_title"], fontName=st.f["regular"], fontSize=7,
+                     fillColor=_hex(brand.c("muted")), textAnchor="middle"))
+    if ch.get("y_title"):
+        d.add(String(c.x - 30, c.y + c.height + 12, ch["y_title"], fontName=st.f["regular"], fontSize=7,
+                     fillColor=_hex(brand.c("muted")), textAnchor="start"))
+    if len(series) > 1:
+        lg = Legend()
+        lg.x, lg.y = width - 10, h - 2
+        lg.alignment = "right"
+        lg.deltax = 90
+        lg.fontName, lg.fontSize = st.f["regular"], 7
+        lg.colorNamePairs = [(pal[i % len(pal)], s["name"]) for i, s in enumerate(series)]
+        lg.boxAnchor = "ne"
+        lg.dxTextSpace = 4
+        lg.dx = lg.dy = 7
+        lg.strokeColor = None
+        lg.columnMaximum = 1
+        d.add(lg)
+    return d
+
+
 def chart_flow(ch: dict[str, Any], brand: Brand, st: Styles, width: float) -> list[Any]:
+    if ch["chart_type"] == "scatter":
+        return _chart_frame(ch, brand, st, scatter_drawing(ch, brand, st, width))
     h = 200
     d = Drawing(width, h)
     series = ch["series"]
@@ -325,8 +388,14 @@ def chart_flow(ch: dict[str, Any], brand: Brand, st: Styles, width: float) -> li
         lg.strokeColor = None
         lg.columnMaximum = 1  # one row: series side by side
         d.add(lg)
-    if ch.get("unit"):
-        d.add(String(0, h - 8, ch["unit"], fontName=st.f["regular"], fontSize=6.8, fillColor=_hex(brand.c("muted"))))
+    return _chart_frame(ch, brand, st, d)
+
+
+def _chart_frame(ch: dict[str, Any], brand: Brand, st: Styles, d: Drawing) -> list[Any]:
+    """Unit, title above and source below a chart drawing."""
+    if ch.get("unit") and ch["chart_type"] != "scatter":
+        d.add(String(0, d.height - 8, ch["unit"], fontName=st.f["regular"], fontSize=6.8,
+                     fillColor=_hex(brand.c("muted"))))
     out: list[Any] = []
     if ch.get("title"):
         out.append(Paragraph(rich(ch["title"], st.f), st.caption))

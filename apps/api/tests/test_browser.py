@@ -615,3 +615,16 @@ def test_data_behind_a_canvas_comes_from_the_network(site, browser_env, tmp_path
     assert [c.value for c in ws[3]] == ["2026-Q2", 0.67, 2]
     assert [e[0] for e in one.evidence if e[0] == "file_written"] == ["file_written", "file_written"]
     assert not r["filtered"].ok
+
+
+def test_browser_turn_budget_env_override(monkeypatch):
+    cfg = BrowserConfig(profile="mercato", start_url="https://x.test", max_turns=80)
+    assert B.resolve("market-studies", cfg).max_turns == 80
+    monkeypatch.setenv("ATLAS_MERCATO_BROWSER_MAX_TURNS", "120")
+    assert B.resolve("market-studies", cfg).max_turns == 120
+    monkeypatch.setenv("ATLAS_MERCATO_BROWSER_MAX_TURNS", "999")
+    assert B.resolve("market-studies", cfg).max_turns == 200
+    monkeypatch.setenv("ATLAS_MERCATO_BROWSER_MAX_TURNS", "muchos")
+    assert B.resolve("market-studies", cfg).max_turns == 80
+    reg = AgentRegistry.load()
+    assert reg.get("market-studies").browser.max_turns == 80

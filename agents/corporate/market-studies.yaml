@@ -16,4 +16,5 @@ browser:
   profile: mercato
   start_url: ${ATLAS_MERCATO_BROWSER_URL}
   allowed_domains: ["${ATLAS_MERCATO_BROWSER_DOMAINS}"]
-  max_turns: 40
+  # turn budget of its browser tasks; override with ATLAS_MERCATO_BROWSER_MAX_TURNS in .env (4-200)
+  max_turns: 80

@@ -124,3 +124,8 @@ SCRIBE formats the final report when a mission closes. Any agent can also produc
     - `imagenes/fuentes.csv` records each image's origin, URL and page, so every picture can be credited.
     - Private addresses are never opened: localhost, the LAN and the tailnet are all refused.
     - No login, a fresh browser each call (never the agents' signed-in profiles).
+- **Charts:** `chart_type` `bar` or `line` take `categories` + `series` of values. `scatter` takes `points`, each `{label, x, y, group?}`, plus `x_title` and `y_title`. Use it for positioning charts, e.g. $/m² vs ticket, the project vs its comparables.
+  - Each point is labeled.
+  - `group` colors the points (e.g. "PAGA" vs "Competencia"). At most 4 groups and 40 points.
+  - Axes use round bounds.
+  - In the deck it is a native, editable PowerPoint XY chart. Groups are padded to the same length because LibreOffice otherwise hides a shorter first group.
