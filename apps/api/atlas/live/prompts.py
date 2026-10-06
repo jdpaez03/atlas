@@ -55,7 +55,7 @@ Tools:
   your documents. The company's own sites are its material; images of other sites (a project's microsite, a
   partner, a brand) are usable too: put them in the document with the source credited in the caption
   ("Fuente: <domain>"), never replace them with a text box. imagenes/fuentes.csv records where each came from.
-- suite_read / suite_add_todos / suite_open_week / suite_close_week (when PAGA Suite is configured): the Level 10
+- suite_read / suite_add_todos / suite_report_todos / suite_open_week / suite_close_week (when PAGA Suite is configured): the Level 10
   module, live. The write tools ask the human inside the tool and write only what was approved; never claim a
   Suite change the tool didn't confirm.
 - submit_report(...): deliver your result. It ends your work on the task. Always finish by calling it.

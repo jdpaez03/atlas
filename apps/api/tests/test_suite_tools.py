@@ -25,6 +25,11 @@ from atlas.core.registry import AgentRegistry
 from atlas.live import FakeLLM, suitetools
 from atlas.live.llm import call_text, tool_use
 
+JUNTA = {"semana": {"id": 7, "clave": "2026-S40", "estado": "abierta"}, "grupos": [
+    {"proyecto": "SONOMA", "filas": [
+        {"todo_semana_id": 501, "codigo": "PC-012", "titulo": "Lista de precios Fiori", "responsable_nombre": "Melanie",
+         "estatus": "en_proceso", "avance_pct": 40, "comentario": "Falta validar con dirección"},
+        {"todo_semana_id": 99, "codigo": "PC-013", "titulo": "Render B600", "estatus": None, "avance_pct": None}]}]}
 CONTEXTO = {"semana": {"id": 7, "clave": "2026-S40", "estado": "abierta"}, "proyectos": ["Fiori"]}
 
 
@@ -38,6 +43,13 @@ def suite(monkeypatch):
         assert req.headers["Authorization"] == "Bearer tok"
         if req.method == "GET" and req.url.path.endswith("/l10/contexto"):
             return httpx.Response(200, json=CONTEXTO)
+        if req.method == "GET" and req.url.path.endswith("/l10/junta"):
+            estado = "cerrada" if req.url.params.get("semana_id") == "6" else "abierta"
+            return httpx.Response(200, json={**JUNTA, "semana": {**JUNTA["semana"], "estado": estado}})
+        if req.method == "PUT":
+            if req.url.path.endswith("/reportes/99"):
+                return httpx.Response(403, json={"detail": "congelado"})
+            return httpx.Response(200, json={"ok": True})
         if req.method == "GET":
             return httpx.Response(200, json={"todos": [{"codigo": "PC-001", "titulo": "Viejo"}]})
         if req.url.path.endswith("/importar"):
@@ -66,8 +78,8 @@ def test_tools_follow_configuration(monkeypatch):
     with pytest.raises(suitetools.SuiteToolError, match="ATLAS_SUITE_WRITE"):
         suitetools.plan_write("suite_add_todos", {"todos": [{"titulo": "x"}]})
     monkeypatch.setenv("ATLAS_SUITE_WRITE", "1")
-    assert [x["name"] for x in suitetools.tools()] == ["suite_read", "suite_add_todos", "suite_open_week",
-                                                        "suite_close_week"]
+    assert [x["name"] for x in suitetools.tools()] == ["suite_read", "suite_add_todos", "suite_report_todos",
+                                                        "suite_open_week", "suite_close_week"]
 
 
 def test_write_plans_are_exact_and_validated(suite):
@@ -145,3 +157,28 @@ def test_mission_adds_todos_after_approval_and_never_writes_a_rejected_close(sui
     refs = [(e.kind, e.ref, e.ok) for e in snap.evidence if e.kind == "external_call"]
     assert refs == [("external_call", "PAGA Suite GET /l10/contexto", True),
                     ("external_call", "PAGA Suite POST l10/admin/importar", True)]
+
+
+def test_report_plan_shows_before_after_and_appends_the_comment(suite):
+    plan = asyncio.run(suitetools.plan("suite_report_todos", {"semana_id": 7, "fuente": "Junta 2026-10-05", "reportes": [
+        {"codigo": "pc-012", "estatus": "cumplido", "comentario": "12:40 Melanie: ya se mandó la lista"}]}))
+    assert plan.method == "PUT" and plan.title == "PAGA Suite · capturar 1 reporte de la junta en 2026-S40"
+    assert "en_proceso 40% → cumplido 100%" in plan.detail and "Melanie" in plan.detail
+    path, body, label = plan.batch[0]
+    assert path == "/l10/reportes/501" and label == "PC-012" and body["estatus"] == "cumplido"
+    assert body["comentario"] == "Falta validar con dirección\n[Junta 2026-10-05] 12:40 Melanie: ya se mandó la lista"
+    assert "1 report(s) captured (PC-012)" in asyncio.run(suitetools.execute(plan))
+    assert ("PUT", "/api/l10/reportes/501", body) in suite
+    for bad, msg in (({"codigo": "PC-777", "comentario": "algo dicho"}, "not in week"),
+                     ({"codigo": "PC-012", "comentario": "x"}, "comentario"),
+                     ({"codigo": "PC-012", "estatus": "listo", "comentario": "algo dicho"}, "estatus")):
+        with pytest.raises(suitetools.SuiteToolError, match=msg):
+            asyncio.run(suitetools.plan("suite_report_todos", {"semana_id": 7, "fuente": "J", "reportes": [bad]}))
+    with pytest.raises(suitetools.SuiteToolError, match="frozen"):
+        asyncio.run(suitetools.plan("suite_report_todos", {"semana_id": 6, "fuente": "J", "reportes": [
+            {"codigo": "PC-012", "comentario": "algo dicho"}]}))
+    partial = asyncio.run(suitetools.plan("suite_report_todos", {"semana_id": 7, "fuente": "J", "reportes": [
+        {"codigo": "PC-012", "avance_pct": 60, "comentario": "va al 60"},
+        {"codigo": "PC-013", "estatus": "en_proceso", "comentario": "ya empezó"}]}))
+    text = asyncio.run(suitetools.execute(partial))
+    assert "1 report(s) captured (PC-012); 1 failed" in text and "PC-013" in text

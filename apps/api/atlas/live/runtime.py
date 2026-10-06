@@ -677,7 +677,7 @@ class AgentRun:
             await self._evidence("external_call", f"PAGA Suite GET {ref}", "read")
             return text, True
         try:
-            plan = suitetools.plan_write(name, data)
+            plan = await suitetools.plan(name, data)
         except suitetools.SuiteToolError as exc:
             return f"Error: {exc}", False
         approved, state, note = await self._ask_human(
@@ -691,9 +691,9 @@ class AgentRun:
         try:
             text = await suitetools.execute(plan)
         except suitetools.SuiteToolError as exc:
-            await self._evidence("external_call", f"PAGA Suite POST {plan.ref}", str(exc), ok=False)
+            await self._evidence("external_call", f"PAGA Suite {plan.method} {plan.ref}", str(exc), ok=False)
             return f"Approved, but the write failed: {exc}", False
-        await self._evidence("external_call", f"PAGA Suite POST {plan.ref}", _short(text, 300))
+        await self._evidence("external_call", f"PAGA Suite {plan.method} {plan.ref}", _short(text, 300))
         return text + (f"\nThe human's note: {note}" if note else ""), True
 
     # -- reports -------------------------------------------------------------

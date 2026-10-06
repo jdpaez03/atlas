@@ -2,12 +2,14 @@
 
     suite_read(what, ...)          read the L10 module: to-dos, issues, the meeting view, the week, Rocks
     suite_add_todos(todos, ...)    add NEW to-dos (never edits an existing one)       } each one asks the human
-    suite_open_week(fecha_junta)   open the L10 week of a meeting date                } in ATLAS first and runs
-    suite_close_week(semana_id)    close a week: freezes its reports                  } only if approved
+    suite_report_todos(...)        capture the open week's reports from the meeting   } in ATLAS first and runs
+    suite_open_week(fecha_junta)   open the L10 week of a meeting date                } only if approved
+    suite_close_week(semana_id)    close a week: freezes its reports                  }
 
 Reads use the same connection as ARGOS (ATLAS_SUITE_URL + ATLAS_SUITE_TOKEN / ATLAS_SUITE_SCOPE). Writes also need
 ATLAS_SUITE_WRITE=1 here and ATLAS_API_KEY_WRITE=1 in the Suite (paga-app api/main.py `_atlas_puede`): the Suite's
-key then accepts exactly POST /l10/admin/importar (new to-dos only), POST /l10/admin/semanas and
+key then accepts exactly POST /l10/admin/importar (new to-dos only), PUT /l10/reportes/{id} (the open week's
+reports, always with a comment, never assigning help to a person), POST /l10/admin/semanas and
 POST /l10/admin/semanas/{id}/cerrar.
 
 The approval is part of the write tool itself: the human sees the exact rows that will be written, and the tool
@@ -26,6 +28,11 @@ from typing import Any
 READ_WHAT = ("todos", "issues", "junta", "contexto", "resumen", "rocks")
 MAX_READ_CHARS = 60_000
 MAX_TODOS = 40
+MAX_REPORTS = 60
+ESTATUS = ("no_iniciado", "en_proceso", "detenido_tercero", "detenido_area", "cumplido", "no_aplica")
+APOYO_AREAS = ("direccion_general", "legal", "finanzas", "construccion", "proyectos", "ventas", "cobranza",
+               "tecnologia", "externo")
+COMMENT_MAX = 1500
 TODO_FIELDS = ("titulo", "responsable", "fecha_compromiso", "proyecto", "torre", "contexto", "decide",
                "involucrados")
 
@@ -98,6 +105,46 @@ SUITE_ADD_TODOS_TOOL: dict[str, Any] = {
     },
 }
 
+SUITE_REPORT_TODOS_TOOL: dict[str, Any] = {
+    "name": "suite_report_todos",
+    "description": (
+        "Capture, in the OPEN Level 10 week, the status of existing to-dos as it was said in the weekly meeting "
+        "(what got done in the meeting itself, progress, blockers, what was taken to IDS). Do it BEFORE "
+        "suite_close_week: a closed week is frozen. The meeting of a Monday reviews the week that is still open "
+        "(opened at the previous meeting); suite_read 'contexto' / 'junta' give its id and each to-do's current "
+        "report. One row per to-do that the meeting actually talked about, by its codigo (PC-012): estatus "
+        "(no_iniciado, en_proceso, detenido_tercero, detenido_area, cumplido, no_aplica), avance_pct 0-100 only "
+        "if a figure or 'done' was said, requiere_apoyo + apoyo_area when someone asked for help from an area, "
+        "and comentario: what was said, with the minute of the transcript (e.g. '12:40 Melanie: ya se mandó la "
+        "lista'). Never report a to-do the meeting didn't mention and never guess a status. It's appended to "
+        "the existing comment (the person's own report stays). Asks the human for approval itself, showing the "
+        "before → after of each row; don't call request_approval for it."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "semana_id": {"type": "integer", "description": "the open week's id"},
+            "fuente": {"type": "string", "description": "e.g. 'Junta semanal 2026-10-05 (transcripción)'"},
+            "reportes": {
+                "type": "array", "maxItems": MAX_REPORTS,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "codigo": {"type": "string"},
+                        "estatus": {"type": "string", "enum": list(ESTATUS)},
+                        "avance_pct": {"type": "integer", "minimum": 0, "maximum": 100},
+                        "requiere_apoyo": {"type": "boolean"},
+                        "apoyo_area": {"type": "string", "enum": list(APOYO_AREAS)},
+                        "comentario": {"type": "string"},
+                    },
+                    "required": ["codigo", "comentario"],
+                },
+            },
+        },
+        "required": ["semana_id", "fuente", "reportes"],
+    },
+}
+
 SUITE_OPEN_WEEK_TOOL: dict[str, Any] = {
     "name": "suite_open_week",
     "description": (
@@ -130,7 +177,7 @@ SUITE_CLOSE_WEEK_TOOL: dict[str, Any] = {
 }
 
 READ_TOOLS = [SUITE_READ_TOOL]
-WRITE_TOOLS = [SUITE_ADD_TODOS_TOOL, SUITE_OPEN_WEEK_TOOL, SUITE_CLOSE_WEEK_TOOL]
+WRITE_TOOLS = [SUITE_ADD_TODOS_TOOL, SUITE_REPORT_TODOS_TOOL, SUITE_OPEN_WEEK_TOOL, SUITE_CLOSE_WEEK_TOOL]
 NAMES = tuple(t["name"] for t in READ_TOOLS + WRITE_TOOLS)
 WRITE_NAMES = tuple(t["name"] for t in WRITE_TOOLS)
 
@@ -149,8 +196,11 @@ def note() -> str:
     text = ("PAGA Suite (Level 10): suite_read gives live to-dos, issues, the meeting view, the current week and "
             "Rocks.")
     if write_enabled():
-        text += (" suite_add_todos adds new to-dos, suite_open_week / suite_close_week open and close the week: "
-                 "each asks the human for approval inside the tool (no separate request_approval).")
+        text += (" suite_add_todos adds new to-dos, suite_report_todos captures the open week's status of the "
+                 "to-dos the meeting discussed (before closing it), suite_open_week / suite_close_week open and "
+                 "close the week: each asks the human for approval inside the tool (no separate "
+                 "request_approval). Weekly order: report the open week from the meeting → close it → open the "
+                 "new week → add the new to-dos.")
     else:
         text += " Writing to the Suite is off in this deployment (ATLAS_SUITE_WRITE)."
     return text
@@ -168,6 +218,8 @@ class WritePlan:
     detail: str
     proposed_action: str
     ref: str
+    method: str = "POST"
+    batch: list[tuple[str, dict[str, Any], str]] | None = None  # (path, body, label) — one PUT per row
 
 
 def _client():
@@ -224,6 +276,106 @@ def _clean_date(raw: str) -> str:
         return date.fromisoformat(raw[:10]).isoformat()
     except ValueError as exc:
         raise SuiteToolError(f"fecha_compromiso '{raw}' is not a date (YYYY-MM-DD, or '' if none was said)") from exc
+
+
+async def plan(name: str, data: dict[str, Any]) -> WritePlan:
+    """plan_write, plus the writes that need to read the Suite first to show the human before → after."""
+    if name == "suite_report_todos":
+        return await _plan_report(data)
+    return plan_write(name, data)
+
+
+def _fmt_report(row: dict[str, Any]) -> str:
+    est = row.get("estatus") or "sin reporte"
+    pct = row.get("avance_pct")
+    return est + (f" {pct}%" if pct is not None else "") + (" · pide apoyo" if row.get("requiere_apoyo") else "")
+
+
+async def _plan_report(data: dict[str, Any]) -> WritePlan:
+    from ..argos.checks import CheckNotConfigured
+    from ..argos.suite import SuiteError
+
+    if not write_enabled():
+        raise SuiteToolError("Writing to PAGA Suite is off (ATLAS_SUITE_WRITE=1 in ATLAS's .env turns it on)")
+    try:
+        semana_id = int(data.get("semana_id"))
+    except (TypeError, ValueError) as exc:
+        raise SuiteToolError("semana_id must be the open week's numeric id (suite_read 'contexto')") from exc
+    rows = data.get("reportes")
+    if not isinstance(rows, list) or not rows:
+        raise SuiteToolError("reportes must be a non-empty list")
+    if len(rows) > MAX_REPORTS:
+        raise SuiteToolError(f"at most {MAX_REPORTS} reports per call")
+    fuente = " ".join(str(data.get("fuente") or "").split())[:120]
+    if not fuente:
+        raise SuiteToolError("fuente is required (e.g. 'Junta semanal 2026-10-05')")
+    try:
+        junta = await _client().get(f"/l10/junta?semana_id={semana_id}")
+    except (SuiteError, CheckNotConfigured) as exc:
+        raise SuiteToolError(str(exc)) from exc
+    semana = (junta or {}).get("semana") or {}
+    if not semana:
+        raise SuiteToolError(f"week {semana_id} not found")
+    clave = semana.get("clave") or f"id {semana_id}"
+    if semana.get("estado") != "abierta":
+        raise SuiteToolError(f"week {clave} is {semana.get('estado')}: its reports are frozen. Status can only be "
+                             "captured in an OPEN week, before suite_close_week")
+    by_code = {str(f.get("codigo") or "").upper(): f for g in junta.get("grupos") or [] for f in g.get("filas") or []}
+    batch, lines, seen = [], [], set()
+    for n, row in enumerate(rows, 1):
+        if not isinstance(row, dict):
+            raise SuiteToolError(f"report {n} is not an object")
+        code = str(row.get("codigo") or "").strip().upper()
+        fila = by_code.get(code)
+        if fila is None:
+            raise SuiteToolError(f"{code or f'report {n}'} is not in week {clave} (suite_read 'junta' for its codes)")
+        if code in seen:
+            raise SuiteToolError(f"{code} appears twice: one row per to-do")
+        seen.add(code)
+        if fila.get("congelado"):
+            raise SuiteToolError(f"{code}'s report is frozen")
+        said = " ".join(str(row.get("comentario") or "").split())
+        if len(said) < 5:
+            raise SuiteToolError(f"{code}: comentario must say what was said in the meeting (with the minute)")
+        body: dict[str, Any] = {}
+        est = str(row.get("estatus") or "").strip()
+        if est:
+            if est not in ESTATUS:
+                raise SuiteToolError(f"{code}: estatus must be one of {', '.join(ESTATUS)}")
+            body["estatus"] = est
+        if row.get("avance_pct") is not None:
+            try:
+                pct = int(row["avance_pct"])
+            except (TypeError, ValueError) as exc:
+                raise SuiteToolError(f"{code}: avance_pct must be 0-100") from exc
+            if not 0 <= pct <= 100:
+                raise SuiteToolError(f"{code}: avance_pct must be 0-100")
+            body["avance_pct"] = pct
+        if row.get("requiere_apoyo") is not None:
+            body["requiere_apoyo"] = bool(row["requiere_apoyo"])
+        area = str(row.get("apoyo_area") or "").strip()
+        if area:
+            if area not in APOYO_AREAS:
+                raise SuiteToolError(f"{code}: apoyo_area must be one of {', '.join(APOYO_AREAS)}")
+            body["apoyo_area"] = area
+        old = str(fila.get("comentario") or "").strip()
+        note = f"[{fuente}] {said}"
+        combined = f"{old}\n{note}" if old else note
+        body["comentario"] = combined[-COMMENT_MAX:]  # the meeting's note is never the part cut
+        after = {**fila, **{k: v for k, v in body.items() if k != "comentario"}}
+        if after.get("estatus") == "cumplido" and "avance_pct" not in body:
+            after["avance_pct"] = 100
+        title = " ".join(str(fila.get("titulo") or "").split())[:80]
+        who = fila.get("responsable_nombre") or fila.get("responsable_email") or "sin dueño"
+        lines.append(f"{code} · {title} ({who})\n   {_fmt_report(fila)} → {_fmt_report(after)}\n   «{said[:300]}»")
+        batch.append((f"/l10/reportes/{int(fila['todo_semana_id'])}", body, code))
+    detail = (f"Semana {clave} (abierta) · fuente: {fuente}\n\n" + "\n".join(lines)
+              + "\n\nSe captura como reporte de la junta (queda registrado como capturado por ATLAS, no como "
+                "autoreporte). El comentario se agrega al que ya tenía cada fila.")
+    n = len(batch)
+    return WritePlan(f"/l10/reportes ({n})", None, f"PAGA Suite · capturar {n} reporte{'s' if n != 1 else ''} de "
+                     f"la junta en {clave}", detail, f"PUT /l10/reportes/{{id}} × {n} en {clave}",
+                     f"l10/reportes × {n} ({clave})", method="PUT", batch=batch)
 
 
 def plan_write(name: str, data: dict[str, Any]) -> WritePlan:
@@ -289,6 +441,21 @@ async def execute(plan: WritePlan) -> str:
     from ..argos.checks import CheckNotConfigured
     from ..argos.suite import SuiteError
 
+    if plan.batch is not None:
+        client = _client()
+        done, failed = [], []
+        for path, body, label in plan.batch:
+            try:
+                await client.request(plan.method, path, body)
+                done.append(label)
+            except (SuiteError, CheckNotConfigured) as exc:
+                failed.append(f"{label}: {exc}")
+        text = f"PAGA Suite: {len(done)} report(s) captured" + (f" ({', '.join(done)})" if done else "")
+        if failed:
+            text += f"; {len(failed)} failed:\n- " + "\n- ".join(failed)
+            if not done:
+                raise SuiteToolError(text)
+        return text
     try:
         result = await _client().post(plan.path, plan.body)
     except (SuiteError, CheckNotConfigured) as exc:

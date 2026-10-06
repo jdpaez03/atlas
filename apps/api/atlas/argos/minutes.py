@@ -34,6 +34,13 @@ transcript starts with [mm:ss] (or [h:mm:ss]) and the speaker's name.
 - Capture EVERY commitment someone takes ("yo lo mando", "te lo paso el viernes", "queda Melanie de…"): who,
   what, by when (a date only if one was said, as YYYY-MM-DD using the meeting date for relative days), project and
   tower when they are mentioned.
+- The speaker label is often wrong or generic (a meeting-room account, "Unknown"): find the owner in the words
+  instead — the person addressed by name ("Melanie, ¿me lo mandas?"), the one who answers "yo", or a name said
+  next to the task. Put in `quien_dijo` how you know it. Leave responsable empty only when nothing in the text
+  says who.
+- `seguimiento`: updates on to-dos that ALREADY exist (reviewed in the meeting): done, done in the meeting
+  itself, progress, blocked, taken to IDS. Put the to-do's code (PC-012) or its title as said, and the update.
+  New commitments go in `todos`, not here.
 - Issues are problems raised that are not solved in the meeting; decisions are what was settled.
 - Every item carries `ts`: the [mm:ss] of the paragraph where it was said, copied exactly. Never invent names,
   dates or items; if unsure who owns something, leave responsable empty.
@@ -62,9 +69,22 @@ WRITE_MINUTA_TOOL: dict[str, Any] = {
                         "proyecto": {"type": "string"},
                         "torre": {"type": "string"},
                         "ts": {"type": "string"},
+                        "quien_dijo": {"type": "string", "description": "how the owner was identified"},
                         "cita": {"type": "string", "description": "the words that support it (short quote)"},
                     },
                     "required": ["titulo", "ts"],
+                },
+            },
+            "seguimiento": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "todo": {"type": "string", "description": "its code (PC-012) or title as said"},
+                        "texto": {"type": "string", "description": "the update: done / progress / blocked / IDS"},
+                        "ts": {"type": "string"},
+                    },
+                    "required": ["todo", "texto", "ts"],
                 },
             },
             "acuerdos": {"type": "array", "items": _ITEM},
@@ -74,7 +94,7 @@ WRITE_MINUTA_TOOL: dict[str, Any] = {
         "required": ["resumen", "todos"],
     },
 }
-LISTS = ("todos", "acuerdos", "issues", "decisiones")
+LISTS = ("todos", "seguimiento", "acuerdos", "issues", "decisiones")
 
 
 def minuta_path(transcript: Path) -> Path:
@@ -144,9 +164,15 @@ def render(subject: str, transcript: Path, m: dict[str, Any], chars: int) -> str
             out.append(f"| {i} | " + " | ".join(c or "—" for c in cell) + f" | {at(t)} |")
         quotes = [(i, t) for i, t in enumerate(m["todos"], 1) if str(t.get("cita") or "").strip()]
         if quotes:
-            out += ["", "Citas:", ""] + [f"- {i}. «{str(t['cita']).strip()}» {at(t)}" for i, t in quotes]
+            out += ["", "Citas:", ""] + [
+                f"- {i}. «{str(t['cita']).strip()}» {at(t)}"
+                + (f" · dueño: {str(t['quien_dijo']).strip()}" if str(t.get("quien_dijo") or "").strip() else "")
+                for i, t in quotes]
     else:
         out.append("- (no se detectaron compromisos)")
+    out += ["", f"## Seguimiento de to-dos existentes ({len(m['seguimiento'])})", ""]
+    out += [f"- **{str(x.get('todo') or '').strip()}**: {str(x.get('texto') or '').strip()} {at(x)}"
+            for x in m["seguimiento"]] or ["- —"]
     for key, title in (("acuerdos", "Acuerdos"), ("decisiones", "Decisiones"), ("issues", "Issues abiertos")):
         out += ["", f"## {title}", ""]
         out += [f"- {x['texto'].strip()} {at(x)}" for x in m[key] if str(x.get("texto") or "").strip()] or ["- —"]

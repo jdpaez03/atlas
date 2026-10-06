@@ -60,6 +60,7 @@ def test_minuta_points_to_what_was_said(tmp_path):
                    "cita": "Yo mando la lista de precios de Fiori el viernes"},
                   {"titulo": "Inventado", "ts": "99:99"}],  # not in the transcript: dropped
         "issues": [{"texto": "B600 atrasado en escrituración", "ts": "12:40"}],
+        "seguimiento": [{"todo": "PC-012", "texto": "cumplido en la junta", "ts": "00:01"}],
     }])
     out = asyncio.run(M.write_minuta(Ctx(FakeScope(), ex), path))
     assert out == tmp_path / "2026-10-05 Junta Semanal.minuta.md"
@@ -67,6 +68,7 @@ def test_minuta_points_to_what_was_said(tmp_path):
     assert "# Minuta · Junta Semanal" in text and "## To-dos (1)" in text and "Inventado" not in text
     off = TRANSCRIPT.index("[05:10]")
     assert f"| Enviar lista de precios Fiori | Melanie Ruiz | 2026-10-09 | SONOMA | FIORI | [05:10] (carácter {off:,})" in text
+    assert "- **PC-012**: cumplido en la junta [00:01]" in text
     assert "B600 atrasado" in text and "Fecha: 2026-10-05" in ex.prompts[0]
     assert M.missing(tmp_path) == []
 
