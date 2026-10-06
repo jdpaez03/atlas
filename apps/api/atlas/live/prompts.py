@@ -464,7 +464,8 @@ BROWSER_TOOLS: list[dict[str, Any]] = [
     _btool("browser_screenshot",
            "Take a screenshot and LOOK at it: the page's visible area, the full page, or one element (a chart's "
            "ref). Use it when browser_charts finds no data, or to check what the screen shows. Saved to the "
-           "mission outputs under capturas/.",
+           "mission outputs under capturas/. A capture meant for a document (evidence annex) is of the chart's "
+           "container ref (its title, axes and values, without the site's menus and filters), never the page.",
            {"ref": _REF, "full_page": {"type": "boolean"},
             "name": {"type": "string", "description": "file name, e.g. absorcion_fiori"}}),
 ]

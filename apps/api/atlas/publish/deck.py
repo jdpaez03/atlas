@@ -22,7 +22,7 @@ from pptx.util import Emu, Pt
 
 from .brand import Brand
 from .pdf import col_weights, fmt_num, is_numeric
-from .spec import DEFAULT_STYLE, accent_runs, image_file, nice_bounds, normalize_style, plain
+from .spec import DEFAULT_STYLE, accent_runs, image_file, is_capture, nice_bounds, normalize_style, plain
 
 
 def _rgb(hex_: str) -> RGBColor:
@@ -178,8 +178,10 @@ class Deck:
         except Exception:  # noqa: BLE001 — a broken logo never breaks the deck
             return False
 
-    def picture(self, s: Any, path: Path | None, x: float, y: float, w: float, h: float) -> bool:
-        """The image filling the box (cropped to its proportions, like 'fill' in PowerPoint)."""
+    def picture(self, s: Any, path: Path | None, x: float, y: float, w: float, h: float, *,
+                contain: bool = False) -> bool:
+        """The image filling the box (cropped to its proportions, like 'fill' in PowerPoint), or with `contain`
+        whole and centered in it (screenshots and charts: nothing may be cut off or stretched)."""
         if not path:
             return False
         try:
@@ -187,8 +189,15 @@ class Deck:
 
             with Image.open(path) as im:
                 iw, ih = im.size
-            pic = s.shapes.add_picture(str(path), self.e(x), self.e(y), self.e(w), self.e(h))
             box, img = w / h, iw / ih
+            if contain:
+                fw, fh = (w, w / img) if img > box else (h * img, h)
+                pic = s.shapes.add_picture(str(path), self.e(x + (w - fw) / 2), self.e(y + (h - fh) / 2),
+                                           self.e(fw), self.e(fh))
+                pic.line.color.rgb = _rgb(self.b.c("rule"))
+                pic.line.width = Pt(0.75)
+                return True
+            pic = s.shapes.add_picture(str(path), self.e(x), self.e(y), self.e(w), self.e(h))
             if img > box:  # wider than the box: crop the sides
                 cut = (1 - box / img) / 2
                 pic.crop_left = pic.crop_right = cut
@@ -207,7 +216,22 @@ class Deck:
     def image(self, sl: dict[str, Any]) -> None:
         b = self.b
         path = image_file(sl.get("image"))
-        if sl.get("layout") == "full":
+        if sl.get("layout") == "fit" or (path is not None and is_capture(path)):
+            # evidence: a screenshot or chart shown whole, under its title, with its source
+            s = self.new("#FFFFFF")
+            top = self.title(s, sl.get("title") or "", sl.get("subtitle", ""))
+            top = max(top + 10, 230)
+            items = sl.get("items") or []
+            width = 1680 if not items else 1180
+            if not self.picture(s, path, 120, top, width, 975 - top, contain=True):
+                self.missing_image(s, 120, top, width, 975 - top)
+            if items:
+                self.text(s, 1360, top, 440, 975 - top, [f"▪  {i}" for i in items], size=21 * self.scale,
+                          color=b.c("ink"), line=1.15)
+            self.source(s, sl.get("source") or sl.get("caption", ""))
+            self.side_label(s)
+            self.page_no(s)
+        elif sl.get("layout") == "full":
             s = self.new(b.c("dark"))
             if not self.picture(s, path, 0, 0, 1920, 1080):
                 self.missing_image(s, 0, 0, 1920, 1080)
@@ -425,7 +449,19 @@ class Deck:
         c.font.size = self.pt(16 if horizontal and len(ch["categories"]) > 12 else 20)
         c.font.name = self.font
         c.font.color.rgb = _rgb(b.c("ink"))
-        if self.style.get("chart_data_labels") or horizontal:
+        sparse = ch["chart_type"] == "line" and len(ch["categories"]) > 8
+        if sparse and self.style.get("chart_data_labels"):  # a label on every point is unreadable: last ones only
+            for sr, series in zip(ch["series"], c.series, strict=False):
+                last = max((j for j, v in enumerate(sr["values"]) if v is not None), default=None)
+                if last is None:
+                    continue
+                dl = series.points[last].data_label
+                dl.has_text_frame = True
+                dl.text_frame.text = _fmt_ref(sr["values"][last])
+                dl.position = XL_LABEL_POSITION.RIGHT
+                dl.font.size = self.pt(15)
+                dl.font.color.rgb = _rgb(b.c("ink"))
+        elif self.style.get("chart_data_labels") or horizontal:
             plot = c.plots[0]
             plot.has_data_labels = True
             labels = plot.data_labels

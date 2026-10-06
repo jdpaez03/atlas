@@ -100,7 +100,10 @@ _SLIDE = {
                                             "image"]},
         "title": _TEXT, "subtitle": _TEXT, "items": _TEXTS, "text": _TEXT, "attribution": _TEXT,
         "image": _IMAGE, "caption": _TEXT,
-        "layout": {"type": "string", "enum": ["side", "full"], "description": "image slides: side (default) | full"},
+        "layout": {"type": "string", "enum": ["side", "full", "fit"],
+                   "description": "image slides: side (photo beside the text, default) | full (photo bleeding to "
+                                  "the edges) | fit (screenshot / chart shown whole under the title, with source; "
+                                  "used automatically for files in capturas/)"},
         "table": _TABLE, "kpis": {"type": "array", "items": _KPI}, "chart": _CHART,
         "source": _TEXT, "notes": {"type": "string", "description": "speaker notes"},
     },
@@ -320,7 +323,8 @@ def _slide(sl: Any, errors: list[str], where: str) -> dict[str, Any] | None:
         return {**out, "text": _s(sl.get("text"), 400), "attribution": _s(sl.get("attribution"), 120)}
     if t == "image" and _s(sl.get("image")):
         return {**out, "image": _s(sl.get("image"), 1000), "caption": _s(sl.get("caption"), 240),
-                "items": _list(sl.get("items"), 4, 160), "layout": "full" if sl.get("layout") == "full" else "side"}
+                "items": _list(sl.get("items"), 4, 160),
+                "layout": sl.get("layout") if sl.get("layout") in ("full", "fit") else "side"}
     errors.append(f"{where}: slide type '{t}' is missing its content")
     return None
 
@@ -352,6 +356,44 @@ def image_file(v: Any) -> Path | None:
         return None
     p = Path(str(v))
     return p if p.is_absolute() and p.suffix.lower() in IMAGE_EXTS and p.is_file() else None
+
+
+def is_capture(path: Path) -> bool:
+    """A screenshot (browser_screenshot saves into capturas/): shown whole, never cropped like a photo."""
+    return "capturas" in {p.lower() for p in path.parts[:-1]}
+
+
+# Words of the work process and the data plumbing, which the reader of a committee deck must never see.
+_INTERNAL = re.compile(
+    r"\bget[A-Z][A-Za-z]{3,}\b|\b[a-z]+Id=\d+|\bsave_as\b|\bbrowser_[a-z]+\b|\bwrite_deliverable\b|"
+    r"\bread_file\b|\bHUECO\b|\ben esta corrida\b|\bcorrida anterior\b|\bcaptura ?2\b|\bturnos?\b de (?:la )?tarea")
+
+
+def internal_terms(spec: dict[str, Any]) -> list[str]:
+    """Where the deck/report shows process notes or API names ('slide 7: getVentasXProyecto'); notes are fine."""
+    found: list[str] = []
+
+    def scan(where: str, *texts: Any) -> None:
+        for t in texts:
+            for x in (t if isinstance(t, list) else [t]):
+                if isinstance(x, list):
+                    scan(where, *x)
+                    continue
+                m = _INTERNAL.search(str(x or ""))
+                if m:
+                    found.append(f"{where}: «{m.group(0)}»")
+                    return
+
+    for i, sl in enumerate(spec.get("slides", []), 1):
+        tb = sl.get("table") or {}
+        ch = sl.get("chart") or {}
+        scan(f"slide {i}", sl.get("title"), sl.get("subtitle"), sl.get("items"), sl.get("text"), sl.get("source"),
+             sl.get("caption"), tb.get("rows"), tb.get("columns"), ch.get("source"), ch.get("title"))
+    for i, sec in enumerate(spec.get("sections", []), 1):
+        for b in sec.get("blocks", []):
+            scan(f"section {i}", b.get("text"), b.get("items"), b.get("title"), (b.get("table") or {}).get("rows"))
+    scan("summary", spec.get("summary"), spec.get("title"), spec.get("subtitle"))
+    return found[:12]
 
 
 def strip_images(spec: dict[str, Any]) -> dict[str, Any]:

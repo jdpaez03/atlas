@@ -398,3 +398,28 @@ def test_market_study_charts_rankings_highlights_references(tmp_path):
     pdf = render_pdf(spec, brand, DocMeta("6 de octubre de 2026"), tmp_path / "m.pdf")
     text = "\n".join(p.extract_text() for p in PdfReader(str(pdf)).pages)
     assert "Balcones 600" in text and "Umbral: 120" in text
+
+
+def test_screenshots_are_shown_whole_and_process_notes_never_reach_the_slides(tmp_path):
+    from PIL import Image
+
+    from atlas.publish.spec import internal_terms
+
+    _kit()
+    brand = load_brand("corporate")
+    shot = tmp_path / "capturas" / "redi_ventas.png"
+    shot.parent.mkdir()
+    Image.new("RGB", (1600, 900), "white").save(shot)
+    spec, _ = normalize({"title": "T", "slides": [
+        {"type": "image", "image": str(shot), "title": "Ventas por proyecto", "source": "REDI · vista Ventas"},
+        {"type": "chart", "title": "Precio", "chart": {"chart_type": "line", "categories": [str(i) for i in range(12)],
+                                                       "series": [{"name": "Zona", "values": list(range(10, 22))}]}}],
+        "style": {"chart_data_labels": True}})
+    prs = Presentation(str(render_deck(spec, brand, "x", [], tmp_path / "s.pptx")))
+    pic = next(sh for sh in prs.slides[1].shapes if sh.shape_type == 13)
+    assert (pic.crop_left, pic.crop_top) == (0, 0) and abs(pic.width / pic.height - 16 / 9) < 0.01
+    line = next(sh.chart for sh in prs.slides[2].shapes if sh.has_chart)
+    assert not line.plots[0].has_data_labels and line.series[0].points[11].data_label.text_frame.text == "21"
+    leaky = {"slides": [{"title": "87, no 116: no se reconcilió en esta corrida", "items": ["getVentasXProyecto"]},
+                        {"title": "Ventas", "source": "REDI zoneId=133"}, {"title": "Bien", "notes": "HUECO"}]}
+    assert internal_terms(leaky) == ["slide 1: «en esta corrida»", "slide 2: «zoneId=133»"]

@@ -689,6 +689,15 @@ def render_document(fmt: str, document: Any, node: str, resolve: ImageResolver |
         raise FileAccessError("pptx needs document.slides (the deck body; cover and closing are added)")
     if fmt == "pdf" and not (spec.get("sections") or spec.get("summary")):
         raise FileAccessError("pdf needs document.summary and/or document.sections")
+    from ..publish.spec import internal_terms
+
+    leaks = internal_terms(spec)
+    if leaks:
+        raise FileAccessError(
+            "The document shows working notes or internal API/tool names that a committee or bank never reads: "
+            + "; ".join(leaks) + ". Rewrite those passages in the reader's terms (a source is the REDI view and its "
+            "filters, not an API call). Gaps and process notes go in the slide's `notes` or in a separate md, never "
+            "on the slide; drop a slide whose data you don't have instead of showing the gap.")
     warnings = [e for e in errors if not (fmt == "pptx" and "section" in e) and not (fmt == "pdf" and "slide" in e)]
     from .publisher import date_es
 
