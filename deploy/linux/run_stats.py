@@ -20,14 +20,14 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-KINDS = ("mission", "task", "report", "approval", "audit")
+KINDS = ("mission", "task", "report", "approval", "audit", "evidence")
 
 
 def ts(v: str | None) -> datetime | None:
     if not v:
         return None
     try:
-        return datetime.fromisoformat(v.replace("Z", "+00:00"))
+        return datetime.fromisoformat(v)
     except ValueError:
         return None
 
@@ -76,6 +76,25 @@ def load(db: Path, mission: str | None) -> dict[str, dict]:
 
 def wrapped(report: dict) -> bool:
     return any("auto-wrapped" in (x or "").lower() for x in report.get("limitations") or [])
+
+
+def detail(m: dict) -> None:
+    """What happened inside the mission: each task with its outcome, approvals and recorded actions, in order."""
+    tasks = sorted(m["task"].values(), key=lambda t: t.get("created_at") or "")
+    reports = {r.get("task_id"): r for r in m["report"].values() if r.get("task_id")}
+    for t in tasks:
+        r = reports.get(t["id"]) or {}
+        print(f"\n  · [{t.get('status')}] {t.get('assigned_to')} · {t.get('title', '')[:90]}"
+              f"{' (revisión)' if t.get('revision_of') else ''} · {fmt(secs(t.get('started_at'), t.get('completed_at')))}")
+        for x in (r.get("limitations") or [])[:4]:
+            print(f"      límite: {x[:160]}")
+        for ev in sorted((e for e in m["evidence"].values() if e.get("task_id") == t["id"]),
+                         key=lambda e: e.get("at") or ""):
+            print(f"      {'ok ' if ev.get('ok', True) else 'ERR'} {ev.get('kind')}: {ev.get('ref', '')[:110]}"
+                  + (f" · {ev.get('detail', '')[:90]}" if ev.get("detail") else ""))
+    for a in sorted(m["approval"].values(), key=lambda a: a.get("created_at") or ""):
+        print(f"\n  aprobación [{a.get('state')}] {a.get('title', '')[:100]}"
+              + (f" · nota: {a['decision_note'][:80]}" if a.get("decision_note") else ""))
 
 
 def mission_stats(mid: str, m: dict, totals: dict) -> None:
@@ -131,6 +150,9 @@ def mission_stats(mid: str, m: dict, totals: dict) -> None:
 
     waits = [secs(a.get("created_at"), a.get("decided_at")) for a in m["approval"].values()]
     waits = [w for w in waits if w is not None]
+    active = max(0.0, (secs(mo.get("created_at"), end) or 0) - per_phase.get("CLOSED", 0) - sum(waits))
+    print(f"    tiempo activo (sin CLOSED entre rondas ni espera de aprobaciones): {fmt(active)}")
+    totals["active"] += active
     if m["approval"]:
         print(f"    aprobaciones: {len(m['approval'])} · espera total {fmt(sum(waits))}"
               f" · máx {fmt(max(waits) if waits else None)}")
@@ -153,6 +175,7 @@ def main() -> None:
     p.add_argument("--db", type=Path, default=home / "atlas.db")
     p.add_argument("--last", type=int, default=10, help="how many recent missions (default 10)")
     p.add_argument("--mission", help="one mission id")
+    p.add_argument("--detail", action="store_true", help="also list each task's actions, limits and approvals")
     args = p.parse_args()
     if not args.db.exists():
         raise SystemExit(f"no database at {args.db} (use --db)")
@@ -163,11 +186,13 @@ def main() -> None:
     live.sort(key=lambda k: next(iter(missions[k]["mission"].values())).get("created_at") or "")
     chosen = live[-args.last:] if not args.mission else live
 
-    totals: dict = {"missions": 0, "wall": 0.0, "cost": 0.0, "approvals": 0, "approval_wait": 0.0,
+    totals: dict = {"missions": 0, "wall": 0.0, "active": 0.0, "cost": 0.0, "approvals": 0, "approval_wait": 0.0,
                     "phase": defaultdict(float), "verdicts": defaultdict(int),
                     "agent": defaultdict(lambda: defaultdict(float))}
     for mid in chosen:
         mission_stats(mid, missions[mid], totals)
+        if args.detail:
+            detail(missions[mid])
 
     n = totals["missions"]
     if not n:
@@ -175,6 +200,8 @@ def main() -> None:
         return
     print(f"\n######## TOTAL · {n} misiones · {fmt(totals['wall'])} · US$ {totals['cost']:.2f}"
           f" · promedio {fmt(totals['wall'] / n)} y US$ {totals['cost'] / n:.2f} por misión")
+    print(f"  tiempo activo: {fmt(totals['active'])} · promedio {fmt(totals['active'] / n)} por misión")
+    totals["phase"].pop("CLOSED", None)
     wall = sum(totals["phase"].values()) or 1
     print("  tiempo por fase: " + " · ".join(
         f"{k} {fmt(v)} ({v / wall:.0%})" for k, v in sorted(totals["phase"].items(), key=lambda x: -x[1]) if v >= 1))
