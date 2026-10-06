@@ -7,6 +7,7 @@ PowerPoint). Coordinates are in a 1920 x 1080 grid scaled to the template's slid
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from pptx import Presentation
 from pptx.chart.data import CategoryChartData, XyChartData
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION, XL_MARKER_STYLE
+from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Emu, Pt
@@ -45,6 +47,11 @@ def _borders(cell: Any, color: str, *, bottom_only: bool = False) -> None:
         else:
             ln.append(ln.makeelement(_A + "noFill", {}))
         tcPr.insert(i, ln)
+
+
+def _fmt_ref(v: float, unit: str = "") -> str:
+    text = f"{v:,.0f}" if abs(v) >= 100 or float(v).is_integer() else f"{v:,.2f}"
+    return f"{text} {unit}".strip()
 
 
 def _mix(a: str, b: str, t: float) -> str:
@@ -144,14 +151,23 @@ class Deck:
                   color="#FFFFFF" if dark else self.b.c("primary"), font=self.strong, align=PP_ALIGN.RIGHT)
 
     def source(self, s: Any, text: str, dark: bool = False) -> None:
+        text = re.sub(r"^(fuente\s*:\s*)+", "", text or "", flags=re.IGNORECASE).strip()
         if text:
             self.text(s, 120, 1010, 1500, 30, "Fuente: " + text, size=15,
                       color=_mix(self.b.c("primary"), "#FFFFFF", 0.6) if dark else self.b.c("muted"))
 
-    def title(self, s: Any, title: str, subtitle: str = "", *, y: float = 90, color: str | None = None) -> None:
-        self.text(s, 120, y, 1560, 120, title, size=54, color=color or self.b.c("primary"), accents=True)
+    def title(self, s: Any, title: str, subtitle: str = "", *, y: float = 90, color: str | None = None) -> float:
+        """Draw the title (an action title can take two lines) and subtitle; returns where content may start."""
+        long = len(plain(title)) > 50
+        size = 42 if long else 54
+        lines = 2 if len(plain(title)) > (66 if long else 50) else 1
+        h = 62 * lines if long else 120
+        self.text(s, 120, y, 1560, h, title, size=size, color=color or self.b.c("primary"), accents=True)
+        bottom = y + (h + 14 if lines == 2 else 118)
         if subtitle:
-            self.text(s, 120, y + 118, 1560, 60, subtitle, size=24, color=self.b.c("muted"))
+            self.text(s, 120, bottom, 1560, 60, subtitle, size=24, color=self.b.c("muted"))
+            bottom += 70
+        return bottom
 
     def logo(self, s: Any, path: Path | None, x: float, y: float, h: float) -> bool:
         if not path:
@@ -350,15 +366,27 @@ class Deck:
         self.title(s, sl.get("title", ""), sl.get("subtitle", ""), y=150)
         kp = sl["kpis"]
         n = len(kp)
-        w = 1680 / n
         light = _mix(b.c("primary"), "#FFFFFF", 0.62)
-        for i, k in enumerate(kp):
-            x = 120 + i * w
-            self.rect(s, x, 640, 60, 3, "#FFFFFF")
-            self.text(s, x, 670, w - 40, 130, k["value"], size=72 if n <= 3 else 60, color="#FFFFFF")
-            self.text(s, x, 815, w - 40, 40, k["label"].upper(), size=19, color=light, spacing=2)
-            if k.get("note"):
-                self.text(s, x, 860, w - 40, 90, k["note"], size=19, color=light)
+        if n > 4:  # "the market on one page": two rows of three, compact
+            self.rect(s, 0, 380, 1920, 700, b.c("primary"))
+            per = 3
+            w = 1680 / per
+            for i, k in enumerate(kp):
+                x, y = 120 + (i % per) * w, 430 + (i // per) * 320
+                self.rect(s, x, y, 60, 3, "#FFFFFF")
+                self.text(s, x, y + 22, w - 40, 110, k["value"], size=56, color="#FFFFFF")
+                self.text(s, x, y + 140, w - 40, 36, k["label"].upper(), size=17, color=light, spacing=2)
+                if k.get("note"):
+                    self.text(s, x, y + 180, w - 40, 80, k["note"], size=17, color=light)
+        else:
+            w = 1680 / n
+            for i, k in enumerate(kp):
+                x = 120 + i * w
+                self.rect(s, x, 640, 60, 3, "#FFFFFF")
+                self.text(s, x, 670, w - 40, 130, k["value"], size=72 if n <= 3 else 60, color="#FFFFFF")
+                self.text(s, x, 815, w - 40, 40, k["label"].upper(), size=19, color=light, spacing=2)
+                if k.get("note"):
+                    self.text(s, x, 860, w - 40, 90, k["note"], size=19, color=light)
         self.side_label(s)
         self.source(s, sl.get("source", ""), dark=True)
         self.page_no(s, dark=True)
@@ -368,24 +396,36 @@ class Deck:
         b = self.b
         ch = sl["chart"]
         s = self.new("#FFFFFF")
-        self.title(s, sl.get("title") or ch.get("title") or "", sl.get("subtitle", ""))
+        content_top = self.title(s, sl.get("title") or ch.get("title") or "", sl.get("subtitle", ""))
         if ch["chart_type"] == "scatter":
             self.scatter(s, sl, ch)
             return
+        self.source(s, ch.get("source") or sl.get("source", ""))
+        self.side_label(s)
+        self.page_no(s)
+        self.notes(s, sl.get("notes", ""))
+        horizontal = ch["chart_type"] == "bar" and ch.get("orientation") == "horizontal"
+        ref = ch.get("reference")
         data = CategoryChartData()
         data.categories = ch["categories"]
         for sr in ch["series"]:
             data.add_series(sr["name"], sr["values"])
-        kind = XL_CHART_TYPE.LINE_MARKERS if ch["chart_type"] == "line" else XL_CHART_TYPE.COLUMN_CLUSTERED
-        top = 300 if sl.get("subtitle") else 250
+        if ref and ch["chart_type"] == "line":  # the benchmark as a flat dashed series
+            data.add_series(ref.get("label") or "Referencia", [ref["value"]] * len(ch["categories"]))
+        kind = (XL_CHART_TYPE.LINE_MARKERS if ch["chart_type"] == "line"
+                else XL_CHART_TYPE.BAR_CLUSTERED if horizontal else XL_CHART_TYPE.COLUMN_CLUSTERED)
+        top = max(300 if sl.get("subtitle") else 250, content_top + 20)
+        if ref and ch["chart_type"] == "bar":
+            label = f"{ref.get('label') or 'Referencia'}: {_fmt_ref(ref['value'], ch.get('unit', ''))}"
+            self.text(s, 1100, top - 50, 700, 40, label, size=20, color=b.c("muted"), align=PP_ALIGN.RIGHT)
         gf = s.shapes.add_chart(kind, self.e(120), self.e(top), self.e(1680), self.e(960 - top), data)
         c = gf.chart
         pal = [b.c("primary"), b.c("accent"), _mix(b.c("primary"), "#FFFFFF", 0.45), b.c("muted")]
         c.has_title = False
-        c.font.size = self.pt(20)
+        c.font.size = self.pt(16 if horizontal and len(ch["categories"]) > 12 else 20)
         c.font.name = self.font
         c.font.color.rgb = _rgb(b.c("ink"))
-        if self.style.get("chart_data_labels"):
+        if self.style.get("chart_data_labels") or horizontal:
             plot = c.plots[0]
             plot.has_data_labels = True
             labels = plot.data_labels
@@ -394,13 +434,19 @@ class Deck:
             labels.number_format = "#,##0.##" if any(
                 v is not None and not float(v).is_integer() for sr in ch["series"] for v in sr["values"]) else "#,##0"
             labels.number_format_is_linked = False
-        c.has_legend = len(ch["series"]) > 1
+        c.has_legend = len(c.series) > 1
         if c.has_legend:
             c.legend.position = XL_LEGEND_POSITION.TOP
             c.legend.include_in_layout = False
         for i, series in enumerate(c.series):
             color = _rgb(pal[i % len(pal)])
-            if ch["chart_type"] == "line":
+            if ch["chart_type"] == "line" and ref and i == len(c.series) - 1:
+                series.format.line.color.rgb = _rgb(b.c("muted"))
+                series.format.line.width = Pt(1.75)
+                series.format.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+                series.smooth = False
+                series.marker.style = XL_MARKER_STYLE.NONE
+            elif ch["chart_type"] == "line":
                 series.format.line.color.rgb = color
                 series.format.line.width = Pt(2.25)
                 series.smooth = False
@@ -410,6 +456,18 @@ class Deck:
             else:
                 series.format.fill.solid()
                 series.format.fill.fore_color.rgb = color
+                if ch.get("highlight") and len(ch["series"]) == 1:
+                    # the project in the full primary color, the rest of the market lighter
+                    series.format.fill.fore_color.rgb = _rgb(_mix(b.c("primary"), "#FFFFFF", 0.6))
+                    lit = set(ch["highlight"])
+                    for j, cat in enumerate(ch["categories"]):
+                        if cat in lit:
+                            pt = series.points[j]
+                            pt.format.fill.solid()
+                            pt.format.fill.fore_color.rgb = color
+        if horizontal:
+            c.category_axis.reverse_order = True  # first category on top: rankings read top-down
+            c.plots[0].gap_width = 40
         va = c.value_axis
         va.has_major_gridlines = True
         va.major_gridlines.format.line.color.rgb = _rgb(b.c("rule"))
@@ -418,6 +476,15 @@ class Deck:
         va.tick_labels.number_format = "#,##0.##" if any(
             v is not None and not float(v).is_integer() for sr in ch["series"] for v in sr["values"]) else "#,##0"
         va.tick_labels.number_format_is_linked = False
+        values = [v for sr in ch["series"] for v in sr["values"] if v is not None]
+        if ref:
+            values.append(ref["value"])
+        if ch["chart_type"] == "line" and values and min(values) > 0 and min(values) > 0.3 * max(values):
+            lo, hi, step = nice_bounds(min(values), max(values))  # a price series doesn't start at zero
+            va.minimum_scale, va.maximum_scale, va.major_unit = lo, hi, step
+        if horizontal:  # the values are on the bars
+            va.visible = False
+            va.has_major_gridlines = False
         ca = c.category_axis
         ca.format.line.color.rgb = _rgb(b.c("rule"))
         ca.tick_labels.font.color.rgb = _rgb(b.c("ink"))

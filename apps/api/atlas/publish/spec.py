@@ -12,11 +12,13 @@ from typing import Any
 
 MAX_SECTIONS = 12
 MAX_BLOCKS = 14
-MAX_SLIDES = 22
+MAX_SLIDES = 34  # a full market study: ~20 body slides + an annex of source captures
 MAX_TABLE_ROWS = 60
 MAX_DECK_TABLE_ROWS = 40  # split across slides by style.table_rows_per_slide
 MAX_COLS = 9
 MAX_KPIS = 4
+MAX_SLIDE_KPIS = 6  # a kpis slide ('the market on one page') takes two rows of three
+MAX_HIGHLIGHTS = 3
 MAX_SERIES = 4
 MAX_CATEGORIES = 24
 MAX_POINTS = 40
@@ -42,9 +44,12 @@ _TABLE = {
 }
 _CHART = {
     "type": "object",
-    "description": "bar / line: categories + series of values. scatter (positioning, e.g. $/m² vs ticket): points "
-                   "{label, x, y, group?} with x_title / y_title; group colors the points (e.g. the project vs "
-                   "the competition) and each point is labeled.",
+    "description": "bar / line: categories + series of values. Rankings (sales or inventory by project, by "
+                   "developer): bar with orientation 'horizontal', sorted biggest first. highlight: the categories to "
+                   "paint in the accent color (the project itself). reference: one benchmark value drawn as a dashed "
+                   "line on a line chart, or noted on a bar chart (e.g. {value: 80824, label: 'Balcones 200'}). "
+                   "scatter (positioning, e.g. $/m² vs ticket): points {label, x, y, group?} with x_title / "
+                   "y_title; group colors the points (e.g. the project vs the competition) and each point is labeled.",
     "properties": {
         "chart_type": {"type": "string", "enum": ["bar", "line", "scatter"]},
         "title": _TEXT,
@@ -55,6 +60,10 @@ _CHART = {
         "points": {"type": "array", "items": {"type": "object", "properties": {
             "label": _TEXT, "x": {"type": "number"}, "y": {"type": "number"}, "group": _TEXT},
             "required": ["x", "y"]}},
+        "orientation": {"type": "string", "enum": ["vertical", "horizontal"], "description": "bar only"},
+        "highlight": {**_TEXTS, "description": "category names to paint in the accent color (max 3)"},
+        "reference": {"type": "object", "properties": {"value": {"type": "number"}, "label": _TEXT},
+                      "required": ["value"]},
         "x_title": _TEXT,
         "y_title": _TEXT,
         "unit": _TEXT,
@@ -79,7 +88,8 @@ _BLOCK = {
 _SLIDE = {
     "type": "object",
     "description": (
-        "section {title} · bullets {title, subtitle?, items} · table {title, table} · kpis {title, kpis} · "
+        "section {title} · bullets {title, subtitle?, items} · table {title, table} · kpis {title, kpis: up to 6, "
+        "two rows of three} · "
         "chart {title, chart} · statement {text} (one big sentence) · quote {text, attribution} · "
         "image {image, title?, subtitle?, items? (up to 4 short points beside it), caption?, layout: side|full} "
         "(image slides: write_deliverable only). "
@@ -146,12 +156,12 @@ def _list(v: Any, n: int, width: int = 600) -> list[str]:
     return [_s(x, width) for x in (v if isinstance(v, list) else []) if _s(x, width)][:n]
 
 
-def _kpis(v: Any) -> list[dict[str, str]]:
+def _kpis(v: Any, n: int = MAX_KPIS) -> list[dict[str, str]]:
     out = []
     for k in v if isinstance(v, list) else []:
         if isinstance(k, dict) and _s(k.get("value")):
             out.append({"label": _s(k.get("label"), 60), "value": _s(k.get("value"), 30), "note": _s(k.get("note"), 90)})
-    return out[:MAX_KPIS]
+    return out[:n]
 
 
 def _cell(v: Any) -> Any:
@@ -253,8 +263,15 @@ def _chart(v: Any, errors: list[str], where: str) -> dict[str, Any] | None:
         errors.append(f"{where}: chart needs categories and at least one series of numbers")
         return None
     kind = str(v.get("chart_type") or "bar").lower()
-    return {"chart_type": kind if kind in ("bar", "line") else "bar", "title": _s(v.get("title"), 120),
-            "categories": cats, "series": series, "unit": _s(v.get("unit"), 30), "source": _s(v.get("source"), 240)}
+    kind = kind if kind in ("bar", "line") else "bar"
+    out = {"chart_type": kind, "title": _s(v.get("title"), 120), "categories": cats, "series": series,
+           "unit": _s(v.get("unit"), 30), "source": _s(v.get("source"), 240),
+           "orientation": "horizontal" if kind == "bar" and v.get("orientation") == "horizontal" else "vertical",
+           "highlight": [c for c in _list(v.get("highlight"), MAX_HIGHLIGHTS, 40) if c in cats]}
+    ref = v.get("reference")
+    if isinstance(ref, dict) and _num_or_none(ref.get("value")) is not None:
+        out["reference"] = {"value": _num_or_none(ref.get("value")), "label": _s(ref.get("label"), 60)}
+    return out
 
 
 def _block(b: Any, errors: list[str], where: str) -> dict[str, Any] | None:
@@ -295,7 +312,7 @@ def _slide(sl: Any, errors: list[str], where: str) -> dict[str, Any] | None:
         tb = _table(sl.get("table"), errors, where, max_rows=MAX_DECK_TABLE_ROWS)
         return {**out, "table": tb} if tb else None
     if t == "kpis" and _kpis(sl.get("kpis")):
-        return {**out, "kpis": _kpis(sl.get("kpis"))}
+        return {**out, "kpis": _kpis(sl.get("kpis"), MAX_SLIDE_KPIS)}
     if t == "chart":
         ch = _chart(sl.get("chart"), errors, where)
         return {**out, "chart": ch} if ch else None

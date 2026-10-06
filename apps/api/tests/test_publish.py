@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from pptx import Presentation
+from pptx.enum.chart import XL_CHART_TYPE
 from pypdf import PdfReader
 
 from atlas.core import paths
@@ -349,3 +350,51 @@ def test_scatter_chart_in_spec_deck_and_pdf(tmp_path):
     text = "\n".join(p.extract_text() for p in PdfReader(str(pdf)).pages)
     for needle in ("Torre Fiori", "Comp B", "Precio por m² (MXN)", "Ticket promedio (MDP)", "REDI API"):
         assert needle in text, needle
+
+
+MARKET_SPEC = {
+    "title": "Balcones 200", "summary": ["El corredor vende 29 unidades al mes."],
+    "sections": [{"title": "Ventas", "blocks": [{"type": "chart", "chart": {
+        "chart_type": "bar", "orientation": "horizontal", "title": "Ventas acumuladas por proyecto",
+        "categories": ["Vitant", "Alejandría", "Lítica C", "Balcones 600"], "series": [{"name": "Ventas",
+                                                                                        "values": [298, 182, 180, 51]}],
+        "highlight": ["Balcones 600", "No existe"], "reference": {"value": 120, "label": "Umbral"},
+        "source": "REDI · vista Ventas › Por proyectos"}}]}],
+    "slides": [
+        {"type": "kpis", "title": "El mercado en una página", "kpis": [
+            {"label": "Proyectos activos", "value": "32"}, {"label": "Ventas en el trimestre", "value": "87"},
+            {"label": "Unidades en inventario", "value": "745"}, {"label": "Precio promedio", "value": "$7.58M"},
+            {"label": "Precio por m2", "value": "$82,169"}, {"label": "Superficie promedio", "value": "96 m2"},
+            {"label": "Séptimo (se corta)", "value": "x"}]},
+        {"type": "chart", "title": "Seis proyectos superan las 120 unidades vendidas desde 2021", "chart": {
+            "chart_type": "bar", "orientation": "horizontal", "categories": ["Vitant", "Alejandría", "Lítica C",
+                                                                              "Balcones 600"],
+            "series": [{"name": "Ventas", "values": [298, 182, 180, 51]}], "highlight": ["Balcones 600"],
+            "reference": {"value": 120, "label": "Umbral"}}},
+        {"type": "chart", "title": "El m2 subió 67% desde 2021", "chart": {
+            "chart_type": "line", "categories": ["2021", "2022", "2023", "2024", "2025"],
+            "series": [{"name": "Corredor", "values": [49286, 55000, 63000, 74000, 82169]}],
+            "reference": {"value": 80824, "label": "Balcones 200"}}},
+    ],
+}
+
+
+def test_market_study_charts_rankings_highlights_references(tmp_path):
+    _kit()
+    brand = load_brand("corporate")
+    spec, errors = normalize(copy.deepcopy(MARKET_SPEC))
+    assert not errors
+    ch = spec["slides"][1]["chart"]
+    assert ch["orientation"] == "horizontal" and ch["highlight"] == ["Balcones 600"]
+    assert ch["reference"] == {"value": 120.0, "label": "Umbral"}
+    assert len(spec["slides"][0]["kpis"]) == 6
+    deck = Presentation(str(render_deck(spec, brand, "6 de octubre de 2026", [], tmp_path / "m.pptx")))
+    charts = [sh.chart for sl in deck.slides for sh in sl.shapes if sh.has_chart]
+    bar, line = charts
+    assert bar.chart_type == XL_CHART_TYPE.BAR_CLUSTERED and bar.category_axis.reverse_order
+    texts = [sh.text_frame.text for sl in deck.slides for sh in sl.shapes if sh.has_text_frame]
+    assert "Umbral: 120" in texts and "$82,169" in texts and "Superficie promedio".upper() in texts
+    assert [s.name for s in line.series] == ["Corredor", "Balcones 200"] and line.has_legend
+    pdf = render_pdf(spec, brand, DocMeta("6 de octubre de 2026"), tmp_path / "m.pdf")
+    text = "\n".join(p.extract_text() for p in PdfReader(str(pdf)).pages)
+    assert "Balcones 600" in text and "Umbral: 120" in text

@@ -95,7 +95,10 @@ Stages (each request tells you which one you are in):
    roster. Every task costs a full agent run (its own context, tools and report), so plan the FEWEST tasks that do
    the job:
    - If one agent has the tools to do the whole objective (read, analyze and write/register), plan ONE task.
-   - Never give the same agent two tasks where one depends on the other: merge them into one task.
+   - Never give the same agent two tasks where one depends on the other: merge them into one task. The one
+     exception is long browser work: a data-capture task (browser: export data and screenshots to files) and a
+     build task that works only from those files (e.g. the deck) may be two tasks of the same agent, so each
+     has its full turn budget.
    - Add a second agent only for a genuinely different specialty or for independent work that can run in parallel.
    - Do not add separate "review", "verify" or "summarize" tasks: AUDITOR and your review already do that.
 2. REVIEW: read every report against the objective and call request_followups. Open follow-up tasks (at most 3)

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
 
-from reportlab.graphics.charts.barcharts import VerticalBarChart
+from reportlab.graphics.charts.barcharts import HorizontalBarChart, VerticalBarChart
 from reportlab.graphics.charts.legends import Legend
 from reportlab.graphics.charts.linecharts import HorizontalLineChart
 from reportlab.graphics.shapes import Drawing, String
@@ -323,9 +323,15 @@ def scatter_drawing(ch: dict[str, Any], brand: Brand, st: Styles, width: float) 
 def chart_flow(ch: dict[str, Any], brand: Brand, st: Styles, width: float) -> list[Any]:
     if ch["chart_type"] == "scatter":
         return _chart_frame(ch, brand, st, scatter_drawing(ch, brand, st, width))
+    horizontal = ch["chart_type"] == "bar" and ch.get("orientation") == "horizontal"
+    if horizontal:
+        return _chart_frame(ch, brand, st, hbar_drawing(ch, brand, st, width))
     h = 200
     d = Drawing(width, h)
-    series = ch["series"]
+    series = list(ch["series"])
+    ref = ch.get("reference")
+    if ref and ch["chart_type"] == "line":
+        series.append({"name": ref.get("label") or "Referencia", "values": [ref["value"]] * len(ch["categories"])})
     data = [tuple(v for v in s["values"]) for s in series]
     pal = palette(brand)
     legend_h = 16 if len(series) > 1 else 0
@@ -335,6 +341,10 @@ def chart_flow(ch: dict[str, Any], brand: Brand, st: Styles, width: float) -> li
         for i in range(len(series)):
             c.lines[i].strokeColor = pal[i % len(pal)]
             c.lines[i].strokeWidth = 1.8
+        if ref:
+            c.lines[len(series) - 1].strokeColor = _hex(brand.c("muted"))
+            c.lines[len(series) - 1].strokeDashArray = (4, 3)
+            c.lines[len(series) - 1].strokeWidth = 1.2
     else:
         c = VerticalBarChart()
         c.barSpacing = 1
@@ -342,6 +352,7 @@ def chart_flow(ch: dict[str, Any], brand: Brand, st: Styles, width: float) -> li
         for i in range(len(series)):
             c.bars[i].fillColor = pal[i % len(pal)]
             c.bars[i].strokeColor = None
+        _highlight(c, ch, brand)
     c.x, c.y, c.width, c.height = 38, 30, width - 48, h - 46 - legend_h
     c.data = [tuple(0 if v is None else v for v in row) for row in data] if ch["chart_type"] == "bar" else data
     c.categoryAxis.categoryNames = ch["categories"]
@@ -389,6 +400,56 @@ def chart_flow(ch: dict[str, Any], brand: Brand, st: Styles, width: float) -> li
         lg.columnMaximum = 1  # one row: series side by side
         d.add(lg)
     return _chart_frame(ch, brand, st, d)
+
+
+def _highlight(c: Any, ch: dict[str, Any], brand: Brand) -> None:
+    """Paint the highlighted categories (the project itself) in the accent color — single-series bars."""
+    if ch.get("highlight") and len(ch["series"]) == 1:
+        primary = brand.c("primary").lstrip("#")
+        light = "#" + "".join(f"{round(int(primary[i:i + 2], 16) * 0.4 + 255 * 0.6):02X}" for i in (0, 2, 4))
+        c.bars[0].fillColor = _hex(light)  # the market lighter, the project in the full primary color
+        lit = set(ch["highlight"])
+        for j, cat in enumerate(c.categoryAxis.categoryNames):
+            if cat in lit:
+                c.bars[(0, j)].fillColor = _hex(brand.c("primary"))
+
+
+def hbar_drawing(ch: dict[str, Any], brand: Brand, st: Styles, width: float) -> Drawing:
+    """A ranking: horizontal bars, first category on top, value at the end of each bar."""
+    cats = list(ch["categories"])
+    n = len(cats)
+    row = 13 if n > 12 else 16
+    h = max(120, n * row * max(1, len(ch["series"])) + 40)
+    d = Drawing(width, h)
+    c = HorizontalBarChart()
+    pal = palette(brand)
+    label_w = min(170, max(60, max(len(x) for x in cats) * 4.2))
+    c.x, c.y, c.width, c.height = label_w, 14, width - label_w - 40, h - 24
+    c.data = [tuple(0 if v is None else v for v in reversed(sr["values"])) for sr in ch["series"]]
+    c.categoryAxis.categoryNames = list(reversed(cats))
+    c.categoryAxis.labels.fontName = st.f["regular"]
+    c.categoryAxis.labels.fontSize = 6.8
+    c.categoryAxis.labels.fillColor = _hex(brand.c("ink"))
+    c.categoryAxis.strokeColor = _hex(brand.c("rule"))
+    c.valueAxis.visible = 0
+    c.valueAxis.valueMin = 0
+    c.barSpacing = 1
+    c.groupSpacing = 3
+    for i in range(len(ch["series"])):
+        c.bars[i].fillColor = pal[i % len(pal)]
+        c.bars[i].strokeColor = None
+    _highlight(c, ch, brand)
+    c.barLabelFormat = lambda v: fmt_num(round(v, 2)) if isinstance(v, (int, float)) else ""
+    c.barLabels.fontName, c.barLabels.fontSize = st.f["regular"], 6.3
+    c.barLabels.boxAnchor = "w"
+    c.barLabels.dx = 3
+    d.add(c)
+    ref = ch.get("reference")
+    if ref:
+        text = f"{ref.get('label') or 'Referencia'}: {fmt_num(round(ref['value'], 2))} {ch.get('unit', '')}".strip()
+        d.add(String(width, h - 8, text, fontName=st.f["regular"], fontSize=7, textAnchor="end",
+                     fillColor=_hex(brand.c("muted"))))
+    return d
 
 
 def _chart_frame(ch: dict[str, Any], brand: Brand, st: Styles, d: Drawing) -> list[Any]:
