@@ -74,6 +74,7 @@ from .prompts import (
     render_report,
     respond_to_followup_tool,
     review_message,
+    split_stage,
     with_mission_notes,
 )
 from .runtime import (
@@ -147,7 +148,7 @@ def validate_plan(
     allowed: set[str],
     *,
     existing_refs: set[str] | frozenset[str] = frozenset(),
-    min_tasks: int = 2,
+    min_tasks: int = 1,
     max_tasks: int = 8,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Validate a create_plan / request_followups input. Returns (tasks in topological order, errors)."""
@@ -292,12 +293,20 @@ class LiveMission:
                               self.store, o.id, self.scope.node)
         return [*system, self.scope.memory] if self.scope.memory else system
 
+    def _atlas_tools(self) -> list[dict[str, Any]]:
+        """Every ATLAS stage tool, in a fixed order: each step sends the same list (and forces its own tool), so
+        the tools + system prefix stays identical and cached across planning, review, consolidation and follow-ups."""
+        ids = sorted(self.scope.agents)
+        return [create_plan_tool(ids), followups_tool(ids), SUBMIT_MISSION_REPORT_TOOL, respond_to_followup_tool(ids)]
+
     async def _atlas_step(self, tool: dict[str, Any], prompt: str, **kw: Any) -> dict[str, Any] | None:
         token = current_agent.set(self.atlas)
+        prefix, prompt = split_stage(prompt)
         try:
             return await self.executor.structured(
                 self.scope, model=self.scope.orchestrator.model, system=self._system(), prompt=prompt, tool=tool,
-                max_tokens=self.config.orchestrator_max_tokens, **kw,
+                max_tokens=self.config.orchestrator_max_tokens, prefix=prefix, tools=self._atlas_tools(),
+                cache_ttl=self.config.orchestrator_cache_ttl, **kw,
             )
         finally:
             current_agent.reset(token)

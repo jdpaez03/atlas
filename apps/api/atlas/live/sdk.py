@@ -350,7 +350,11 @@ class SubscriptionExecutor:
 
     async def structured(self, scope: MissionScope, *, model: str, system: list[str], prompt: str,
                          tool: dict[str, Any], max_tokens: int, validate: Validator | None = None,
-                         attempts: int = 1) -> dict[str, Any] | None:
+                         attempts: int = 1, prefix: str = "", tools: list[dict[str, Any]] | None = None,
+                         cache_ttl: str | None = None) -> dict[str, Any] | None:
+        del tools, cache_ttl  # API prompt-caching hints; Claude Code manages its own cache
+        if prefix:
+            prompt = f"{prefix}\n\n{prompt}"
         name = tool["name"]
         attempts = max(1, attempts)
         state: dict[str, Any] = {"data": None, "tries": 0, "gave_up": False}

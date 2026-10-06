@@ -19,7 +19,7 @@ from typing import Any, Protocol
 
 from ..core.models import AgentReport, Task
 from .llm import block_to_param, tool_uses
-from .prompts import plan_errors_message, system_blocks
+from .prompts import cache_control, plan_errors_message, system_blocks
 from .runtime import AgentRun, MissionScope
 
 # validate(tool_input or None when the tool wasn't called) -> errors (empty = valid)
@@ -31,7 +31,8 @@ class Executor(Protocol):
 
     async def structured(self, scope: MissionScope, *, model: str, system: list[str], prompt: str,
                          tool: dict[str, Any], max_tokens: int, validate: Validator | None = None,
-                         attempts: int = 1) -> dict[str, Any] | None: ...
+                         attempts: int = 1, prefix: str = "", tools: list[dict[str, Any]] | None = None,
+                         cache_ttl: str | None = None) -> dict[str, Any] | None: ...
 
     async def run_task(self, scope: MissionScope, task: Task, dep_reports: list[str]) -> AgentReport: ...
 
@@ -47,14 +48,25 @@ class ApiExecutor:
 
     async def structured(self, scope: MissionScope, *, model: str, system: list[str], prompt: str,
                          tool: dict[str, Any], max_tokens: int, validate: Validator | None = None,
-                         attempts: int = 1) -> dict[str, Any] | None:
+                         attempts: int = 1, prefix: str = "", tools: list[dict[str, Any]] | None = None,
+                         cache_ttl: str | None = None) -> dict[str, Any] | None:
         """Force `tool`; return its input. With `validate`, invalid input goes back to the model as an error
-        tool_result and it tries again, up to `attempts` calls. Raises LLMError when the call fails."""
+        tool_result and it tries again, up to `attempts` calls. Raises LLMError when the call fails.
+
+        Prompt caching: `tools` (a stable list that contains `tool`) keeps the tools+system prefix identical across
+        ATLAS's stages (a different tool list would invalidate the cached system prompt); `cache_ttl` "1h" keeps it
+        cached across the execution phase; `prefix` is sent first with its own breakpoint (the dossier REVIEW and
+        CONSOLIDATION share)."""
         name = tool["name"]
-        messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+        tool_list = tools if tools and any(t.get("name") == name for t in tools) else [tool]
+        content: str | list[dict[str, Any]] = prompt
+        if prefix:
+            content = [{"type": "text", "text": prefix, "cache_control": cache_control()},
+                       {"type": "text", "text": prompt}]
+        messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
         for attempt in range(max(1, attempts)):
             resp = await scope.meter.create(
-                model=model, max_tokens=max_tokens, system=system_blocks(*system), tools=[tool],
+                model=model, max_tokens=max_tokens, system=system_blocks(*system, ttl=cache_ttl), tools=tool_list,
                 tool_choice={"type": "tool", "name": name}, messages=messages,
             )
             uses = tool_uses(resp)

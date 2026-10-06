@@ -26,6 +26,7 @@ log = logging.getLogger("atlas.live")
 
 CACHE_READ_FACTOR = 0.10
 CACHE_WRITE_FACTOR = 1.25
+CACHE_WRITE_1H_FACTOR = 2.0  # 1-hour cache writes
 
 
 @dataclass(frozen=True)
@@ -98,13 +99,15 @@ class PriceTable:
         output_tokens: int = 0,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
+        cache_write_1h_tokens: int = 0,
     ) -> float:
-        """Estimated USD cost. `input_tokens` excludes cache reads and cache writes."""
+        """Estimated USD cost. `input_tokens` excludes cache reads and cache writes (5-minute and 1-hour)."""
         p = self.price_for(model)
         total = (
             input_tokens * p.input
             + output_tokens * p.output
             + cache_read_tokens * p.cache_read
             + cache_write_tokens * p.cache_write
+            + cache_write_1h_tokens * p.input * CACHE_WRITE_1H_FACTOR
         )
         return total / 1_000_000

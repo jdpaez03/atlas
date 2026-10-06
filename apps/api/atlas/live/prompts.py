@@ -85,11 +85,16 @@ You are ATLAS, the orchestrator of a team of specialist AI agents. You never do 
 you decompose the objective, delegate, review and consolidate.
 
 Stages (each request tells you which one you are in):
-1. PLANNING: call create_plan with 2–8 tasks. Each task goes to exactly ONE agent from the roster (use their ids),
+1. PLANNING: call create_plan with 1–8 tasks. Each task goes to exactly ONE agent from the roster (use their ids),
    has a clear deliverable, and lists depends_on refs only when it truly needs another task's output (tasks without
    dependencies run in parallel). Set requires_approval=true (with approval_reason) for tasks that involve external
-   communication, financial commitments, irreversible actions, or consequential decisions. Prefer fewer, sharper
-   tasks. Only use agents from the roster.
+   communication, financial commitments, irreversible actions, or consequential decisions. Only use agents from the
+   roster. Every task costs a full agent run (its own context, tools and report), so plan the FEWEST tasks that do
+   the job:
+   - If one agent has the tools to do the whole objective (read, analyze and write/register), plan ONE task.
+   - Never give the same agent two tasks where one depends on the other: merge them into one task.
+   - Add a second agent only for a genuinely different specialty or for independent work that can run in parallel.
+   - Do not add separate "review", "verify" or "summarize" tasks: AUDITOR and your review already do that.
 2. REVIEW: read every report against the objective and call request_followups. Open follow-up tasks (at most 3)
    only to fill a real gap or resolve a conflict between reports; otherwise send an empty list.
 3. CONSOLIDATION: call submit_mission_report with an executive summary a busy decision-maker can act on. Keep the
@@ -108,11 +113,16 @@ def context_block(context: str) -> str:
     )
 
 
-def system_blocks(*texts: str) -> list[dict[str, Any]]:
+def cache_control(ttl: str | None = None) -> dict[str, str]:
+    """Prompt-cache breakpoint; `ttl` "1h" keeps it across long waits (default 5 minutes)."""
+    return {"type": "ephemeral", "ttl": ttl} if ttl in ("5m", "1h") else {"type": "ephemeral"}
+
+
+def system_blocks(*texts: str, ttl: str | None = None) -> list[dict[str, Any]]:
     """System prompt as text blocks; the last one carries the prompt-cache breakpoint."""
     blocks: list[dict[str, Any]] = [{"type": "text", "text": t} for t in texts if t]
     if blocks:
-        blocks[-1]["cache_control"] = {"type": "ephemeral"}
+        blocks[-1]["cache_control"] = cache_control(ttl)
     return blocks
 
 
@@ -158,14 +168,14 @@ def _task_schema(agent_ids: list[str], *, ref_help: str) -> dict[str, Any]:
 def create_plan_tool(agent_ids: list[str]) -> dict[str, Any]:
     return {
         "name": "create_plan",
-        "description": "Decompose the objective into 2-8 tasks for the roster agents (a DAG).",
+        "description": "Decompose the objective into 1-8 tasks for the roster agents (a DAG). Fewest tasks that do the job.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "rationale": {"type": "string", "description": "one or two sentences on the approach"},
                 "tasks": {
                     "type": "array",
-                    "minItems": 2,
+                    "minItems": 1,
                     "maxItems": 8,
                     "items": _task_schema(agent_ids, ref_help="refs of tasks in this plan it needs"),
                 },
@@ -531,30 +541,42 @@ def task_message(objective: str, node: str, task: Task, dep_reports: list[str], 
     return "\n\n".join(parts)
 
 
-def review_message(objective: str, tasks_text: str, reports: list[str], failures: list[str],
-                   roster: list[dict[str, Any]]) -> str:
+STAGE_SPLIT = "\n\nSTAGE: "
+
+
+def dossier(objective: str, tasks_text: str, reports: list[str], failures: list[str]) -> str:
+    """What REVIEW and CONSOLIDATION both read, byte-identical, so the second call reads it from the prompt cache."""
     parts = [
-        "STAGE: REVIEW",
         f"Mission objective:\n{objective}",
         f"Tasks (ref · title · agent · status):\n{tasks_text}",
         "Reports:\n\n" + ("\n\n".join(reports) if reports else "(no reports)"),
     ]
     if failures:
         parts.append("Failures:\n- " + "\n- ".join(failures))
-    parts.append(f"Roster:\n{roster_text(roster)}")
-    parts.append("Call request_followups (empty tasks list if no follow-up is needed).")
+    return "\n\n".join(parts)
+
+
+def split_stage(prompt: str) -> tuple[str, str]:
+    """(cacheable dossier, stage instructions) of a REVIEW / CONSOLIDATION prompt; ("", prompt) otherwise."""
+    head, sep, tail = prompt.partition(STAGE_SPLIT)
+    return (head, "STAGE: " + tail) if sep and head else ("", prompt)
+
+
+def review_message(objective: str, tasks_text: str, reports: list[str], failures: list[str],
+                   roster: list[dict[str, Any]]) -> str:
+    parts = [
+        dossier(objective, tasks_text, reports, failures),
+        "STAGE: REVIEW",
+        f"Roster:\n{roster_text(roster)}",
+        "Call request_followups (empty tasks list if no follow-up is needed).",
+    ]
     return "\n\n".join(parts)
 
 
 def consolidation_message(objective: str, tasks_text: str, reports: list[str], failures: list[str]) -> str:
-    parts = [
-        "STAGE: CONSOLIDATION",
-        f"Mission objective:\n{objective}",
-        f"Tasks (ref · title · agent · status):\n{tasks_text}",
-        "Reports:\n\n" + ("\n\n".join(reports) if reports else "(no reports)"),
-    ]
+    parts = [dossier(objective, tasks_text, reports, failures), "STAGE: CONSOLIDATION"]
     if failures:
-        parts.append("Failures (list them under needs_human_attention):\n- " + "\n- ".join(failures))
+        parts.append("List every failure above under needs_human_attention.")
     parts.append("Call submit_mission_report now.")
     return "\n\n".join(parts)
 

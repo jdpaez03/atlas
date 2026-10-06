@@ -255,8 +255,10 @@ class Meter:
         out = int(getattr(usage, "output_tokens", 0) or 0)
         read = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
         write = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+        write_1h = min(write, int(getattr(getattr(usage, "cache_creation", None), "ephemeral_1h_input_tokens", 0) or 0))
         cost = self.prices.estimate(
-            model, input_tokens=fresh, output_tokens=out, cache_read_tokens=read, cache_write_tokens=write
+            model, input_tokens=fresh, output_tokens=out, cache_read_tokens=read, cache_write_tokens=write - write_1h,
+            cache_write_1h_tokens=write_1h,
         )
         delta = Usage(
             input_tokens=fresh + write,  # cache writes are input tokens billed at a premium

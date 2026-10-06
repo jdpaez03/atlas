@@ -89,6 +89,7 @@ class LiveConfig:
     web_search_max_uses: int = 5
     max_tokens: int = 8000
     orchestrator_max_tokens: int = 12000
+    orchestrator_cache_ttl: str = "1h"  # ATLAS's system prompt stays cached across the execution phase
     consult_max_tokens: int = 1500
     # Phase 5 (docs/AUDITOR.md): quality gate and error recovery
     audit: bool = True
@@ -113,6 +114,7 @@ class LiveConfig:
             max_concurrency=_env_int("ATLAS_MAX_CONCURRENCY", 4),
             max_turns=_env_int("ATLAS_MAX_TURNS", 12 if sub else 8, minimum=2),
             max_consults=_env_int("ATLAS_MAX_CONSULTS", 2, minimum=0),
+            orchestrator_cache_ttl=os.getenv("ATLAS_ORCHESTRATOR_CACHE_TTL", "1h").strip().lower() or "1h",
             web_search=raw_web in ("1", "true", "yes", "on") if raw_web else sub,
             web_search_tool=os.getenv("ATLAS_WEB_SEARCH_TOOL") or DEFAULT_WEB_SEARCH_TOOL,
             audit=os.getenv("ATLAS_AUDIT", "on").strip().lower() not in ("0", "off", "false", "no"),

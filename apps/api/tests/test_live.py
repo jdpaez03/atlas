@@ -299,8 +299,10 @@ def test_validate_plan():
     _, errs = validate_plan({"tasks": [t("a", "sofia", "A"), t("a", "eos-data", "B", ["zz"])]}, allowed)
     assert any("duplicate" in e for e in errs) and any("not in the roster" in e for e in errs)
     assert any("unknown ref 'zz'" in e for e in errs)
-    _, errs = validate_plan({"tasks": [t("a", "sofia", "A")]}, allowed)
-    assert "between 2 and 8" in errs[0]
+    ok, errs = validate_plan({"tasks": [t("a", "sofia", "A")]}, allowed)
+    assert not errs and len(ok) == 1  # one agent can own the whole objective
+    _, errs = validate_plan({"tasks": []}, allowed)
+    assert "between 1 and 8" in errs[0]
     ok, errs = validate_plan({"tasks": [t("x", "sofia", "X", ["a"], requires_approval=True)]}, allowed,
                              existing_refs={"a"}, min_tasks=0, max_tasks=3)
     assert not errs and ok[0]["approval_reason"] == "CONSEQUENTIAL_DECISION"

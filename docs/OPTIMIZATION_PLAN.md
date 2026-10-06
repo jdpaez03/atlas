@@ -1,5 +1,47 @@
 # ATLAS — Plan de optimización de corridas (2026-10)
 
+## Línea base medida (20 misiones, 30-sep a 5-oct-2026)
+
+- **Costo:** US$ 124 en total.
+  - 8 misiones de trabajo: US$ 123, entre US$ 3 y 67 cada una.
+  - 12 rutinas (inbox scan, ARGOS watch, L10 brief): US$ 1.6 juntas, entre US$ 0.03 y 0.54 cada una.
+- **Tiempo:** 104 h de reloj, pero solo unas 7–8 h activas.
+  - 72 h son CLOSED entre rondas.
+  - 25 h son de espera de aprobación (una sola de 25 h retuvo una tarea de ALFRED).
+- **Por agente:**
+
+| Agente | Costo | % | Nota |
+|---|---|---|---|
+| ATLAS (orquestador) | US$ 39.6 | 32 % | Solo 55 % de caché. En REDI: 52 llamadas × ~53k tokens de entrada sin caché = US$ 26.6. |
+| ALFRED | US$ 23.7 | 19 % | |
+| ARGOS | US$ 19.0 | 15 % | |
+| SCRIBE | US$ 13.4 | 11 % | 45 % de caché. |
+| MERCATO | US$ 12.9 | 10 % | 97 % de caché, pero 8 de 16 reportes auto-wrapped (se quedó sin turnos). |
+| AUDITOR | US$ 5.0 | 4 % | |
+
+- **Auditoría:** 88 veredictos: 33 PASS, 31 ISSUES y **24 FAIL (27 %)**. Cada FAIL rehace la tarea, por eso VALIDATION tarda 18–22 min en las misiones de junta.
+- **Misiones de "junta → to-dos":** US$ 8–12 y 40–48 min cada una, con 99–165 llamadas.
+  - Reparten la tarea entre 4–5 agentes (ARGOS, ALFRED, EOS-traction, EOS-issues…).
+  - Es una tarea de un solo agente, que debería costar alrededor de US$ 1 y tardar unos 5 min.
+
+### Prioridades según los datos
+
+1. **Orquestador (32 %).**
+   - Cachear system y contexto en las llamadas de ATLAS.
+   - No mandar contexto del nodo a revisión ni a consolidación.
+   - Revisión con sonnet.
+   - Meta: −US$ 25 por cada US$ 124.
+2. **Planner que no reparta de más.**
+   - Ruta rápida de un solo agente para misiones simples.
+   - Plantilla fija "junta → to-dos" (ALFRED con suite_read y suite_add_todos).
+   - Meta: de US$ 10 a ~US$ 1 por junta.
+3. **FAIL del 27 %.** `ATLAS_AUDIT_REVISIONS=0` en misiones internas, y revisión incremental en vez de rehacer la tarea.
+4. **SCRIBE (11 %).** Apagado por defecto; solo cuando se pide documento.
+5. **MERCATO auto-wrap 50 %.** Recortar los resultados viejos del navegador y usar `browser_data` primero (playbook REDI).
+6. **Aprobaciones.** Liberar el slot mientras se espera, y avisar con push cuando una aprobación lleve más de 1 h pendiente.
+
+Las rutinas (inbox, ARGOS watch, L10 brief) ya son baratas. No se tocan.
+
 ## Cómo corre hoy una misión
 
 1. **Memoria**: recupera lecciones y misiones previas.
