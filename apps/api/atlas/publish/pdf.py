@@ -43,7 +43,7 @@ from reportlab.platypus import (
 from reportlab.platypus.tableofcontents import TableOfContents
 
 from .brand import Brand
-from .spec import image_file, nice_bounds, normalize_style, plain
+from .spec import image_file, nice_bounds, normalize_style, own_group, plain, say_number
 
 W, H = letter
 ML, MR, MT, MB = 70, 58, 70, 64
@@ -272,6 +272,11 @@ def scatter_drawing(ch: dict[str, Any], brand: Brand, st: Styles, width: float) 
     c = ScatterPlot()
     c.x, c.y, c.width, c.height = 46, 34, width - 80, h - 62 - legend_h
     c.data = [[(p["x"], p["y"]) for p in sr["points"]] for sr in series]
+    own = own_group(ch)
+    if own is not None:  # the project in the primary color, the market lighter
+        others = [_hex(_lighter(brand.c("primary"), 0.55)), _hex(brand.c("muted")), _hex(brand.c("accent"))]
+        pal = [_hex(brand.c("primary")) if i == own else others[(i - (i > own)) % len(others)]
+               for i in range(len(series))]
     for i in range(len(series)):
         c.lines[i].strokeColor = None
         c.lines[i].symbol = makeMarker("FilledCircle", size=5.5, fillColor=pal[i % len(pal)],
@@ -366,7 +371,8 @@ def chart_flow(ch: dict[str, Any], brand: Brand, st: Styles, width: float) -> li
     c.valueAxis.labels.fontName = st.f["regular"]
     c.valueAxis.labels.fontSize = 6.8
     c.valueAxis.labels.fillColor = _hex(brand.c("muted"))
-    c.valueAxis.labelTextFormat = lambda v: fmt_num(round(v, 2))
+    every = [v for row in data for v in row if v is not None]
+    c.valueAxis.labelTextFormat = lambda v: say_number(v, every)
     c.valueAxis.strokeColor = None
     c.valueAxis.gridStrokeColor = _hex(brand.c("rule"))
     c.valueAxis.gridStrokeWidth = 0.3
@@ -376,7 +382,7 @@ def chart_flow(ch: dict[str, Any], brand: Brand, st: Styles, width: float) -> li
         c.valueAxis.valueMin = 0
     if getattr(st, "chart_labels", False):  # style.chart_data_labels
         def label(v: Any) -> str:
-            return fmt_num(round(v, 2)) if isinstance(v, (int, float)) else ""
+            return say_number(v, every) if isinstance(v, (int, float)) else ""
         if ch["chart_type"] == "line":
             c.lineLabelFormat = label
             c.lineLabels.fontName, c.lineLabels.fontSize = st.f["regular"], 6.3
@@ -402,12 +408,15 @@ def chart_flow(ch: dict[str, Any], brand: Brand, st: Styles, width: float) -> li
     return _chart_frame(ch, brand, st, d)
 
 
+def _lighter(hex_: str, t: float) -> str:
+    h = hex_.lstrip("#")
+    return "#" + "".join(f"{round(int(h[i:i + 2], 16) * (1 - t) + 255 * t):02X}" for i in (0, 2, 4))
+
+
 def _highlight(c: Any, ch: dict[str, Any], brand: Brand) -> None:
-    """Paint the highlighted categories (the project itself) in the accent color — single-series bars."""
+    """Paint the highlighted categories (the project itself) in the primary color, the rest lighter."""
     if ch.get("highlight") and len(ch["series"]) == 1:
-        primary = brand.c("primary").lstrip("#")
-        light = "#" + "".join(f"{round(int(primary[i:i + 2], 16) * 0.4 + 255 * 0.6):02X}" for i in (0, 2, 4))
-        c.bars[0].fillColor = _hex(light)  # the market lighter, the project in the full primary color
+        c.bars[0].fillColor = _hex(_lighter(brand.c("primary"), 0.6))  # the market lighter, the project in the full primary color
         lit = set(ch["highlight"])
         for j, cat in enumerate(c.categoryAxis.categoryNames):
             if cat in lit:
@@ -439,14 +448,16 @@ def hbar_drawing(ch: dict[str, Any], brand: Brand, st: Styles, width: float) -> 
         c.bars[i].fillColor = pal[i % len(pal)]
         c.bars[i].strokeColor = None
     _highlight(c, ch, brand)
-    c.barLabelFormat = lambda v: fmt_num(round(v, 2)) if isinstance(v, (int, float)) else ""
+    every = [v for sr in ch["series"] for v in sr["values"] if v is not None]
+    c.barLabelFormat = lambda v: say_number(v, every) if isinstance(v, (int, float)) else ""
     c.barLabels.fontName, c.barLabels.fontSize = st.f["regular"], 6.3
     c.barLabels.boxAnchor = "w"
     c.barLabels.dx = 3
     d.add(c)
     ref = ch.get("reference")
     if ref:
-        text = f"{ref.get('label') or 'Referencia'}: {fmt_num(round(ref['value'], 2))} {ch.get('unit', '')}".strip()
+        label = ref.get("label") or "Referencia"
+        text = label if re.search(r"\$|\d[\d,.]{2,}", label) else f"{label}: {say_number(ref['value'])} {ch.get('unit', '')}".strip()
         d.add(String(width, h - 8, text, fontName=st.f["regular"], fontSize=7, textAnchor="end",
                      fillColor=_hex(brand.c("muted"))))
     return d

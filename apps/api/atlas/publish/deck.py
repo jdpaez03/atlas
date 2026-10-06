@@ -22,7 +22,18 @@ from pptx.util import Emu, Pt
 
 from .brand import Brand
 from .pdf import col_weights, fmt_num, is_numeric
-from .spec import DEFAULT_STYLE, accent_runs, image_file, is_capture, nice_bounds, normalize_style, plain
+from .spec import (
+    DEFAULT_STYLE,
+    accent_runs,
+    image_file,
+    is_capture,
+    nice_bounds,
+    normalize_style,
+    num_format,
+    own_group,
+    plain,
+    say_number,
+)
 
 
 def _rgb(hex_: str) -> RGBColor:
@@ -50,8 +61,13 @@ def _borders(cell: Any, color: str, *, bottom_only: bool = False) -> None:
 
 
 def _fmt_ref(v: float, unit: str = "") -> str:
-    text = f"{v:,.0f}" if abs(v) >= 100 or float(v).is_integer() else f"{v:,.2f}"
-    return f"{text} {unit}".strip()
+    return f"{say_number(v)} {unit}".strip()
+
+
+def _ref_label(ref: dict[str, Any], unit: str = "") -> str:
+    """'Promedio comparables: 88,491 MXN/m²' — the label alone when it already says the value."""
+    label = ref.get("label") or "Referencia"
+    return label if re.search(r"\$|\d[\d,.]{2,}", label) else f"{label}: {_fmt_ref(ref['value'], unit)}"
 
 
 def _mix(a: str, b: str, t: float) -> str:
@@ -440,7 +456,7 @@ class Deck:
                 else XL_CHART_TYPE.BAR_CLUSTERED if horizontal else XL_CHART_TYPE.COLUMN_CLUSTERED)
         top = max(300 if sl.get("subtitle") else 250, content_top + 20)
         if ref and ch["chart_type"] == "bar":
-            label = f"{ref.get('label') or 'Referencia'}: {_fmt_ref(ref['value'], ch.get('unit', ''))}"
+            label = _ref_label(ref, ch.get("unit", ""))
             self.text(s, 1100, top - 50, 700, 40, label, size=20, color=b.c("muted"), align=PP_ALIGN.RIGHT)
         gf = s.shapes.add_chart(kind, self.e(120), self.e(top), self.e(1680), self.e(960 - top), data)
         c = gf.chart
@@ -457,7 +473,7 @@ class Deck:
                     continue
                 dl = series.points[last].data_label
                 dl.has_text_frame = True
-                dl.text_frame.text = _fmt_ref(sr["values"][last])
+                dl.text_frame.text = say_number(sr["values"][last], [v for x in ch["series"] for v in x["values"]])
                 dl.position = XL_LABEL_POSITION.RIGHT
                 dl.font.size = self.pt(15)
                 dl.font.color.rgb = _rgb(b.c("ink"))
@@ -467,8 +483,7 @@ class Deck:
             labels = plot.data_labels
             labels.font.size = self.pt(15)
             labels.font.color.rgb = _rgb(b.c("ink"))
-            labels.number_format = "#,##0.##" if any(
-                v is not None and not float(v).is_integer() for sr in ch["series"] for v in sr["values"]) else "#,##0"
+            labels.number_format = num_format([v for sr in ch["series"] for v in sr["values"]])[0]
             labels.number_format_is_linked = False
         c.has_legend = len(c.series) > 1
         if c.has_legend:
@@ -509,8 +524,7 @@ class Deck:
         va.major_gridlines.format.line.color.rgb = _rgb(b.c("rule"))
         va.format.line.fill.background()
         va.tick_labels.font.color.rgb = _rgb(b.c("muted"))
-        va.tick_labels.number_format = "#,##0.##" if any(
-            v is not None and not float(v).is_integer() for sr in ch["series"] for v in sr["values"]) else "#,##0"
+        va.tick_labels.number_format = num_format([v for sr in ch["series"] for v in sr["values"]])[0]
         va.tick_labels.number_format_is_linked = False
         values = [v for sr in ch["series"] for v in sr["values"] if v is not None]
         if ref:
@@ -524,6 +538,17 @@ class Deck:
         ca = c.category_axis
         ca.format.line.color.rgb = _rgb(b.c("rule"))
         ca.tick_labels.font.color.rgb = _rgb(b.c("ink"))
+        if len(ch["categories"]) > 12 and not horizontal:  # every other label: 23 quarters can't all fit
+            from pptx.oxml.ns import qn
+
+            ax = ca._element
+            for tag in ("c:tickLblSkip", "c:tickMarkSkip"):
+                old = ax.find(qn(tag))
+                if old is not None:
+                    ax.remove(old)
+            skip = ax.makeelement(qn("c:tickLblSkip"), {"val": "2"})
+            no_mult = ax.find(qn("c:noMultiLvlLbl"))
+            (no_mult.addprevious if no_mult is not None else ax.append)(skip)
 
     def scatter(self, s: Any, sl: dict[str, Any], ch: dict[str, Any]) -> None:
         """Positioning chart: every point labeled (its project), one color per group, both axes titled."""
@@ -551,6 +576,11 @@ class Deck:
         if c.has_legend:
             c.legend.position = XL_LEGEND_POSITION.TOP
             c.legend.include_in_layout = False
+        own = own_group(ch)
+        if own is not None:  # the project in the primary color, the market lighter
+            others = [_mix(b.c("primary"), "#FFFFFF", 0.55), b.c("muted"), b.c("accent")]
+            pal = [b.c("primary") if i == own else others[(i - (i > own)) % len(others)]
+                   for i in range(len(ch["series"]))]
         for i, (series, sr) in enumerate(zip(c.series, ch["series"], strict=False)):
             color = _rgb(pal[i % len(pal)])
             series.format.line.fill.background()  # points only, never joined

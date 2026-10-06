@@ -423,3 +423,28 @@ def test_screenshots_are_shown_whole_and_process_notes_never_reach_the_slides(tm
     leaky = {"slides": [{"title": "87, no 116: no se reconcilió en esta corrida", "items": ["getVentasXProyecto"]},
                         {"title": "Ventas", "source": "REDI zoneId=133"}, {"title": "Bien", "notes": "HUECO"}]}
     assert internal_terms(leaky) == ["slide 1: «en esta corrida»", "slide 2: «zoneId=133»"]
+
+
+def test_numbers_read_like_a_person_says_them_and_the_project_stands_out(tmp_path):
+    from atlas.publish.deck import _ref_label
+    from atlas.publish.spec import num_format, own_group, say_number
+
+    assert num_format([106932.93, 66815.31]) == ("#,##0", 1)
+    assert num_format([12559246.67]) == ('#,##0.0,,"M"', 1_000_000)
+    assert num_format([1.31, 2.17]) == ("#,##0.0#", 1)
+    assert say_number(12559246.67) == "12.6M" and say_number(80537.92) == "80,538" and say_number(1.31) == "1.31"
+    assert _ref_label({"value": 88491, "label": "Promedio comparables: $88,491"}) == "Promedio comparables: $88,491"
+    assert _ref_label({"value": 88491, "label": "Promedio 6 comparables"}, "MXN/m²") == \
+        "Promedio 6 comparables: 88,491 MXN/m²"
+    sc, _ = normalize({"title": "t", "slides": [{"type": "chart", "title": "x", "chart": {"chart_type": "scatter",
+        "points": [{"label": "A", "x": 1, "y": 2, "group": "Corredor"}, {"label": "B", "x": 2, "y": 1, "group": "Corredor"},
+                   {"label": "Fiori", "x": 3, "y": 3, "group": "Fiori"}]}}]})
+    assert own_group(sc["slides"][0]["chart"]) == 1
+    _kit()
+    spec, _ = normalize({"title": "t", "slides": [{"type": "chart", "title": "q", "chart": {
+        "chart_type": "line", "categories": [f"Q{i}" for i in range(23)],
+        "series": [{"name": "Ticket", "values": [6_000_000 + i * 40_000 for i in range(23)]}]}}]})
+    prs = Presentation(str(render_deck(spec, load_brand("corporate"), "x", [], tmp_path / "q.pptx")))
+    chart = next(sh.chart for sh in prs.slides[1].shapes if sh.has_chart)
+    assert chart.value_axis.tick_labels.number_format == '#,##0.0,,"M"'
+    assert 'tickLblSkip val="2"' in chart._chartSpace.xml

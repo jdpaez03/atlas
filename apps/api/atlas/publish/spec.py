@@ -235,6 +235,7 @@ def _scatter(v: dict[str, Any], errors: list[str], where: str) -> dict[str, Any]
         errors.append(f"{where}: a scatter chart needs points with numeric x and y")
         return None
     return {"chart_type": "scatter", "title": _s(v.get("title"), 120), "categories": [],
+            "highlight": [g for g in _list(v.get("highlight"), MAX_HIGHLIGHTS, 40) if g in groups],
             "series": [{"name": g, "points": pts, "values": [p["y"] for p in pts]} for g, pts in groups.items()],
             "x_title": _s(v.get("x_title"), 60), "y_title": _s(v.get("y_title"), 60),
             "unit": _s(v.get("unit"), 30), "source": _s(v.get("source"), 240)}
@@ -356,6 +357,41 @@ def image_file(v: Any) -> Path | None:
         return None
     p = Path(str(v))
     return p if p.is_absolute() and p.suffix.lower() in IMAGE_EXTS and p.is_file() else None
+
+
+def own_group(ch: dict[str, Any]) -> int | None:
+    """Index of the scatter group that is the project itself: the highlighted group, else the only group with a
+    single point when there are two. It's drawn in the primary color and the market around it lighter."""
+    names = [sr["name"] for sr in ch.get("series", [])]
+    for h in ch.get("highlight") or []:
+        if h in names:
+            return names.index(h)
+    sizes = [len(sr.get("points") or []) for sr in ch.get("series", [])]
+    if len(sizes) == 2 and min(sizes) == 1 and max(sizes) > 1:
+        return sizes.index(1)
+    return None
+
+
+def num_format(values: list[float]) -> tuple[str, float]:
+    """(Excel number format, divisor) that reads like a person says it: 12.6M, 80,538, 1.31."""
+    vals = [abs(v) for v in values if v is not None]
+    top = max(vals, default=0)
+    if top >= 1_000_000:
+        return '#,##0.0,,"M"', 1_000_000
+    if top >= 1000:
+        return "#,##0", 1
+    if any(not float(v).is_integer() for v in vals):
+        return "#,##0.0#", 1
+    return "#,##0", 1
+
+
+def say_number(v: float, values: list[float] | None = None) -> str:
+    fmt, div = num_format(values if values is not None else [v])
+    if div > 1:
+        return f"{v / div:,.1f}M"
+    if fmt == "#,##0":
+        return f"{v:,.0f}"
+    return f"{v:,.2f}".rstrip("0").rstrip(".")
 
 
 def is_capture(path: Path) -> bool:
