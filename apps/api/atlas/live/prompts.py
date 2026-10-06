@@ -41,6 +41,9 @@ Tools:
   with one block per sheet, Word, PowerPoint); long files come in pages: continue with the offset it tells you.
   Images (png/jpg/webp/gif/bmp/tif: screenshots, photos, scans) come back as a picture you can see, and so do the
   first pages of a PDF without a text layer: read them.
+  Meeting transcripts (transcripts folder) come with a '<name>.minuta.md' (summary, to-dos with owner/date,
+  agreements, issues, each with its minute and character offset): read the minuta first, and open the transcript
+  with read_file(offset=…) only around the points you need to verify, instead of reading all of it.
   You can never modify, move or delete the user's files.
 - write_deliverable(filename, format, content?, sheets?, document?): create a file for the human (md, txt, csv,
   json, xlsx with sheets {{name: rows[][]}}, docx from markdown-style content, and branded pdf / pptx from a

@@ -106,6 +106,7 @@ Saves the transcript of the meetings you follow as text the agents can read.
   1. It reads your calendar for the last `ATLAS_TRANSCRIPT_LOOKBACK_DAYS` (default 30) and keeps the matching Teams meetings.
   2. It finds each meeting's online meeting. A recurring series shares one online meeting.
   3. It downloads every transcript not saved yet (WebVTT) and saves it as `[mm:ss] Speaker: text` in `<ATLAS_LOCAL_DIR>/transcripts/<node>/<YYYY-MM-DD> <Subject>.txt`.
+  4. It writes a **minuta** next to each transcript: `<same name>.minuta.md` (`atlas/argos/minutes.py`). It has a summary, the to-dos (owner, date, project, tower, short quote), agreements, decisions and open issues. Each item carries the `[mm:ss]` and the character offset where it was said, and items whose minute is not in the transcript are dropped. Long transcripts are read in 90k-character chunks cut at speaker turns. Older transcripts without a minuta are backfilled, 3 per run. Agents are told to read the minuta first and open the transcript with `read_file(offset=…)` only where they need to verify, instead of reading ~150k characters per mission.
 - **Access:** that folder is one of the node's read roots, so agents find it with `search_files` / `read_file`. Evidence records each file written.
 - **Alert:** a matched meeting that ended more than 3 hours ago with no transcript raises a LOW alert: "<subject> <date>: sin transcripción" (transcription was not turned on).
 - **Read-only** on Microsoft 365.

@@ -217,6 +217,29 @@ class TranscriptsCheck:
         return out
 
     async def run(self, ctx: CheckContext) -> CheckResult:
+        result = await self._download(ctx)
+        await self._minutes(ctx, result)
+        return result
+
+    @staticmethod
+    async def _minutes(ctx: CheckContext, result: CheckResult) -> None:
+        """A minuta next to each transcript (new ones first, then a few older ones per run)."""
+        from . import minutes
+
+        if ctx.scope is None or getattr(ctx, "executor", None) is None:
+            return
+        written = []
+        for path in minutes.missing(transcripts_dir(ctx.node))[:minutes.MAX_PER_RUN]:
+            out = await minutes.write_minuta(ctx, path)
+            if out is None:
+                result.notes.append(f"{path.name}: the minuta could not be written (the transcript is saved)")
+                continue
+            written.append(out.name)
+            await record_evidence(ctx, "file_written", str(out), f"minuta of {path.name}")
+        if written:
+            result.notes.append("Wrote meeting minutes for the agents: " + ", ".join(written))
+
+    async def _download(self, ctx: CheckContext) -> CheckResult:
         self.preflight(ctx.config)
         now = ctx.now if ctx.now.tzinfo else ctx.now.replace(tzinfo=UTC)
         start = now - timedelta(days=lookback_days())
