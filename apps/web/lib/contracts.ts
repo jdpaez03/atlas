@@ -254,6 +254,10 @@ export interface AgentDefinition {
    * opt-in dedicated browser (docs/BROWSER.md)
    */
   browser: BrowserConfig | null;
+  /**
+   * turn budget of this agent's tasks when larger than ATLAS_MAX_TURNS
+   */
+  max_turns: number | null;
 }
 /**
  * This interface was referenced by `AtlasContracts`'s JSON-Schema

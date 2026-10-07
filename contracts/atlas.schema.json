@@ -124,6 +124,20 @@
           ],
           "default": null,
           "description": "opt-in dedicated browser (docs/BROWSER.md)"
+        },
+        "max_turns": {
+          "anyOf": [
+            {
+              "maximum": 200,
+              "minimum": 4,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "turn budget of this agent's tasks when larger than ATLAS_MAX_TURNS"
         }
       },
       "required": [
@@ -145,7 +159,8 @@
         "nodes",
         "division",
         "plannable",
-        "browser"
+        "browser",
+        "max_turns"
       ],
       "title": "AgentDefinition",
       "type": "object"

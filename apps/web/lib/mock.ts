@@ -67,6 +67,7 @@ function agent(p: Partial<AgentDefinition> & Pick<AgentDefinition, "id" | "name"
     division: null,
     plannable: true,
     browser: null,
+    max_turns: null,
     ...p,
   };
 }
