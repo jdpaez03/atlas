@@ -216,6 +216,8 @@ class AgentDefinition(AtlasModel):
     division: str | None = None
     plannable: bool = Field(default=True, description="false = never assigned tasks by the planner (e.g. AUDITOR)")
     browser: BrowserConfig | None = Field(default=None, description="opt-in dedicated browser (docs/BROWSER.md)")
+    max_turns: int | None = Field(default=None, ge=4, le=200,
+                                  description="turn budget of this agent's tasks when larger than ATLAS_MAX_TURNS")
 
 
 class AgentState(AtlasModel):

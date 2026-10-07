@@ -45,7 +45,7 @@ from uuid import uuid4
 
 from .. import __version__
 from ..core.models import AgentReport, Task, TaskStatus
-from . import flowtools, suitetools
+from . import designtools, flowtools, suitetools
 from .agent_loader import ResolvedAgent
 from .executor import Validator, invalid_input_message
 from .lessons import with_lessons
@@ -438,7 +438,7 @@ class SdkAgentRun(AgentRun):
         if self._consultable() and cfg.max_consults > 0:
             spec = consult_tool(self._consultable())
             tools.append(ex.tool(spec["name"], spec["description"], spec["input_schema"], self._on_consult))
-        for spec in FILE_TOOLS:
+        for spec in [*FILE_TOOLS, *designtools.tools(self.agent.agent.capabilities)]:
             tools.append(ex.tool(spec["name"], spec["description"], spec["input_schema"], self._file_handler(spec["name"])))
         if self.has_browser:
             for spec in BROWSER_TOOLS:

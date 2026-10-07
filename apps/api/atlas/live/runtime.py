@@ -33,7 +33,7 @@ from ..core.models import (
 )
 from ..core.store import StoreError, WorldStore
 from . import browser as browser_mod
-from . import flowtools, suitetools
+from . import designtools, flowtools, suitetools
 from .agent_loader import ModelConfig, ResolvedAgent
 from .context import NodeContext
 from .evidence import apply_claim_check, record
@@ -288,7 +288,7 @@ class AgentRun:
 
     @property
     def max_turns(self) -> int:
-        base = self.scope.config.max_turns
+        base = max(self.scope.config.max_turns, self.agent.agent.max_turns or 0)
         return max(base, self.browser_cfg.max_turns) if self.has_browser and self.browser_cfg else base
 
     def _tools(self) -> list[dict[str, Any]]:
@@ -296,7 +296,8 @@ class AgentRun:
         tools: list[dict[str, Any]] = []
         if self._consultable() and cfg.max_consults > 0:
             tools.append(consult_tool(self._consultable()))
-        tools += [*FILE_TOOLS, REQUEST_APPROVAL_TOOL, SUBMIT_REPORT_TOOL]
+        tools += [*FILE_TOOLS, *designtools.tools(self.agent.agent.capabilities), REQUEST_APPROVAL_TOOL,
+                  SUBMIT_REPORT_TOOL]
         if self.has_browser:
             tools += BROWSER_TOOLS
         tools += suitetools.tools()
@@ -461,6 +462,8 @@ class AgentRun:
                     results.append(await self._consult(tu.id, data))
                 elif name == "request_approval":
                     results.append(await self._request_approval(tu.id, data))
+                elif name in designtools.NAMES and not designtools.tools(self.agent.agent.capabilities):
+                    results.append(_tool_result(tu.id, f"Error: {name} is not one of your tools.", error=True))
                 elif name in FileTools.NAMES:
                     self.last_images = []
                     out, ok = await self._file_tool(name, data)

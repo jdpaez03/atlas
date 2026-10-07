@@ -898,7 +898,8 @@ def download_url(mission_id: str, name: str) -> str:
 
 
 class FileTools:
-    NAMES = ("list_files", "search_files", "read_file", "write_deliverable", "collect_site_images")
+    NAMES = ("list_files", "search_files", "read_file", "write_deliverable", "collect_site_images",
+             "pdf_images", "page_image", "crop_image", "write_brochure")  # the last four: designtools.py
 
     def __init__(self, sandbox: FileSandbox, graph: GraphFiles | None = None):
         self.sb = sandbox
@@ -929,6 +930,12 @@ class FileTools:
             return _short(f"Searching files · {args.get('query', '')}", 90)
         if name == "collect_site_images":
             return _short(f"Collecting images · {args.get('url', '')}", 90)
+        if name in ("pdf_images", "page_image"):
+            return _short(f"Reading images · {base(args.get('path'))}", 90)
+        if name == "crop_image":
+            return _short(f"Cropping {base(args.get('path'))}", 90)
+        if name == "write_brochure":
+            return _short(f"Designing {paths.safe_name(str(args.get('filename') or 'brochure'))}.pdf", 90)
         if name == "write_deliverable":
             fname = paths.safe_name(str(args.get("filename") or "deliverable"))
             fmt = str(args.get("format") or "").lower().lstrip(".")
@@ -938,9 +945,15 @@ class FileTools:
     # -- dispatch --
 
     def run(self, name: str, args: dict[str, Any]) -> FileResult:
+        from .designtools import DesignTools
+
+        design = DesignTools(self)
         fn = {"list_files": self.list_files, "search_files": self.search_files, "read_file": self.read_file,
-              "write_deliverable": self.write_deliverable, "collect_site_images": self.collect_site_images}[name]
-        kind = {"read_file": "file_read", "write_deliverable": "file_written",
+              "write_deliverable": self.write_deliverable, "collect_site_images": self.collect_site_images,
+              "pdf_images": design.pdf_images, "page_image": design.page_image, "crop_image": design.crop_image,
+              "write_brochure": design.write_brochure}[name]
+        kind = {"read_file": "file_read", "write_deliverable": "file_written", "write_brochure": "file_written",
+                "crop_image": "file_written", "pdf_images": "file_read", "page_image": "file_read",
                 "collect_site_images": "web_fetch"}.get(name, "file_listed")
         try:
             params = inspect.signature(fn).parameters

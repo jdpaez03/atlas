@@ -386,10 +386,10 @@ class GraphFiles:
                           missing_ok=True)
         return ((data or {}).get("parentReference") or {}).get("path")
 
-    def download(self, item: Item) -> Path:
+    def download(self, item: Item, max_bytes: int = MAX_BYTES) -> Path:
         """The item's bytes in the local cache (re-downloaded when its eTag changes)."""
-        if item.size > MAX_BYTES:
-            raise GraphFilesError(f"'{item.name}' is larger than {MAX_BYTES // (1024 * 1024)} MB")
+        if item.size > max_bytes:
+            raise GraphFilesError(f"'{item.name}' is larger than {max_bytes // (1024 * 1024)} MB")
         tag = hashlib.sha1(f"{item.drive_id}:{item.id}:{item.etag}".encode()).hexdigest()[:16]
         ext = Path(item.name).suffix.lower()[:10]
         folder = self.cache_dir
@@ -400,8 +400,8 @@ class GraphFiles:
         resp = self.get(f"/drives/{item.drive_id}/items/{item.id}/content")
         if resp.status_code >= 400:
             raise GraphFilesError(_error_text(resp))
-        if len(resp.content) > MAX_BYTES:
-            raise GraphFilesError(f"'{item.name}' is larger than {MAX_BYTES // (1024 * 1024)} MB")
+        if len(resp.content) > max_bytes:
+            raise GraphFilesError(f"'{item.name}' is larger than {max_bytes // (1024 * 1024)} MB")
         folder.mkdir(parents=True, exist_ok=True)
         if sys.platform != "win32":
             os.chmod(folder, 0o700)
