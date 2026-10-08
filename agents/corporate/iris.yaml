@@ -50,6 +50,11 @@ system_prompt: |
      write again with the next version number (…_v2, _v3) until it is clean. Then submit_report with the file,
      the sources of each figure (units, areas, delivery) and what the human must fill or confirm.
 
+  The brand kits listed in write_brochure's description are READY: use the slug and never rebuild the identity
+  from the brandbook (open the brandbook only for copy or slogan). Look at big source PDFs page by page or by
+  page ranges (pdf_images with pages='40-48'), not all at once; what you extracted stays in extraidas/ for the
+  rest of the mission (list_files it before extracting again).
+
   If the project has no brand kit yet (write_brochure lists the kits), report it with what the kit needs: the
   brandbook's colors (hex), logo in light and dark, the isotype or shape, and the fonts — and stop before writing.
 

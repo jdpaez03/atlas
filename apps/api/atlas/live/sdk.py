@@ -104,6 +104,13 @@ Deliver your answer ONLY by calling the tool mcp__atlas__{name} (no other tools 
 error, fix the input and call it again. Once it succeeds, stop (reply with one short line)."""
 
 
+def _env_mb(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, default)))
+    except ValueError:
+        return default
+
+
 def mcp_name(tool: str) -> str:
     return f"mcp__{SERVER}__{tool}"
 
@@ -258,6 +265,9 @@ class SubscriptionExecutor:
             cli_path=self.cli_path,
             verbatim_prompts=True,
             extra_args=dict(EXTRA_ARGS),
+            # tool results can carry pictures (contact sheets, page views): the SDK's default 1 MB line limit
+            # broke IRIS's runs ("JSON message exceeded maximum buffer size")
+            max_buffer_size=_env_mb("ATLAS_SDK_MAX_BUFFER_MB", 32) * 1024 * 1024,
             env={
                 "ANTHROPIC_API_KEY": "",  # bill the logged-in plan, never an API key from .env
                 "MCP_TOOL_TIMEOUT": MCP_TOOL_TIMEOUT_MS,

@@ -233,6 +233,7 @@ def test_sdk_options_are_locked_down(registry, tmp_path):
 
     opts = ex.options(model="sonnet", system_file="/x/p.md", tools=[tool], web=False, max_turns=8)
     tr = SubprocessCLITransport(prompt="x", options=opts)
+    assert tr._max_buffer_size == 32 * 1024 * 1024  # tool results with pictures exceed the SDK's 1 MB default
     tr._cli_path = "claude"
     cmd = tr._build_command()
     assert cmd[cmd.index("--tools") + 1] == "" and "--setting-sources=" in cmd and "--strict-mcp-config" in cmd

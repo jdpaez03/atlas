@@ -159,9 +159,9 @@ def test_size_cap_truncation_and_paging(roots, monkeypatch):
     corp = roots["corp"]
     big = corp / "big.txt"
     with open(big, "wb") as fh:
-        fh.truncate(26 * 1024 * 1024)
+        fh.truncate(101 * 1024 * 1024)  # sparse: no real disk use
     res = corp_tools().run("read_file", {"path": "big.txt"})
-    assert not res.ok and "larger than 25 MB" in res.text and res.kind == "file_read"
+    assert not res.ok and "larger than 100 MB" in res.text and res.kind == "file_read"
 
     monkeypatch.setenv("ATLAS_FILE_MAX_CHARS", "1000")
     body = "".join(f"{i:04d}" for i in range(625))  # 2500 chars

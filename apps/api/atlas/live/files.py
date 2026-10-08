@@ -12,7 +12,7 @@ deepest matching root must belong to this node (a node never reads another node'
 list (.git, .env*, *.pem, *.key, id_rsa*, .ssh, ~/.claude, ...) and, inside ATLAS_LOCAL_DIR, only this node's
 context, its Teams transcripts (ARGOS), this mission's attachments and this mission's outputs.
 
-Reading is read-only and bounded: 25 MB per file, text paged by `offset` in chunks of at most
+Reading is read-only and bounded: 100 MB per file, text paged by `offset` in chunks of at most
 ATLAS_FILE_MAX_CHARS (default 60k). Listing and searching are capped (entries, depth, visited directories) and
 skip heavy folders (node_modules, .git, virtualenvs...).
 
@@ -45,7 +45,7 @@ from ..core.models import Attachment
 from . import graphfiles as gf
 from .graphfiles import GraphFiles, GraphFilesError, RemotePath
 
-MAX_FILE_BYTES = 25 * 1024 * 1024
+MAX_FILE_BYTES = 100 * 1024 * 1024  # brandbooks and presentation PDFs are often 25-60 MB
 DEFAULT_MAX_CHARS = 60_000
 EXTRACT_LIMIT = 2_000_000  # stop extracting a huge file after this many chars
 MAX_LIST = 500

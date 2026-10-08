@@ -152,7 +152,7 @@ def numbered_sheet(items: list[tuple[str, Any]], cols: int = 5, cell: int = 300)
         x, y = (i % cols) * cell, (i // cols) * (cell + 22)
         sheet.paste(th, (x + (cell - th.width) // 2, y + (cell - th.height) // 2))
         d.text((x + 4, y + cell + 4), label[:44], fill="#222222")
-    return _jpeg(sheet, 2000)
+    return _jpeg(sheet, 1600)
 
 
 class DesignTools:
