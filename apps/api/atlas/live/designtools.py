@@ -81,8 +81,11 @@ def tools(capabilities: list[str]) -> list[dict[str, Any]]:
             "Write the SALES BROCHURE as a 16:9 PDF in the project's brand kit (colors, fonts, logo, the shape that "
             "cuts feature images). You give each page's type and content; the system lays it out, shrinks text "
             "that doesn't fit and reports what still overflows, and you SEE every page in a contact sheet: check it "
-            "and write again with a new file name until nothing is off. Kits on this machine: "
-            + (", ".join(_kits()) or "none yet (ask the human for the project's brandbook)") + "."
+            "and write again with a new file name until nothing is off. Project kits on this machine: "
+            + (", ".join(_kits()) or "none yet (ask the human for the project's brandbook)") + ". Each kit folder "
+            "(brand/<slug>/) may hold brief.md (approved facts and copy: read it FIRST, its figures are confirmed) "
+            "and assets/ (finished images and maps: use them before extracting from sources). Developers' track "
+            "records (logos + trayectoria.md): " + (", ".join(_other_brand_folders()) or "none") + "."
         ),
         "input_schema": {"type": "object", "properties": {
             "filename": {"type": "string", "description": "e.g. 'Torre_Acqua_Brochure_v1'"},
@@ -93,6 +96,14 @@ def tools(capabilities: list[str]) -> list[dict[str, Any]]:
 
 
 NAMES = ("pdf_images", "page_image", "crop_image", "write_brochure")
+
+
+def _other_brand_folders() -> list[str]:
+    """brand/<x>/ folders that aren't project kits but hold a trayectoria.md (developers' track records)."""
+    from ..publish.brochure import kits_dir
+
+    root = kits_dir()
+    return sorted(d.name for d in root.iterdir() if (d / "trayectoria.md").is_file()) if root.is_dir() else []
 
 
 def _kits() -> list[str]:

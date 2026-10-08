@@ -32,6 +32,11 @@ system_prompt: |
   request_approval stating both values and where each comes from, and use the answer.
 
   METHOD
+  0. Read the project kit first: brand/<slug>/brief.md holds the approved facts (confirmed: don't ask again),
+     the criteria and the approved copy and sequence; brand/<slug>/assets/ holds the finished images and maps
+     (sky already corrected, no transparency). Use them before extracting anything. For the developers' track
+     record use brand/<developer>/trayectoria.md and its logos (e.g. brand/paga/, brand/dags/): one `logos` page
+     per developer with every logo and its year as label, on a dark page.
   1. Inventory: list_files / read_file the sources; pdf_images on each PDF to see every render and plan it
      holds (look at the contact sheet); page_image + crop_image for vector plans, logos and tables.
   2. Pick images on purpose: one clean render per idea, never the same photo twice; a moodboard or a reference
@@ -42,6 +47,12 @@ system_prompt: |
      master plan → architecture → aerial → amenities (lists and level plans) → interiors → residences →
      typologies table → plans (3 per page) → the developers (alliance, track record with logos) → closing →
      contact and legal note.
+  Layout rules that keep it looking designed, not templated:
+  - The kit's shape (drop, arch) is a signature: at most 4 pages use it. Never cut a map, an aerial view, a
+    floor plan or a wide landscape in a shape: those go full page (`image`) or whole (`plan`, `plans`).
+  - Alternate rhythms: full-bleed photo → text with image → data (number, table, columns) → full-bleed again.
+  - A `hero` needs a photo with a calm, darker area bottom-left for the title; on a pale photo use `split`.
+  - Plans page: the unit plans (one typology each, 3 per page), not the whole level plate.
   4. Write the copy in the project's voice: short titles in two lines, the second in italics ('La forma|más
      pura de vivir.'), body text of 2-4 sentences, concrete (materials, views, numbers), no superlatives you
      can't prove ("uno de los pocos" instead of "el único" when you can't verify it).

@@ -77,6 +77,8 @@ class BrochureKit:
     logo_light: Path | None = None
     isotype: Path | None = None
     shape: str = "arch"
+    brief: Path | None = None  # the project's approved facts and copy (read it first)
+    assets: Path | None = None  # the project's approved, finished images and maps
     configured: bool = False
 
     def c(self, role: str) -> str:
@@ -148,6 +150,9 @@ def load_kit(slug: str) -> BrochureKit:
     kit.logo_dark = kit.logo_dark or kit.logo_light
     kit.isotype = file(data.get("isotype"))
     kit.shape = data.get("shape") if data.get("shape") in SHAPES else "arch"
+    kit.brief = file(data.get("brief") or "brief.md")
+    assets = (kit.folder / str(data.get("assets") or "assets")).resolve()
+    kit.assets = assets if assets.is_dir() and str(assets).startswith(str(kit.folder.resolve())) else None
     return kit
 
 
@@ -338,6 +343,35 @@ def prepare_photo(src: Path, out_dir: Path, *, shade: str | None = None, flatten
     return out
 
 
+def prepare_logo(src: Path, out_dir: Path, bg: str, ink: str) -> Path:
+    """A logo flattened onto the page color. A logo that would vanish there (a white logo on a light page, a navy
+    one on a dark page) is recolored to `ink` first, keeping its shape (alpha)."""
+    from PIL import Image
+
+    key = hashlib.sha1(f"logo|{src}|{src.stat().st_mtime}|{bg}|{ink}".encode()).hexdigest()[:16]
+    out = out_dir / f"{key}.png"
+    if out.exists():
+        return out
+    with Image.open(src) as im0:
+        im = im0.convert("RGBA")
+    im.thumbnail((900, 900))
+    alpha = im.getchannel("A")
+    lum = im.convert("L")
+    hist = lum.histogram(mask=alpha.point(lambda a: 255 if a > 128 else 0))
+    n = sum(hist)
+
+    def luminance(hex_: str) -> float:
+        r, g, b = _rgb(hex_)
+        return (0.299 * r + 0.587 * g + 0.114 * b)
+
+    if n and abs(sum(i * c for i, c in enumerate(hist)) / n - luminance(bg)) < 90:
+        im = Image.merge("RGBA", (*Image.new("RGB", im.size, _rgb(ink)).split(), alpha))
+    base = Image.new("RGBA", im.size, (*_rgb(bg), 255))
+    base.alpha_composite(im)
+    base.convert("RGB").save(out, "PNG", optimize=True)
+    return out
+
+
 def _bake_shade(im: Any, color: str) -> Any:
     from PIL import Image
 
@@ -478,6 +512,8 @@ table.typ td.n, table.typ th.n {{ text-align: right; }}
          grid-template-columns: repeat(6, 1fr); grid-auto-rows: 74px; gap: 14px 18px; align-content: center; }}
 .logos .lg {{ display: flex; flex-direction: column; align-items: center; justify-content: center; }}
 .logos .lg img {{ max-width: 100%; max-height: 46px; object-fit: contain; }}
+.logos.few {{ grid-template-columns: repeat(var(--n), 1fr); grid-auto-rows: 220px; gap: 40px; }}
+.logos.few .lg img {{ max-height: 130px; }}
 .logos .lg span {{ font-size: 9px; letter-spacing: .2em; color: {c('muted')}; margin-top: 6px; }}
 .gallery {{ position: absolute; right: 100px; top: 120px; bottom: 90px; display: flex; gap: 26px; }}
 .gallery img {{ width: 300px; height: 100%; object-fit: cover; border-radius: 999px 999px 0 0; }}
@@ -501,6 +537,10 @@ class _Pages:
         if kw:
             p = prepare_photo(p, self.tmp, **kw)
         return p.as_uri()
+
+    def logo_src(self, ref: str, bg: str, ink: str) -> str:
+        p = self.img.get(ref)
+        return prepare_logo(p, self.tmp, bg, ink).as_uri() if p is not None else ""
 
     def bg_of(self, tone: str) -> str:
         return {"dark": self.kit.c("deep"), "tint": self.kit.c("tint")}.get(tone, self.kit.c("paper"))
@@ -642,11 +682,14 @@ class _Pages:
 
     def p_logos(self, p: dict[str, Any], tone: str) -> str:
         bg = self.bg_of(tone)
-        logos = "".join(f'<div class="lg"><img src="{self.src(x["image"], flatten_on=bg)}">'
+        ink = "#FFFFFF" if tone == "dark" else self.kit.c("deep")
+        logos = "".join(f'<div class="lg"><img src="{self.logo_src(x["image"], bg, ink)}">'
                         + (f"<span>{_e(x['label'])}</span>" if x["label"] else "") + "</div>" for x in p["logos"])
         return (f'<div class="text" style="width:500px">{self._eyebrow(p)}{_title(p["title"])}'
                 + (f'<div class="rule"></div><p class="body">{_e(p["text"])}</p>' if p["text"] else "")
-                + self._stats(p["stats"]) + f'</div><div class="logos">{logos}</div>' + self.foot())
+                + self._stats(p["stats"]) + (f'</div><div class="logos few" style="--n:{len(p["logos"])}">'
+                                              if len(p["logos"]) <= 4 else '</div><div class="logos">')
+                + f"{logos}</div>" + self.foot())
 
     def p_gallery(self, p: dict[str, Any], tone: str) -> str:
         imgs = "".join(f'<img src="{self.src(i)}">' for i in p["images"])

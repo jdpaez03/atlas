@@ -77,6 +77,19 @@ Color roles:
 
 Without a kit, the brochure comes out in a neutral style with a warning. IRIS asks for the brandbook before writing.
 
+The kit can also hold what was already worked out for the project. IRIS reads both before touching any source:
+
+| Item | What it holds |
+|---|---|
+| `brief.md` | The approved facts (confirmed figures, so IRIS doesn't ask again), the criteria, and the approved copy and page sequence. |
+| `assets/` | The finished images and maps: skies already corrected, concept map, unit plans. |
+
+The `brand/` folder can be read by the agents. Developer folders sit alongside the project kits, for the track record:
+- `brand/paga/`: `logo_white.png`, `trayectoria.md` (32 developments with country and year) and `logos/<year>_<project>.png`.
+- `brand/dags/`: `logo.png` and `trayectoria.md` (11 projects with city).
+
+Logos stay visible on any page: a white logo on a light page (or a navy one on a dark page) is recolored to the page's ink, keeping its shape. With four logos or fewer, the `logos` page shows them large (for example the PAGA + DAGS alliance).
+
 ## IRIS's tools
 
 Only agents with the `sales_brochure` capability get them.

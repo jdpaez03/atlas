@@ -193,6 +193,9 @@ class FileSandbox:
         earlier = outputs.parent  # outputs/<node>/: deliverables of the node's earlier missions (read-only)
         if earlier.is_dir():
             roots.append(earlier)
+        brand = paths.local_dir() / "brand"  # brand kits: logos, approved project images, briefs (read-only)
+        if brand.is_dir():
+            roots.append(_real(brand))
         return cls(
             node=node, mission_id=mission_id,
             roots=[*roots, attachments, outputs],
@@ -253,7 +256,8 @@ class FileSandbox:
             node, mid = fold(self.node), fold(self.mission_id)
             # outputs of EVERY mission of this node are readable (earlier deliverables); writes stay in this
             # mission's own folder (write_deliverable)
-            allowed = (["context", node], ["transcripts", node], ["missions", mid, "attachments"], ["outputs", node])
+            allowed = (["context", node], ["transcripts", node], ["missions", mid, "attachments"], ["outputs", node],
+                       ["brand"])
             ok = any(rel[:len(a)] == a for a in allowed)
             if not ok and traverse:
                 ok = any(len(rel) < len(a) and rel == a[:len(rel)] for a in allowed)

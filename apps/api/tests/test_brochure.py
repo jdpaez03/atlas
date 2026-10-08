@@ -117,3 +117,19 @@ def test_knock_out_background():
     im.paste((4, 52, 71), (30, 20, 70, 40))
     cut = designtools.knock_out_background(im)
     assert cut.getpixel((5, 5))[3] == 0 and cut.getpixel((50, 30))[3] == 255
+
+
+def test_logos_stay_visible_and_brand_kits_are_readable(kit, tmp_path):
+    white = Image.new("RGBA", (200, 80), (0, 0, 0, 0))
+    white.paste((255, 255, 255, 255), (20, 20, 180, 60))
+    white.save(tmp_path / "white.png")
+    light = Image.open(B.prepare_logo(tmp_path / "white.png", tmp_path, "#FFFFF8", "#043447")).convert("RGB")
+    dark = Image.open(B.prepare_logo(tmp_path / "white.png", tmp_path, "#043447", "#FFFFFF")).convert("RGB")
+    assert light.getpixel((100, 40)) == (4, 52, 71) and dark.getpixel((100, 40)) == (255, 255, 255)
+    k = B.load_kit("aqua")
+    (k.folder / "brief.md").write_text("136 residencias", encoding="utf-8")
+    (k.folder / "assets").mkdir()
+    assert B.load_kit("aqua").brief.name == "brief.md" and B.load_kit("aqua").assets.name == "assets"
+    files = FileTools(FileSandbox.for_mission("corporate", MID))
+    res = files.run("read_file", {"path": "aqua/brief.md"})
+    assert res.ok and "136 residencias" in res.text
